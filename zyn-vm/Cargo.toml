@@ -1,0 +1,24 @@
+[package]
+name = "zyn-vm"
+version = "0.1.0"
+edition = "2021"
+
+# The microchain VM specification. Depends on nothing but hashing, because
+# everything above it depends on this: an application VM (ZynZap), the node
+# that sequences it, and eventually a third party's VM that Zyn has never seen.
+#
+# Nothing swap-shaped may enter this crate. The test of whether something
+# belongs here is whether an auction, a prediction market or a game would need
+# it too.
+[features]
+default = ["std", "wallet"]
+std = []
+# Kept for downstream compatibility. Wallet encodings and their verifiers are
+# consensus code now: replicas and proof guests must reproduce the decision.
+wallet = []
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }
+sha3 = { version = "0.10", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc"] }

@@ -1,0 +1,39 @@
+[package]
+name = "zyn"
+version = "0.1.0"
+edition = "2021"
+
+# The microchain: sequencing, anchoring to Zcash, exits, recovery.
+#
+# Generic over `zyn-vm`, and deliberately **not** a dependent of `swapvm`. If
+# this crate could name a swap it would eventually reach for one, and the next
+# application on Zyn would arrive as a rewrite here rather than a new crate
+# beside ZynZap. The compiler enforces the boundary that the architecture
+# claims.
+#
+# ZynZap appears below as a dev-dependency only: the generic layer is tested
+# by driving a real application through it, which is the only way to find out
+# whether the abstraction actually fits one.
+[features]
+default = ["std"]
+std = ["zyn-vm/std", "zyn-vm/wallet"]
+
+[dependencies]
+zyn-vm = { path = "../zyn-vm", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+# Pinned to 2.x, not 3.x. The Zcash crate stack is built on `digest 0.10`;
+# ed25519-dalek 3 pulls curve25519-dalek 5 and `digest 0.11`, and the two
+# cannot coexist because `crypto-common` is semver-compatible across the
+# split so Cargo must pick one. Depending on Zcash means living in Zcash's
+# dependency era.
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+# secp256k1 public-key *recovery*, not just verification: an EVM wallet never
+# hands over a public key, only a signature, so the signer's address is
+# something we compute rather than something we are told.
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc"] }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+swapvm = { path = "../swapvm" }
+# The second-application test implements the spec directly, without ZynZap.
+zyn-vm = { path = "../zyn-vm" }

@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/target/
+
+# JavaScript and generated faces
+**/node_modules/
+apps/nap/dist/
+apps/extension/dist/
+npm-debug.log*
+
+# Local configuration and wallet material
+.env
+.env.*
+!.env.example
+.zyn/
+*.wallet
+*.wallet.*
+*.state
+*.key
+*backup.json
+nap-wallet-*-backup.json
+agent.json
+settings.json
+history-*.json
+binding
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.tmp

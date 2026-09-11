@@ -1,0 +1,53 @@
+[package]
+name = "zynzapd"
+version = "0.1.0"
+edition = "2021"
+
+# The node as a process.
+#
+# Everything below this is a library: `zyn` sequences, `swapvm` executes, and
+# neither knows what a socket is. This crate is the only place that owns a port,
+# a clock, a directory and a signal — which is also why it is the only place
+# that may depend on both the generic layer and a specific VM. `zyn` still
+# cannot name a swap; this crate names one, once, at startup.
+[dependencies]
+serde_json = "1"
+zcash_address = "0.13.0"
+sha2 = "0.10"
+zcash_transparent = "0.10.0"
+zcash_protocol = "0.10.5"
+orchard = "0.15.5"
+zyn-bridge = { path = "../zyn-bridge" }
+rand = "0.8"
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+ed25519-dalek = "2"
+zyn = { path = "../zyn" }
+zyn-vm = { path = "../zyn-vm" }
+swapvm = { path = "../swapvm" }
+zyn-custody = { path = "../zyn-custody" }
+# Signals. A node that is killed between seals loses the intents since the last
+# one, which is exactly the loss a clean shutdown exists to avoid.
+libc = "0.2"
+zcash_primitives = "0.30.1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+bip39 = { version = "2.2.0", features = ["rand"] }
+zip32 = "0.2.1"
+
+[lib]
+name = "zynzapd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zynzapd"
+path = "src/main.rs"
+
+[[bin]]
+name = "zyn-tgbot"
+path = "src/bin/zyn-tgbot.rs"
+
+[dev-dependencies]
+zcash_note_encryption = "0.4.2"
+serde_json = "1"
+zcash_primitives = "0.30.1"
+# Signing as an EVM wallet would, to prove the whole path end to end.
+k256 = { version = "0.13", features = ["ecdsa"] }

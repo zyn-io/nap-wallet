@@ -1,0 +1,17 @@
+[package]
+name = "nap"
+version = "0.1.0"
+description = "Nap Wallet — a shielded Zcash wallet with Zyn built in"
+edition = "2021"
+
+[lib]
+name = "nap_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+zynzapd = { path = "../../../zynzapd" }

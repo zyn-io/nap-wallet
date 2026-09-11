@@ -1,0 +1,33 @@
+[package]
+name = "zyn-bridge"
+version = "0.1.0"
+edition = "2021"
+
+# Custody: the rules for issuing units against value held on another chain.
+#
+# A component, not a microchain. Bridging cannot be a separate VM: a VM's state
+# is its own, so an asset custodied by a BridgeVM could not be swapped inside
+# ZynZap without cross-VM atomicity, which does not exist (see DECISIONS §8.5).
+# The balances have to live where they are traded.
+#
+# What does *not* have to live there is the logic. Deposit indexing, exit
+# timeouts, dust limits and settlement grouping are identical for every VM that
+# holds bridged value, so they are here — embedded by an application, owned by
+# none.
+[features]
+default = ["std", "evm", "solana"]
+std = ["zyn-vm/std"]
+# EVM settlement digests. On for a host build so its tests run with the rest,
+# and absent from a zkVM guest, which takes this crate with
+# `default-features = false`: keccak is proving surface the guest never needs,
+# and only the operator ever builds a withdrawal.
+evm = ["zyn-vm/wallet"]
+# Solana settlement transactions. Same gating and the same reason.
+solana = ["zyn-vm/wallet", "dep:sha2", "dep:curve25519-dalek"]
+
+[dependencies]
+# Associated token accounts are program-derived addresses: a SHA-256 over the
+# seeds, bumped until the result is off the ed25519 curve.
+sha2 = { version = "0.10", default-features = false, optional = true }
+curve25519-dalek = { version = "4", default-features = false, optional = true }
+zyn-vm = { path = "../zyn-vm", default-features = false }

@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nap Wallet</title>
+<style>
+@font-face { font-family: "Bricolage Grotesque"; src: url("fonts/BricolageGrotesque.ttf") format("truetype"); font-style: normal; font-weight: 600 700; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("fonts/IBMPlexSans.ttf") format("truetype"); font-style: normal; font-weight: 400 600; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/IBMPlexMono-Regular.ttf") format("truetype"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/IBMPlexMono-Medium.ttf") format("truetype"); font-style: normal; font-weight: 500; font-display: swap; }
+:root {
+  --bg: #f7f4ea; --surface: #ffffff; --surface-2: #efeee7; --line: #d8d5c9;
+  --ink: #202326; --ink-2: #555b5d; --ink-3: #7c807f;
+  --accent: #0e6f6e; --accent-ink: #ffffff; --accent-soft: #d6ebe9;
+  --gold: #a87509; --brand-gold: #e0a51b; --brand-ivory: #f7f4ea; --taupe: #bfa58e;
+  --good: #2f7d3a; --warn: #b5651d; --bad: #b3261e;
+  /* The wallet shows two kinds of fact. `--private` tints what only this key
+     can see; `--record` is for what anyone can verify. Keeping them apart is
+     the one thing this wallet's layout is *about*. */
+  --private: #eaf3f1; --record: #6b7385;
+  --display: "Bricolage Grotesque", "Arial Rounded MT Bold", sans-serif;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151718; --surface: #202326; --surface-2: #292d30; --line: #414649;
+    --ink: #f7f4ea; --ink-2: #c7c8c2; --ink-3: #919694;
+    --accent: #50bdb6; --accent-ink: #101214; --accent-soft: #193936;
+    --gold: #e0a51b; --good: #62c46f; --warn: #e6934a; --bad: #f08a80;
+    --private: #1b2d2c; --record: #abb0b2;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151718; --surface: #202326; --surface-2: #292d30; --line: #414649;
+  --ink: #f7f4ea; --ink-2: #c7c8c2; --ink-3: #919694;
+  --accent: #50bdb6; --accent-ink: #101214; --accent-soft: #193936;
+  --gold: #e0a51b; --good: #62c46f; --warn: #e6934a; --bad: #f08a80;
+  --private: #1b2d2c; --record: #abb0b2;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; color: var(--ink); font: 15px/1.5 var(--sans); }
+body { background: radial-gradient(circle at 12% -8%, color-mix(in srgb, var(--brand-gold) 11%, transparent), transparent 31rem), var(--bg); }
+button, input, select, textarea { font: inherit; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
+
+header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 74px; padding: 10px 24px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(18px); position: sticky; top: 0; z-index: 3; padding-top: max(10px, env(safe-area-inset-top)); }
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-mark-frame { width: 58px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; padding: 3px; border-radius: 13px; background: var(--brand-ivory); border: 1px solid color-mix(in srgb, var(--brand-gold) 28%, var(--line)); }
+.brand-mark { width: 100%; height: 100%; object-fit: contain; }
+.brand-copy { display: flex; align-items: center; gap: 9px; min-width: 0; }
+header h1 { margin: 0; font: 700 21px/1 var(--display); letter-spacing: -0.035em; white-space: nowrap; }
+.brand-wallet { color: var(--brand-gold); }
+.network-badge { padding: 3px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-3); font: 500 10px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--line) 74%, transparent); border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font: 500 10.5px/1.3 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
+.chip.ok .dot { background: var(--good); } .chip.bad .dot { background: var(--bad); } .chip.warn .dot { background: var(--warn); }
+.chip.main { background: var(--accent-soft); color: var(--accent); }
+
+nav { display: flex; gap: 5px; padding: 9px 24px; border-bottom: 1px solid var(--line); background: var(--surface); overflow-x: auto; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav button { flex: 0 0 auto; background: none; border: 0; border-radius: 999px; padding: 7px 14px; color: var(--ink-2); cursor: pointer; font-weight: 500; transition: background 120ms, color 120ms, transform 120ms; }
+nav button:hover { background: var(--surface-2); color: var(--ink); }
+nav button.on { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
+nav button:active { transform: translateY(1px); }
+
+main { max-width: 1040px; margin: 0 auto; padding: 26px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: start; gap: 18px; padding-bottom: max(28px, env(safe-area-inset-bottom)); }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 17px; padding: 21px 22px; display: flex; flex-direction: column; gap: 13px; min-width: 0; box-shadow: 0 12px 32px color-mix(in srgb, var(--ink) 5%, transparent); }
+section.full { grid-column: 1 / -1; }
+section h2 { margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.095em; text-transform: uppercase; color: var(--ink-2); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+section h2 small { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-3); text-align: right; }
+.big { font: 700 48px/1.04 var(--display); letter-spacing: -0.045em; }
+.big small { font-size: 16px; color: var(--ink-2); font-weight: 400; margin-left: 6px; }
+.fiat { margin-top: 3px; font-size: 15px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* Holdings are private — only this key sees them — so they take ordinary ink
+   rather than the cool `--record` grey the verifiable facts use. */
+.holdings { width: 100%; border-collapse: collapse; margin-top: 14px; }
+.holdings td { padding: 8px 0; border-top: 1px solid var(--line); font-size: 13.5px; vertical-align: baseline; }
+.holdings tr:first-child td { border-top: 0; }
+.holdings .sym { font-weight: 500; }
+.holdings .sym small { display: block; font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+.holdings .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.holdings .val { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-3); white-space: nowrap; padding-left: 14px; width: 1%; }
+.gold { color: var(--gold); }
+.muted { color: var(--ink-3); font-size: 13px; }
+.figure { font: 700 34px/1.1 var(--display); letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
+.nft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.nft { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; background: var(--surface); transition: border-color 120ms, transform 120ms; }
+.nft:hover { border-color: var(--ink-3); transform: translateY(-1px); }
+.nft.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.nft .art, .big-art { aspect-ratio: 1; border-radius: 6px; background: var(--surface-2); display: grid; place-items: center; overflow: hidden; }
+.nft .art img, .big-art img { width: 100%; height: 100%; object-fit: cover; }
+.nft .sym { font-weight: 600; margin-top: 8px; }
+.nft .back { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.detail { display: grid; grid-template-columns: minmax(140px, 240px) 1fr; gap: 18px; align-items: start; }
+@media (max-width: 560px) { .detail { grid-template-columns: 1fr; } }
+.big-art { width: 100%; max-width: 240px; }
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.kv span { color: var(--ink-3); font-size: 13px; }
+.kv b { font-variant-numeric: tabular-nums; }
+.hint { font-size: 12.5px; color: var(--ink-3); }
+
+/* The one panel that leads a tab. Everything else stays plain, so the page
+   has a subject rather than six equal boxes. */
+section.lead { background: linear-gradient(145deg, var(--private), var(--surface) 72%); border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); }
+section.lead > h2 { color: var(--accent); }
+/* The accent rides the panel's top edge rather than sitting inside the
+   heading: `h2` is a space-between flex row, so a pseudo-element there
+   becomes a third child and gets pushed to the far side. */
+section.lead { box-shadow: inset 0 2px 0 var(--accent); }
+
+/* Anything anybody can check: heights, roots, hashes, floors, reserves. */
+.record { font-family: var(--mono); font-size: 12.5px; color: var(--record); font-variant-numeric: tabular-nums; }
+.empty { padding: 18px; border: 1px dashed var(--line); border-radius: 8px; color: var(--ink-3); font-size: 13px; text-align: center; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 140px; }
+input, select, textarea { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--surface) 58%, var(--bg)); color: var(--ink); min-width: 0; width: 100%; transition: border-color 120ms, box-shadow 120ms; }
+textarea { resize: vertical; min-height: 56px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); outline: 0; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn { padding: 9px 15px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer; white-space: nowrap; width: auto; transition: transform 120ms, border-color 120ms, background 120ms; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 500; }
+.btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ink) 28%, var(--line)); transform: translateY(-1px); }
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 90%, var(--ink)); }
+.btn.small { padding: 4px 9px; font-size: 12.5px; }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: 0.55; cursor: progress; }
+.addr { display: flex; gap: 8px; align-items: flex-start; }
+.addr code { font-family: var(--mono); font-size: 13px; flex: 1; min-width: 0; color: var(--ink-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.addr code:hover { color: var(--ink); }
+.addr code.full { white-space: normal; overflow-wrap: anywhere; }
+.t-wait { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; padding: 11px 13px; border-radius: 10px; background: color-mix(in srgb, var(--record) 9%, transparent); border: 1px solid color-mix(in srgb, var(--record) 26%, transparent); }
+.t-wait .t-amt { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.t-wait .t-net { display: block; margin-top: 2px; font-size: 12.5px; color: var(--ink-3); }
+.qr { display: flex; justify-content: center; padding: 12px; background: #fff; border-radius: 14px; border: 1px solid var(--line); }
+.qr svg { width: 200px; height: 200px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 0 4px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:first-child, th:first-child { padding-left: 0; }
+td.r, th.r { text-align: right; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11.5px; background: var(--surface-2); color: var(--ink-2); letter-spacing: 0.03em; white-space: nowrap; }
+.tag.pending { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.tag.exit { background: var(--accent-soft); color: var(--accent); }
+.wrap { overflow-x: auto; }
+.list { display: flex; flex-direction: column; }
+.item { display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.item:last-child { border-bottom: 0; }
+.item .t { font-weight: 500; }
+.item .m { color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
+.item .s { color: var(--ink-3); font-size: 12px; font-family: var(--mono); }
+.item .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; font-size: 15px; }
+.item .amt.in { color: var(--good); } .item .amt.out { color: var(--ink); }
+.in-pending { color: var(--warn); }
+.key { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; padding: 10px; background: var(--bg); border: 1px dashed var(--line); border-radius: 6px; }
+.radio { display: flex; gap: 14px; }
+.radio label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.radio input { width: auto; }
+#log { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); max-height: 200px; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+#log li.err { color: var(--bad); }
+.empty { color: var(--ink-3); font-size: 13.5px; padding: 8px 0; }
+.bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+.busy { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.spin { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .bar i { transition: none; } }
+dialog { border: 1px solid var(--line); border-radius: 17px; background: var(--surface); color: var(--ink); padding: 0; max-width: 440px; width: calc(100% - 32px); box-shadow: 0 30px 80px rgba(0,0,0,.24); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog .d-head { padding: 14px 18px; border-bottom: 1px solid var(--line); font-weight: 600; }
+dialog .d-body { padding: 14px 18px; display: grid; grid-template-columns: 90px 1fr; gap: 8px 12px; font-size: 14px; }
+dialog .d-body .k { color: var(--ink-3); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+dialog .d-body .v { overflow-wrap: anywhere; }
+dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; }
+.item .s a { color: var(--accent); text-decoration: none; }
+.item .s a:hover { text-decoration: underline; }
+.item .s button { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+@media (max-width: 640px) {
+  main { padding: 14px; gap: 14px; grid-template-columns: 1fr; }
+  header { padding-left: 14px; padding-right: 14px; flex-wrap: wrap; gap: 8px; }
+  .brand-mark-frame { width: 51px; height: 41px; }
+  header h1 { font-size: 19px; }
+  .chips { width: 100%; padding-left: 62px; }
+  nav { padding: 7px 8px; }
+  nav button { padding: 8px 12px; font-size: 13px; }
+  .big { font-size: 40px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="brand-mark-frame"><img class="brand-mark" src="nap-mark.png" alt=""></span>
+    <div class="brand-copy"><h1><span>Nap</span> <span class="brand-wallet">Wallet</span></h1><span class="network-badge" id="netname">testnet</span></div>
+  </div>
+  <div class="chips">
+    <span class="chip" id="chip-sync"><span class="dot"></span><span>sync</span></span>
+    <span class="chip" id="chip-zyn"><span class="dot"></span><span>zyn</span></span>
+  </div>
+</header>
+<nav>
+  <button data-tab="wallet" class="on">Wallet</button>
+  <button data-tab="activity">Activity</button>
+  <button data-tab="zyn">Zyn</button>
+  <button data-tab="portfolio">Portfolio</button>
+  <button data-tab="items">Items</button>
+  <button data-tab="agents">Agents</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main data-tab="wallet" id="tab-wallet">
+  <section class="lead">
+    <h2>Balance <small id="synced"></small></h2>
+    <div class="big gold"><span id="bal">–</span><small id="unit">TAZ</small></div>
+    <div class="fiat" id="bal-fiat" hidden></div>
+    <div class="muted" id="bal-detail"></div>
+    <div class="row"><button class="btn primary" id="sync">Sync</button><span class="hint" id="sync-hint"></span></div>
+    <div id="job" hidden><div class="busy"><span class="spin"></span><span id="job-text"></span></div><div class="bar" id="job-bar" hidden><i></i></div></div>
+    <table class="holdings" id="holdings"><tbody></tbody></table>
+    <div class="hint" id="holdings-note"></div>
+  </section>
+  <section>
+    <h2>Receive <small>shielded</small></h2>
+    <div class="qr" id="qr"></div>
+    <div class="addr"><code id="address"></code><button class="btn small" id="copy-addr">Copy</button></div>
+    <div class="hint" id="faucet-hint"></div>
+    <details id="t-recv" hidden>
+      <summary>Coming from an exchange?</summary>
+      <div class="hint">Some exchanges can only pay a transparent address. This one is yours. What lands here is public until you move it in.</div>
+      <div class="addr"><code id="t-address"></code><button class="btn small" id="copy-taddr">Copy</button></div>
+      <div class="hint" id="t-state"></div>
+      <div class="t-wait" id="t-wait" hidden>
+        <div><span class="t-amt" id="t-total"></span><small class="t-net" id="t-net"></small></div>
+        <button class="btn primary" id="t-shield">Make it private</button>
+      </div>
+    </details>
+  </section>
+  <section class="full">
+    <h2>Send <small id="send-unit"></small></h2>
+    <div class="row"><input class="grow mono" id="send-to" placeholder="recipient address" autocomplete="off" spellcheck="false"></div>
+    <div class="row"><input class="grow num" id="send-amount" placeholder="amount" inputmode="decimal"><button class="btn small" id="send-max" type="button">Max</button><button class="btn primary" id="send">Send</button></div>
+    <textarea id="send-memo" placeholder="memo (optional, only the recipient can read it)"></textarea>
+    <div class="hint">Shielded to shielded, from the Ironwood pool, in a v6 transaction. The network fee comes out of your balance; proving takes about a minute.</div>
+  </section>
+</main>
+
+<main data-tab="activity" id="tab-activity" hidden>
+  <section class="full">
+    <h2>Activity <small id="activity-count"></small></h2>
+    <div class="list" id="history"></div>
+  </section>
+  <section class="full">
+    <h2>Log</h2>
+    <ul id="log"></ul>
+  </section>
+</main>
+
+<main data-tab="zyn" id="tab-zyn" hidden>
+  <section class="full" id="zyn-off" hidden>
+    <h2>Zyn</h2>
+    <div class="empty" id="zyn-why"></div>
+  </section>
+  <section id="zyn-account" class="lead">
+    <h2>Zyn account <small id="epoch" class="record"></small></h2>
+    <div class="addr"><code id="account"></code><button class="btn small" id="copy-acct">Copy</button></div>
+    <div class="wrap"><table id="balances"><thead><tr><th>Asset</th><th class="r">Amount</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="hint">Balances on Zyn are private: only this key can read them. Zyn is anchored to Zcash testnet.</div>
+    <div class="hint" id="zyn-exit"></div>
+  </section>
+  <section id="zyn-move">
+    <h2>Move ZEC in and out</h2>
+    <div class="hint" id="dep-how"></div>
+    <div class="addr"><code id="dep-addr"></code><button class="btn small" id="copy-dep">Copy</button></div>
+    <div class="row"><input class="grow num" id="dep-amount" placeholder="amount" inputmode="decimal"><button class="btn primary" id="deposit">Deposit</button></div>
+    <input type="hidden" id="dep-uri">
+    <details id="dep-elsewhere">
+      <summary>Pay from another wallet</summary>
+      <div class="hint">Scan this with Zashi, Ywallet or Zingo, or copy the link — the address fills itself in. Type an amount above first and the link carries it.</div>
+      <div id="dep-qr"></div>
+      <div class="row"><button class="btn small" id="copy-dep-uri">Copy payment link</button></div>
+    </details>
+    <div class="hint" id="bind-state"></div>
+    <div class="row"><button class="btn" id="bind">Bind this wallet as the exit destination</button></div>
+    <div class="row"><input class="grow num" id="wd-amount" placeholder="amount" inputmode="decimal"><button class="btn primary" id="withdraw">Withdraw</button></div>
+  </section>
+  <section id="zyn-send" class="full">
+    <h2>Send on Zyn <small>private, instant</small></h2>
+    <div class="row"><input class="grow mono" id="zt-to" placeholder="recipient account id (64 hex)" spellcheck="false"></div>
+    <div class="row"><select id="zt-asset" style="width:auto"></select><input class="grow num" id="zt-amount" placeholder="amount" inputmode="decimal"><button class="btn primary" id="zt-send">Send</button></div>
+    <label class="hint"><input type="checkbox" id="zt-force"> Use Zcash recovery path — pays the vault 0.0001 with the signed intent in the memo; the node must apply it within 20 blocks or verifiers report censorship. Use it when the node ignores you.</label>
+  </section>
+</main>
+
+<main data-tab="portfolio" id="tab-portfolio" hidden>
+  <section class="lead">
+    <h2>Deployed <small id="pf-orders"></small></h2>
+    <div class="figure" id="pf-total">—</div>
+    <div class="record" id="pf-split"></div>
+    <div class="hint" id="pf-unpriced"></div>
+  </section>
+  <section class="full">
+    <h2>Pool positions</h2>
+    <div class="wrap"><table id="pf-positions"><thead><tr><th>Pair</th><th class="r">Share</th><th class="r">Holdings</th><th class="r">Value</th></tr></thead><tbody></tbody></table></div>
+    <div class="empty" id="pf-positions-empty" hidden></div>
+  </section>
+</main>
+
+<main data-tab="items" id="tab-items" hidden>
+  <section class="full lead">
+    <h2>Items <small id="it-count"></small></h2>
+    <div class="hint">Held on Zyn, privately: only this key can see them. Trading happens in the store — this is where you keep them.</div>
+    <div id="it-grid" class="nft-grid"></div>
+    <div class="empty" id="it-empty" hidden></div>
+  </section>
+  <section class="full" id="it-detail" hidden>
+    <h2 id="it-sym">—</h2>
+    <div class="detail">
+      <div class="art big-art" id="it-art"></div>
+      <div>
+        <div class="kv"><span>Backing</span><b id="it-back">—</b></div>
+        <div class="kv"><span>Collection</span><b id="it-coll">—</b></div>
+        <div class="kv"><span>Phase</span><b id="it-phase">—</b></div>
+        <div class="kv"><span>Supply</span><b id="it-supply" class="record">—</b></div>
+        <div class="kv"><span>Pool</span><b id="it-pool" class="record">—</b></div>
+        <div class="kv"><span>Asset id</span><b id="it-asset" class="record">—</b></div>
+        <div class="hint" style="margin-top:10px">Content hash — what the item <em>is</em>, fixed when it was minted. Check your artwork against it.</div>
+        <div class="addr"><code id="it-content"></code><button class="btn small" id="copy-content">Copy</button></div>
+        <div class="row" style="margin-top:12px"><button class="btn" id="it-redeem">Redeem</button><span class="hint" id="it-redeem-hint"></span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<main data-tab="agents" id="tab-agents" hidden>
+  <section class="lead">
+    <h2>Agent mandates <small>swap only</small></h2>
+    <div class="hint">Give an agent a short-lived trading key with exact asset, pool, amount, and slippage limits. Nap keeps both wallet and session keys; the Zyn VM verifies the signed limits again.</div>
+    <div class="hint"><strong>Transfers, withdrawals, liquidity, destination changes, key export, settings, and new mandates are unavailable on the agent service.</strong></div>
+  </section>
+  <section>
+    <h2>Open mandate</h2>
+    <div class="row"><input class="grow mono" id="agent-assets" placeholder="allowed asset ids, e.g. 0,1"><input class="grow mono" id="agent-pools" placeholder="allowed pool ids, e.g. 1"></div>
+    <div class="row"><input class="grow num" id="agent-input-asset" placeholder="input asset id"><input class="grow num" id="agent-max" placeholder="max per swap"></div>
+    <div class="row"><input class="grow num" id="agent-slip" placeholder="max slippage %" value="0.5"><input class="grow num" id="agent-epochs" placeholder="epochs" value="50"></div>
+    <button class="btn primary" id="agent-create">Review and open</button>
+    <div class="hint">Pause stops Nap immediately. A stateless on-chain grant remains valid until its displayed expiry, so close is local in this release.</div>
+  </section>
+  <section class="full">
+    <h2>Mandates <small id="agent-count"></small></h2>
+    <div class="list" id="agent-list"></div>
+  </section>
+</main>
+
+<main data-tab="settings" id="tab-settings" hidden>
+  <section>
+    <h2>Network</h2>
+    <div class="radio">
+      <label><input type="radio" name="net" value="testnet"> Testnet</label>
+      <label><input type="radio" name="net" value="mainnet"> Mainnet</label>
+    </div>
+    <label class="hint">Testnet block server<input id="lightd-testnet" class="mono" spellcheck="false"></label>
+    <label class="hint">Mainnet block server<input id="lightd-mainnet" class="mono" placeholder="not configured yet" spellcheck="false"></label>
+    <label class="hint"><input type="checkbox" id="set-price"> Show dollar values — asks a price host what ZEC is worth, about once every ten minutes. That tells them this wallet is awake; turn it off and every figure stays in ZEC.</label>
+    <div class="row"><button class="btn primary" id="save-settings">Save</button><span class="hint">Each network has its own wallet key and history.</span></div>
+  </section>
+  <section>
+    <h2>Backup</h2>
+    <div class="hint">The recovery phrase or backup file controls the wallet. Keep one offline. The backup includes the network, birthday and derivation account needed for a complete restore.</div>
+    <div class="row"><button class="btn danger" id="export">Show recovery backup</button><button class="btn" id="download-backup">Download backup</button></div>
+    <div class="key" id="key" hidden></div>
+  </section>
+  <section>
+    <h2>Restore</h2>
+    <div class="hint">Replace this network's wallet with one from a backup. Only allowed while the current wallet is empty. A standard phrase recovers account 0's Orchard, Ironwood and transparent funds; Nap does not scan Sapling.</div>
+    <textarea class="mono" id="import-key" placeholder="24-word BIP-39 phrase, Nap backup JSON, or legacy 64-hex key" spellcheck="false" autocomplete="off"></textarea>
+    <div class="row"><input class="grow num" id="import-birthday" placeholder="birthday height (phrases and keys)" inputmode="numeric"><input class="grow num" id="import-account" placeholder="ZIP-32 account (default 0)" inputmode="numeric"></div>
+    <input class="mono" id="import-passphrase" type="password" placeholder="BIP-39 passphrase (optional)" autocomplete="off">
+    <div class="row"><button class="btn" id="import">Restore</button></div>
+  </section>
+  <section>
+    <h2>Rescan</h2>
+    <div class="hint">If something looks missing, rescan from a height at or before your first receipt. Birthday: <span class="mono" id="birthday"></span>.</div>
+    <div class="row"><input class="grow num" id="reset-height" placeholder="height" inputmode="numeric"><button class="btn" id="reset">Rescan</button></div>
+  </section>
+  <section>
+    <h2>About</h2>
+    <div class="muted" id="about"></div>
+    <div class="wrap"><table id="notes"><thead><tr><th>Note</th><th>Pool</th><th class="r">Amount</th><th class="r">Height</th></tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <div class="d-head" id="dlg-title"></div>
+  <div class="d-body" id="dlg-body"></div>
+  <div class="d-foot"><button class="btn" id="dlg-no">Cancel</button><button class="btn primary" id="dlg-yes">Confirm</button></div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null;
+let busy = false;
+
+// Where the app is. In the browser tab it is this origin; in the desktop
+// and mobile shells it is in-process (Tauri); in the extension popup it is
+// the local app on loopback.
+const BASE = window.ZYN_API_BASE || '';
+async function api(path, body) {
+  if (window.__TAURI__ && window.__TAURI__.core) {
+    const r = await window.__TAURI__.core.invoke('api_call', { method: body ? 'POST' : 'GET', path, input: body || {} });
+    if (r && r.error) throw new Error(r.error);
+    return r;
+  }
+  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Zyn': '1' }, body: JSON.stringify(body) } : {};
+  const r = await fetch(BASE + path, opts).catch(() => { throw new Error('Nap Wallet is not running'); });
+  const j = await r.json().catch(() => ({ error: 'bad reply' }));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function logLine(text, err) {
+  const li = document.createElement('li');
+  li.textContent = new Date().toLocaleTimeString() + '  ' + text;
+  if (err) li.className = 'err';
+  $('log').prepend(li);
+  if (err) toast(text, true);
+}
+function toast(text, err) { $('sync-hint').textContent = text; $('sync-hint').style.color = err ? 'var(--bad)' : ''; }
+
+async function run(btn, label, fn) {
+  if (busy) return;
+  busy = true;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  try { await fn(); await waitForJob(); } catch (e) { logLine(e.message, true); }
+  busy = false; btn.disabled = false; btn.textContent = old;
+  await load();
+}
+// A started job runs on the app's own thread; poll until it is gone.
+async function waitForJob() {
+  for (;;) {
+    let o; try { o = await api('/api/overview'); } catch { return; }
+    render(o);
+    if (!o.job) return;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+// Review before anything that moves value. Resolves true on Confirm.
+function confirmDialog(title, rows) {
+  return new Promise((resolve) => {
+    $('dlg-title').textContent = title;
+    $('dlg-body').innerHTML = rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v ${/address|account|memo/i.test(k) ? 'mono' : ''}">${esc(v)}</div>`).join('');
+    const done = (v) => { $('dlg').close(); $('dlg-yes').onclick = $('dlg-no').onclick = null; resolve(v); };
+    $('dlg-yes').onclick = () => done(true);
+    $('dlg-no').onclick = () => done(false);
+    $('dlg').onclose = () => resolve(false);
+    $('dlg').showModal();
+  });
+}
+
+function fmt(x, d = 8) { let s = Number(x).toFixed(d); if (s.includes('.')) s = s.replace(/\.?0+$/, ''); return s === '' || s === '-' ? '0' : s; }
+function short(s, n = 10) { return s && s.length > 2 * n ? s.slice(0, n) + '…' + s.slice(-6) : (s || ''); }
+// A long string shown short. The whole of it stays on the element, for the
+// What this account has put into Zyn. Three buckets because they behave
+// differently: idle can leave today, pooled is exposed to the pair, and an
+// item's floor is the least it is worth rather than what it would fetch.
+// Everything this wallet holds, across both chains. The Zyn side is priced by
+// the chain itself; anything it cannot price is listed without a value and left
+// out of the total, the same way the portfolio treats it.
+function renderHoldings(s) {
+  const z = s.zyn || {};
+  const price = new Map((z.assets || []).map(a => [a.id, a.price_zec]));
+  const lp = new Map((z.positions || []).map(q => [q.lp_asset, q]));
+  const rows = [];
+  if (Number(s.balance.total) > 0) {
+    rows.push({ sym: s.unit, on: 'Zcash · shielded', amount: s.balance.total, zec: Number(s.balance.total) });
+  }
+  for (const h of (z.record && z.record.spendable) || []) {
+    const n = Number(h.amount);
+    if (!(n > 0)) continue;
+    const q = lp.get(h.asset);
+    const p = price.get(h.asset);
+    rows.push({
+      sym: h.symbol,
+      on: q ? `Zyn · ${q.symbol0}/${q.symbol1} pool` : 'Zyn',
+      amount: h.amount,
+      zec: q ? Number(q.value_zec) : (p != null ? n * Number(p) : null),
+    });
+  }
+  rows.sort((a, b) => (b.zec || 0) - (a.zec || 0));
+  $('holdings').querySelector('tbody').innerHTML = rows.map((r) =>
+    `<tr><td class="sym">${esc(r.sym)}<small>${esc(r.on)}</small></td>` +
+    `<td class="amt">${esc(amt(r.amount))}</td>` +
+    `<td class="val">${valueCell(r, s.unit, s.zec_usd)}</td></tr>`).join('');
+
+  // The chain's own total for the Zyn side, not a sum re-derived here.
+  const total = Number(s.balance.total) + Number((z.portfolio && z.portfolio.total_zec) || 0);
+  $('bal').textContent = fmt(total);
+  const un = (z.portfolio && z.portfolio.unpriced) || 0;
+  $('holdings-note').textContent = !rows.length
+    ? 'Nothing held yet.'
+    : un ? `${un} holding(s) the chain cannot price are listed without a value and are not counted above.` : '';
+  setFiat(total, s);
+}
+
+function valueCell(r, unit, usd) {
+  if (r.zec == null) return '—';
+  if (usd != null) return esc(money(r.zec * usd));
+  // No price to convert with. Fall back to the ZEC quote — except on a
+  // ZEC-denominated holding, where printing the same number twice on one row
+  // reads as a bug rather than as information.
+  if (Math.abs(r.zec - Number(r.amount)) < 1e-12) return '';
+  return esc(fmt(r.zec)) + ' ' + esc(unit);
+}
+
+// Holdings worth a fraction of a cent are ordinary here, and rounding them all
+// to $0.00 says nothing. Widen the places rather than flatten the number.
+function money(x) {
+  if (!isFinite(x) || x === 0) return '$0.00';
+  const a = Math.abs(x);
+  if (a < 0.0001) return '<$0.0001';
+  const d = a < 0.01 ? 4 : 2;
+  return '$' + x.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+// Zyn amounts arrive as high-precision decimal strings. Show them at a size a
+// person reads, without implying more precision than matters.
+function amt(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return String(v);
+  return n >= 1000 ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : fmt(n, 8);
+}
+
+// The price is fetched and cached by the app, never by this page: one wallet
+// asking once every ten minutes, rather than a request each time the popup is
+// opened. Absent when the holder has the switch off in Settings.
+function setFiat(totalZec, s) {
+  const usd = s.zec_usd;
+  $('bal-fiat').hidden = usd == null;
+  if (usd == null) return;
+  // Testnet coins convert arithmetically and are still worth nothing. Say so
+  // rather than let the figure imply otherwise.
+  const note = s.network === 'mainnet' ? '' : ' <small>· testnet, not real value</small>';
+  $('bal-fiat').innerHTML = '≈ ' + esc(money(totalZec * usd)) + note;
+}
+
+function renderPortfolio(z) {
+  const p = z.portfolio || {};
+  $('pf-total').textContent = p.total_zec != null ? `${p.total_zec} ZEC` : '—';
+  $('pf-split').textContent = p.total_zec == null ? '' :
+    `${p.idle_zec} idle · ${p.pooled_zec} in pools · ${p.items_floor_zec} backing items`;
+  $('pf-unpriced').textContent = p.unpriced ? `${p.unpriced} holding(s) the chain cannot price — not counted above.` : '';
+  $('pf-orders').textContent = p.open_orders ? `${p.open_orders} open order(s)` : '';
+
+  const tb = $('pf-positions').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const q of z.positions || []) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(q.symbol0)}/${esc(q.symbol1)}</td>` +
+      `<td class="r">${(q.share * 100).toFixed(2)}%</td>` +
+      `<td class="r">${esc(q.amount0)} ${esc(q.symbol0)}<br>${esc(q.amount1)} ${esc(q.symbol1)}</td>` +
+      `<td class="r">${q.value_zec ? esc(q.value_zec) + ' ZEC' : '—'}</td>`;
+    tb.appendChild(tr);
+  }
+  $('pf-positions-empty').hidden = (z.positions || []).length > 0;
+  $('pf-positions-empty').textContent = 'No liquidity provided yet.';
+
+}
+
+// An identicon from the content hash.
+//
+// There is no art to show until something serves the bytes, and a broken
+// image tells a holder nothing. This is derived from the hash itself, so two
+// items never look alike and a *changed* hash never looks the same — which is
+// the one property a placeholder for a content commitment should have.
+function identicon(hex, cells) {
+  const n = cells || 5;
+  const b = [];
+  for (let i = 0; i + 1 < hex.length; i += 2) b.push(parseInt(hex.slice(i, i + 2), 16));
+  if (!b.length) return '';
+  const hue = (b[0] * 360) / 256, hue2 = (hue + 40 + (b[1] % 80)) % 360;
+  const fg = `hsl(${hue.toFixed(0)} 62% 52%)`, fg2 = `hsl(${hue2.toFixed(0)} 58% 42%)`;
+  const half = Math.ceil(n / 2);
+  let rects = '';
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < half; x++) {
+      const bit = b[(y * half + x) % b.length] & (1 << (x % 8));
+      if (!bit) continue;
+      const c = ((x + y) % 3 === 0) ? fg2 : fg;
+      for (const xx of [x, n - 1 - x]) {
+        rects += `<rect x="${xx}" y="${y}" width="1" height="1" fill="${c}"/>`;
+      }
+    }
+  }
+  return `<svg viewBox="0 0 ${n} ${n}" preserveAspectRatio="none" width="100%" height="100%" shape-rendering="crispEdges">${rects}</svg>`;
+}
+
+let selectedItem = null;
+
+function renderItems(z) {
+  const items = z.items || [];
+  // Settle the selection *before* drawing the grid. Choosing afterwards left
+  // the first render showing a detail panel with nothing marked as chosen.
+  if (selectedItem != null && !items.some((i) => i.asset === selectedItem)) selectedItem = null;
+  if (selectedItem == null && items.length) selectedItem = items[0].asset;
+  const grid = $('it-grid');
+  grid.innerHTML = '';
+  for (const it of items) {
+    const d = document.createElement('div');
+    d.className = 'nft' + (selectedItem === it.asset ? ' sel' : '');
+    d.innerHTML = `<div class="art">${identicon(it.content || '')}</div>` +
+      `<div class="sym">${esc(it.symbol)}</div>` +
+      `<div class="back">${it.redeem_price ? 'backed ' + esc(it.redeem_price) + ' ZEC' : 'no floor yet'}</div>`;
+    d.onclick = () => { selectedItem = it.asset; renderItems(z); };
+    grid.appendChild(d);
+  }
+  $('it-count').textContent = items.length ? String(items.length) : '';
+  $('it-empty').hidden = items.length > 0;
+  $('it-empty').textContent = 'Nothing here yet. Anything you buy in the store appears here, visible only to this key.';
+
+  const it = items.find((i) => i.asset === selectedItem);
+  $('it-detail').hidden = !it;
+  if (!it) return;
+
+  const coll = (z.collections || []).find((c) => c.id === it.collection);
+  $('it-sym').textContent = it.symbol;
+  $('it-art').innerHTML = identicon(it.content || '', 7);
+  $('it-back').textContent = it.redeem_price ? `${it.redeem_price} ZEC` : 'not redeemable yet';
+  $('it-coll').textContent = coll ? `${coll.symbol} (#${coll.id})` : '—';
+  $('it-phase').textContent = coll ? coll.phase_name : '—';
+  $('it-supply').textContent = coll ? `${coll.minted} of ${coll.cap} minted · ${coll.outstanding} outstanding` : '—';
+  $('it-pool').textContent = coll ? `${coll.pool} ZEC behind ${coll.outstanding}` : '—';
+  $('it-asset').textContent = String(it.asset);
+  setAddr('it-content', it.content || '');
+
+  // Redeem burns the item for its share of the pool. It needs no counterparty
+  // and it cannot be undone, so it asks twice and says what it costs — a
+  // single click on an irreversible action is a trap, however clear the label.
+  const btn = $('it-redeem');
+  const live = coll && coll.phase === 3 && it.redeem_price;
+  btn.disabled = !live;
+  btn.dataset.armed = '';
+  btn.textContent = 'Redeem';
+  $('it-redeem-hint').textContent = live
+    ? `burns this item for ${it.redeem_price} ZEC`
+    : (coll ? `not redeemable while the collection is ${coll.phase_name}` : 'this item has no collection behind it');
+  btn.onclick = () => {
+    if (btn.dataset.armed !== '1') {
+      btn.dataset.armed = '1';
+      btn.textContent = 'Confirm — this destroys it';
+      $('it-redeem-hint').textContent = `you receive ${it.redeem_price} ZEC on Zyn; the item is gone`;
+      return;
+    }
+    run(btn, 'Redeeming…', async () => {
+      await api('/api/redeem', { asset: it.asset });
+      selectedItem = null;
+      toast('redeemed');
+    });
+  };
+}
+
+// copy button and for a click, so nothing a person needs is thrown away.
+function setAddr(id, value, n = 12) {
+  const el = $(id);
+  if (el.dataset.full === value) return;
+  el.dataset.full = value || '';
+  el.title = value ? value + '  (click to show in full)' : '';
+  el.classList.remove('full');
+  el.textContent = short(value, n);
+}
+document.addEventListener('click', (ev) => {
+  const c = ev.target.closest('.addr code');
+  if (!c || !c.dataset.full) return;
+  const full = c.classList.toggle('full');
+  c.textContent = full ? c.dataset.full : short(c.dataset.full, 12);
+});
+function chip(id, cls, text) { const c = $(id); c.className = 'chip ' + cls; c.lastElementChild.textContent = text; }
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// Tabs
+for (const b of document.querySelectorAll('nav button')) b.onclick = () => showTab(b.dataset.tab);
+function showTab(name) {
+  for (const b of document.querySelectorAll('nav button')) b.classList.toggle('on', b.dataset.tab === name);
+  for (const m of document.querySelectorAll('main')) m.hidden = m.dataset.tab !== name;
+  try { localStorage.setItem('tab', name); } catch {}
+}
+
+function render(s) {
+  state = s;
+  const net = s.network, main = net === 'mainnet';
+  $('netname').textContent = net;
+  document.title = 'Nap Wallet — ' + net;
+  $('unit').textContent = s.unit; $('send-unit').textContent = 'any ' + s.unit + ' address';
+  renderHoldings(s);
+  const pend = s.balance.pending > 0 ? ` · <span class="in-pending">${fmt(s.balance.pending)} ${s.unit} pending</span>` : '';
+  const onZyn = Number((s.zyn && s.zyn.portfolio && s.zyn.portfolio.total_zec) || 0);
+  $('bal-detail').innerHTML = onZyn > 0
+    ? `${fmt(s.balance.total)} on Zcash · ${fmt(onZyn)} on Zyn${pend}`
+    : `Ironwood ${fmt(s.balance.ironwood / 1e8)} · Orchard ${fmt(s.balance.orchard / 1e8)}${pend}`;
+  const behind = s.synced_to ? s.tip - s.synced_to : null;
+  $('synced').textContent = s.synced_to ? `synced to ${s.synced_to} · tip ${s.tip}` : `not synced · birthday ${s.birthday}`;
+  chip('chip-sync', s.job && s.job.kind === 'sync' ? 'warn' : behind !== null && behind <= s.confirmations + 2 ? 'ok' : 'warn', s.job && s.job.kind === 'sync' ? 'syncing…' : behind === null ? 'not synced' : behind <= s.confirmations + 2 ? 'in sync' : `${behind} blocks behind · catching up`);
+  const job = s.job;
+  $('job').hidden = !job;
+  if (job) {
+    const p = job.progress;
+    $('job-text').textContent = job.kind === 'sync' ? (p ? `scanning ${p.at.toLocaleString()} of ${p.to.toLocaleString()}` : 'syncing…') : job.kind === 'send' || job.kind === 'deposit' ? 'proving the payment (about a minute)…' : job.kind === 'shield' ? 'moving it in privately (about a minute)…' : job.kind + '…';
+    $('job-bar').hidden = !(job.kind === 'sync' && p);
+    if (p) $('job-bar').firstElementChild.style.width = Math.min(100, Math.round(100 * (p.at - s.birthday) / Math.max(1, p.to - s.birthday))) + '%';
+  }
+  for (const b of ['sync', 'send', 'deposit', 'withdraw', 'bind', 'zt-send', 'import', 'reset', 'save-settings', 't-shield']) $(b).disabled = !!job || ((b === 'withdraw' || b === 't-shield') && $(b).disabled);
+  setAddr('address', s.address);
+  $('t-recv').hidden = !s.transparent_address;
+  if (s.transparent_address) setAddr('t-address', s.transparent_address);
+  $('qr').innerHTML = s.qr_svg || '';
+  $('faucet-hint').textContent = main ? 'Shielded (Orchard + Ironwood) unified address. Private from the moment it lands.' : 'Testnet. No TAZ yet? Paste the address into a testnet faucet.';
+  $('birthday').textContent = s.birthday;
+
+  // Activity
+  const h = $('history'); h.innerHTML = '';
+  $('activity-count').textContent = s.history.length ? `${s.history.length} entries` : '';
+  if (!s.history.length) h.innerHTML = '<div class="empty">Nothing yet. Receive some ' + s.unit + ' to begin.</div>';
+  for (const e of s.history) h.insertAdjacentHTML('beforeend', entryHtml(e, s));
+
+  // Notes (settings → about)
+  const nb = $('notes').querySelector('tbody'); nb.innerHTML = '';
+  if (!s.notes.length) nb.innerHTML = '<tr><td colspan="4" class="muted">No spendable notes.</td></tr>';
+  for (const n of s.notes) nb.insertAdjacentHTML('beforeend', `<tr><td class="mono">${short(n.txid, 8)}</td><td>${n.pool}</td><td class="r num">${fmt(n.zec)}</td><td class="r num">${n.height}</td></tr>`);
+  $('about').textContent = `Nap Wallet · ${net} · block server ${main ? s.settings.lightd_mainnet : s.settings.lightd_testnet}` + (s.zyn.available ? ` · Zyn node ${s.zyn.node} chain ${s.zyn.chain}` : '');
+
+  // Settings
+  for (const r of document.querySelectorAll('input[name=net]')) r.checked = r.value === s.settings.network;
+  if (document.activeElement !== $('lightd-testnet')) $('lightd-testnet').value = s.settings.lightd_testnet;
+  if (document.activeElement !== $('lightd-mainnet')) $('lightd-mainnet').value = s.settings.lightd_mainnet;
+  if (document.activeElement !== $('set-price')) $('set-price').checked = s.settings.price !== false;
+
+  // Zyn
+  const z = s.zyn;
+  $('zyn-off').hidden = z.available; $('zyn-account').hidden = !z.available; $('zyn-move').hidden = !z.available; $('zyn-send').hidden = !z.available;
+  if (!z.available) { $('zyn-why').textContent = z.why || ''; chip('chip-zyn', 'warn', 'zyn · mainnet later'); return; }
+  $('zyn-exit').textContent = z.exit && z.exit.epoch !== null && z.exit.epoch !== undefined
+    ? `Exit proof kept for epoch ${z.exit.epoch}${z.exit.verified ? ' ✓' : ' (does not verify)'} — enough to leave even if the sequencer disappears.`
+    : 'Exit proof: none yet — kept automatically after the first anchor reaches Zcash.';
+  const st = z.status;
+  chip('chip-zyn', st.ok ? 'ok' : 'bad', st.ok ? `zyn · epoch ${st.epoch}` : 'zyn node down');
+  $('epoch').textContent = st.ok ? `chain ${z.chain} · epoch ${st.epoch}` : (st.error || '');
+  setAddr('account', z.account);
+  // One shielded address per account: paying it from any wallet is a deposit,
+  // with nothing to remember and no memo to get wrong. Older nodes cannot
+  // issue one, and then the shared vault address plus the memo is still it.
+  const dep = z.deposit_address || null;
+  setAddr('dep-addr', dep || z.vault);
+  renderPortfolio(z);
+  renderItems(z);
+  $('dep-qr').innerHTML = z.deposit_qr_svg || '';
+  $('dep-uri').value = z.deposit_uri || '';
+  $('dep-how').textContent = dep
+    ? 'This address is yours alone. Anything sent to it from any shielded Zcash wallet is credited to this account — no memo needed. Deposit below pays it from this wallet.'
+    : 'This node issues no per-account address, so deposits go to the shared vault and must carry the memo naming your account. Deposit below attaches it for you.';
+  const r = z.record;
+  const bb = $('balances').querySelector('tbody'); bb.innerHTML = '';
+  for (const b of r.spendable) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td></td></tr>`);
+  for (const b of r.unreleased) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td><span class="tag pending">arriving · epoch ${b.epoch}</span></td></tr>`);
+  for (const b of r.exiting) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td><span class="tag exit">leaving · since ${b.since}</span></td></tr>`);
+  if (!bb.children.length) bb.innerHTML = `<tr><td colspan="3" class="muted">${r.known ? 'Nothing held on Zyn.' : 'Zyn has not seen this account yet. A deposit creates it.'}</td></tr>`;
+  const bound = r.bound_here;
+  $('bind-state').textContent = bound ? `Withdrawals go to this wallet${z.binding && z.binding.revealed ? '' : ' (reveal pending)'}.` : r.bound ? 'This account is bound elsewhere; rebinding waits out a delay.' : 'Bind once; then a withdrawal is just an amount. The chain holds only a commitment to your address.';
+  $('bind').textContent = bound ? 'Bound to this wallet ✓' : 'Bind this wallet as the exit destination';
+  $('withdraw').disabled = !bound;
+  const sel = $('zt-asset'); const cur = sel.value;
+  sel.innerHTML = z.assets.map(a => `<option value="${a.id}">${a.symbol}</option>`).join('');
+  if (cur) sel.value = cur;
+
+  const lg = $('log');
+  if (lg.dataset.n !== String(s.log.length)) { lg.innerHTML = ''; for (const l of s.log) { const li = document.createElement('li'); li.textContent = l; li.className = /^error/.test(l) ? 'err' : ''; lg.prepend(li); } lg.dataset.n = String(s.log.length); }
+}
+
+function entryHtml(e, s) {
+  const inb = e.kind === 'received';
+  const when = e.at ? new Date(e.at * 1000).toLocaleString() : '';
+  const status = e.height ? `height ${e.height}` : '<span class="tag pending">pending</span>';
+  const title = inb ? 'Received' : e.kind === 'deposit' ? 'Deposit to Zyn' : e.to ? `Sent to ${short(e.to, 8)}` : 'Sent (found on rescan; fee included)';
+  const tx = window.__TAURI__ ? `<button data-copy="${esc(e.txid)}">${short(e.txid, 8)}</button>` : `<a href="${s.explorer}${esc(e.txid)}" target="_blank" rel="noopener">${short(e.txid, 8)}</a>`;
+  const meta = `${when} · ${status} · ${tx}`;
+  const memo = e.memo && e.memo.length > 44 && !/\s/.test(e.memo) ? short(e.memo, 16) : e.memo;
+  return `<div class="item"><div><div class="t">${title}</div>${memo ? `<div class="m" title="${esc(e.memo)}">“${esc(memo)}”</div>` : ''}<div class="s">${meta}</div></div><div class="amt ${inb ? 'in' : 'out'}">${inb ? '+' : '−'}${fmt(e.zec)} ${s.unit}</div></div>`;
+}
+document.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-copy]'); if (b) navigator.clipboard.writeText(b.dataset.copy).then(() => toast('txid copied')).catch(() => {}); });
+
+function ids(value) {
+  const out = value.split(',').map(x => Number(x.trim())).filter(Number.isInteger);
+  if (!out.length || out.some(x => x < 0) || new Set(out).size !== out.length) throw new Error('enter unique numeric ids separated by commas');
+  return out;
+}
+function rawAmount(raw) {
+  const n = BigInt(raw), wad = 1000000000000000000n;
+  const whole = n / wad, frac = String(n % wad).padStart(18, '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+async function loadAgents() {
+  let result;
+  try { result = await api('/api/agent/mandates'); } catch { return; }
+  const list = $('agent-list'); list.innerHTML = '';
+  $('agent-count').textContent = `${result.mandates.length} total`;
+  if (!result.mandates.length) { list.innerHTML = '<div class="empty">No agent has authority.</div>'; return; }
+  for (const m of result.mandates) {
+    const limits = m.max_per_action_raw.map(x => `${rawAmount(x.amount)} of asset ${x.asset}`).join(', ');
+    list.insertAdjacentHTML('beforeend', `<div class="item"><div><div class="t">${esc(m.state)} · until epoch ${m.valid_until_epoch}</div><div class="m">assets ${m.allowed_assets.join(', ')} · pools ${m.allowed_pools.join(', ')} · max ${esc(limits)} · slippage ${m.max_slippage_bps / 100}%</div><div class="s">${esc(m.id)}</div></div><div class="row">${m.state === 'active' ? `<button class="btn small" data-agent-pause="${esc(m.id)}">Pause</button>` : ''}${m.state !== 'closed' ? `<button class="btn small danger" data-agent-close="${esc(m.id)}">Close</button>` : ''}</div></div>`);
+  }
+}
+
+async function load() {
+  try {
+    const o = await api('/api/overview');
+    render(o);
+    loadAgents();
+    // Keep up on our own: if the scan has fallen behind and nothing else is
+    // running, start a sync in the background and let the poll pick it up.
+    const behind = o.synced_to ? o.tip - o.synced_to : Infinity;
+    if (!o.job && !busy && behind > o.confirmations + 2) { api('/api/sync', {}).catch(() => {}); }
+  } catch (e) { chip('chip-sync', 'bad', 'app unreachable'); toast(e.message, true); }
+}
+
+$('sync').onclick = () => run($('sync'), 'Syncing…', async () => { await api('/api/sync', {}); });
+$('send-max').onclick = () => { if (state) $('send-amount').value = fmt(Math.max(0, state.balance.total - state.fee_estimate)); };
+$('send').onclick = () => run($('send'), 'Sending…', async () => {
+  const to = $('send-to').value.trim(), amount = $('send-amount').value.trim(), memo = $('send-memo').value;
+  if (!to || !amount) throw new Error('recipient and amount are required');
+  const ok = await confirmDialog('Send ' + state.unit, [['To', to], ['Amount', `${amount} ${state.unit}`], ['Fee', `about ${fmt(state.fee_estimate)} ${state.unit}`], ['Memo', memo || '(none)']]);
+  if (!ok) return;
+  await api('/api/send', { to, amount, memo });
+  $('send-amount').value = ''; $('send-memo').value = ''; $('send-to').value = '';
+});
+$('deposit').onclick = () => run($('deposit'), 'Sending…', async () => {
+  const amount = $('dep-amount').value.trim();
+  if (!amount) throw new Error('amount is required');
+  const ok = await confirmDialog('Deposit to Zyn', [['Amount', `${amount} ${state.unit}`], ['To', 'the Zyn vault'], ['Memo', state.zyn.memo], ['Credit', 'as ZEC.zy after 3 confirmations and one epoch']]);
+  if (!ok) return;
+  await api('/api/deposit', { amount });
+  $('dep-amount').value = '';
+});
+$('import').onclick = () => run($('import'), 'Restoring…', async () => {
+  const secret = $('import-key').value.trim();
+  if (!secret) throw new Error('a recovery phrase, backup, or spending key is required');
+  const isBackup = secret.startsWith('{'), isMnemonic = !isBackup && secret.split(/\s+/).length > 1;
+  const birthdayText = $('import-birthday').value.trim();
+  if (!isBackup && !birthdayText) throw new Error('birthday height is required for a phrase or spending key');
+  const birthday = birthdayText ? Number(birthdayText) : null;
+  if (birthday !== null && (!Number.isSafeInteger(birthday) || birthday < 0)) throw new Error('birthday must be a block height');
+  const accountText = $('import-account').value.trim();
+  const account = accountText ? Number(accountText) : 0;
+  if (!Number.isSafeInteger(account) || account < 0 || account >= 2 ** 31) throw new Error('account must be a number below 2^31');
+  let body;
+  if (isBackup) {
+    try { body = { backup: JSON.parse(secret) }; } catch (_) { throw new Error('backup JSON is invalid'); }
+  } else if (isMnemonic) {
+    body = { mnemonic: secret, passphrase: $('import-passphrase').value, account, birthday };
+  } else {
+    body = { key: secret, birthday };
+  }
+  const kind = isBackup ? 'Nap backup' : isMnemonic ? `BIP-39 phrase, account ${account}` : 'legacy spending key';
+  const shownBirthday = isBackup ? 'from backup' : String(birthday);
+  const ok = await confirmDialog('Restore a wallet', [['Network', state.network], ['Source', kind], ['Birthday', shownBirthday], ['Replaces', 'the current, empty wallet for this network']]);
+  if (!ok) return;
+  const r = await api('/api/import', body);
+  logLine('restored; address ' + short(r.address, 12) + (r.warning ? ' · WARNING: ' + r.warning : ''));
+  $('import-key').value = ''; $('import-passphrase').value = '';
+});
+$('bind').onclick = () => run($('bind'), 'Binding…', async () => { await api('/api/bind', {}); logLine('bound and revealed'); });
+$('withdraw').onclick = () => run($('withdraw'), 'Submitting…', async () => {
+  const amount = $('wd-amount').value.trim();
+  const ok = await confirmDialog('Withdraw from Zyn', [['Amount', `${amount} ZEC.zy`], ['To', 'this wallet (' + short(state.address, 12) + ')'], ['Paid', 'shielded, at the end of the epoch']]);
+  if (!ok) return;
+  const r = await api('/api/withdraw', { amount }); logLine(`withdrawal requested at seq ${r.seq}; it is paid at the end of the epoch`); $('wd-amount').value = '';
+});
+$('zt-send').onclick = () => run($('zt-send'), 'Sending…', async () => {
+  const to = $('zt-to').value.trim(), amount = $('zt-amount').value.trim(), sym = $('zt-asset').selectedOptions[0]?.textContent || '';
+  const ok = await confirmDialog('Send on Zyn', [['To account', to], ['Amount', `${amount} ${sym}`], ['Settles', 'this epoch, privately']]);
+  if (!ok) return;
+  const force = $('zt-force').checked;
+  const r = await api('/api/transfer', { to, asset: +$('zt-asset').value, amount, force }); logLine(force ? `forced via Zcash in tx ${r.txid.slice(0, 12)}… — the node has 20 blocks` : `sent on Zyn at seq ${r.seq}`); $('zt-amount').value = ''; $('zt-force').checked = false;
+});
+$('save-settings').onclick = () => run($('save-settings'), 'Saving…', async () => { const net = document.querySelector('input[name=net]:checked').value; await api('/api/settings', { network: net, lightd_testnet: $('lightd-testnet').value, lightd_mainnet: $('lightd-mainnet').value, price: $('set-price').checked }); logLine('settings saved; now on ' + net); });
+$('agent-create').onclick = () => run($('agent-create'), 'Opening…', async () => {
+  const allowed_assets = ids($('agent-assets').value), allowed_pools = ids($('agent-pools').value);
+  const asset = Number($('agent-input-asset').value), amount = $('agent-max').value.trim();
+  const max_slippage_bps = Math.round(Number($('agent-slip').value) * 100), valid_for_epochs = Number($('agent-epochs').value);
+  if (!Number.isInteger(asset) || asset < 0 || !amount || !Number.isInteger(valid_for_epochs)) throw new Error('input asset, maximum amount, and whole epochs are required');
+  const ok = await confirmDialog('Open agent mandate', [['Can do', 'exact-input swaps only'], ['Assets', allowed_assets.join(', ')], ['Pools', allowed_pools.join(', ')], ['Maximum per swap', `${amount} of asset ${asset}`], ['Maximum slippage', `${max_slippage_bps / 100}%`], ['Expires', `after ${valid_for_epochs} epochs`], ['Cannot do', 'transfer, withdraw, add liquidity, bind, delegate, export keys, or change settings']]);
+  if (!ok) return;
+  await api('/api/agent/mandates', { allowed_assets, allowed_pools, max_per_action_raw: [{ asset, amount }], max_slippage_bps, valid_for_epochs });
+  await loadAgents();
+  logLine('agent mandate opened');
+});
+document.addEventListener('click', async (ev) => {
+  const pause = ev.target.closest('[data-agent-pause]'), close = ev.target.closest('[data-agent-close]');
+  const button = pause || close; if (!button) return;
+  const action = close ? 'close' : 'pause', mandate_id = close ? close.dataset.agentClose : pause.dataset.agentPause;
+  const ok = await confirmDialog(action === 'close' ? 'Close mandate' : 'Pause mandate', [['Mandate', mandate_id], ['Local effect', 'Nap stops signing immediately'], ['On chain', 'the signed session still expires at its displayed epoch']]);
+  if (!ok) return;
+  await run(button, action === 'close' ? 'Closing…' : 'Pausing…', async () => { await api('/api/agent/' + action, { mandate_id }); await loadAgents(); });
+});
+$('export').onclick = () => run($('export'), '…', async () => {
+  const r = await api('/api/export', {}); $('key').hidden = false;
+  $('key').textContent = r.mnemonic ? `Recovery phrase:\n${r.mnemonic}\n\nPortable backup:\n${r.backup}` : `Legacy wallet (no phrase exists for this key)\n\nPortable backup:\n${r.backup}`;
+});
+$('download-backup').onclick = () => run($('download-backup'), 'Preparing…', async () => {
+  const r = await api('/api/export', {});
+  const blob = new Blob([r.backup + '\n'], { type: 'application/json' });
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = `nap-wallet-${r.network}-backup.json`; a.click(); URL.revokeObjectURL(url);
+});
+$('reset').onclick = () => run($('reset'), 'Resetting…', async () => { await api('/api/reset', { birthday: +$('reset-height').value }); logLine('rescanning from ' + $('reset-height').value); });
+// The amount is whatever is in the box when you copy, so the link a person
+// sends to their phone already says how much.
+$('copy-dep-uri').onclick = () => {
+  let uri = $('dep-uri').value;
+  const a = parseFloat($('dep-amount').value);
+  if (uri && a > 0) uri += '&amount=' + String(a);
+  navigator.clipboard.writeText(uri).then(() => toast('payment link copied')).catch(() => {});
+};
+// Unlike everything else on this tab, the doormat is a lookup over the
+// network rather than local state, so it is fetched when the drawer opens
+// instead of on every render tick.
+async function loadTransparent() {
+  const d = $('t-recv');
+  if (!d.open) return;
+  $('t-wait').hidden = true;
+  $('t-state').textContent = 'Checking…';
+  let t;
+  try { t = await api('/api/transparent'); } catch (e) { $('t-state').textContent = e.message; return; }
+  const unit = $('unit').textContent || 'ZEC';
+  if (!t.total) { $('t-state').textContent = 'Nothing waiting here.'; return; }
+  $('t-state').textContent = '';
+  $('t-wait').hidden = false;
+  $('t-total').textContent = fmt(t.total) + ' ' + unit + ' waiting';
+  // net === 0 means the fee is worth more than the money. Say so plainly
+  // rather than offering a button that would spend it all on the fee.
+  const dead = !t.net;
+  $('t-net').textContent = dead
+    ? 'Too small to move — the network fee would take all of it.'
+    : fmt(t.net) + ' ' + unit + ' arrives after the ' + fmt(t.fee) + ' ' + unit + ' network fee.';
+  $('t-shield').disabled = dead;
+  $('t-shield').dataset.net = dead ? '' : fmt(t.net) + ' ' + unit;
+}
+$('t-recv').addEventListener('toggle', loadTransparent);
+$('t-shield').onclick = async () => {
+  const ok = await confirmDialog('Make it private', [
+    ['Moving', $('t-total').textContent.replace(' waiting', '')],
+    ['You receive', $('t-shield').dataset.net || '—'],
+    ['To', $('address').dataset.full || ''],
+  ]);
+  if (!ok) return;
+  await run($('t-shield'), 'Moving in…', async () => { await api('/api/shield', {}); });
+  await loadTransparent();
+};
+for (const [b, src] of [['copy-addr', 'address'], ['copy-acct', 'account'], ['copy-dep', 'dep-addr'], ['copy-content', 'it-content'], ['copy-taddr', 't-address']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
+
+try { const t = localStorage.getItem('tab'); if (t) showTab(t); } catch {}
+load();
+setInterval(() => { if (!busy) load(); }, 20000);
+</script>
+</body>
+</html>

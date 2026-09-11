@@ -1,0 +1,1762 @@
+# Tokenised stocks and ETFs by issuer, from CoinGecko's coin list on 6 Sep 2026.
+# issuer<TAB>underlying symbol<TAB>coingecko id<TAB>name   (issuers: X = xStocks/Backed, ON = Ondo, RH = Robinhood, D = Dinari)
+D	AAPL	apple-dinari-tokenized-stock	Apple (Dinari Tokenized Stock)
+D	ABBV	abbvie-dinari-tokenized-stock	AbbVie (Dinari Tokenized Stock)
+D	ABT	abbott-laboratories-dinari-tokenized-stock	Abbott Laboratories (Dinari Tokenized Stock)
+D	ABTC	american-bitcoin-dinari-tokenized-stock	American Bitcoin (Dinari Tokenized Stock)
+D	ACIW	aci-worldwide-dinari-tokenized-stock	ACI Worldwide (Dinari Tokenized Stock)
+D	ADBE	adobe-dinari-tokenized-stock	Adobe (Dinari Tokenized Stock)
+D	AGRO	adecoagro-dinari-tokenized-stock	Adecoagro (Dinari Tokenized Stock)
+D	AMC	amc-entertainment-holdings-dinari-tokenized-stock	AMC ENTERTAINMENT HOLDINGS (Dinari Tokenized Stock)
+D	AMD	advanced-micro-devices-dinari-tokenized-stock	Advanced Micro Devices (Dinari Tokenized Stock)
+D	AMTM	amentum-holdings-dinari-tokenized-stock	Amentum Holdings (Dinari Tokenized Stock)
+D	AMZN	amazon-dinari-tokenized-stock	Amazon (Dinari Tokenized Stock)
+D	APH	amphenol-dinari-tokenized-stock	Amphenol (Dinari Tokenized Stock)
+D	APLD	applied-digital-dinari-tokenized-stock	Applied Digital (Dinari Tokenized Stock)
+D	ARCC	ares-capital-dinari-tokenized-stock	Ares Capital (Dinari Tokenized Stock)
+D	ARKB	ark-21-bitcoin-etf-dinari-tokenized-etf	ARK 21 Bitcoin ETF (Dinari Tokenized ETF)
+D	ARKK	ark-innovation-etf-dinari-tokenized-etf	ARK Innovation ETF (Dinari Tokenized ETF)
+D	ARKX	ark-space-defense-innovation-etf-dinari-tokenized-etf	ARK Space & Defense Innovation ETF (Dinari Tokenized ETF)
+D	ARM	arm-holdings-dinari-tokenized-stock	Arm Holdings (Dinari Tokenized Stock)
+D	ASML	asml-holding-dinari-tokenized-stock	ASML Holding (Dinari Tokenized Stock)
+D	ASST	strive-dinari-tokenized-stock	Strive (Dinari Tokenized Stock)
+D	AVAV	aerovironment-dinari-tokenized-stock	AeroVironment (Dinari Tokenized Stock)
+D	AVGO	broadcom-dinari-tokenized-stock	Broadcom (Dinari Tokenized Stock)
+D	AXP	american-express-dinari-tokenized-stock	American Express (Dinari Tokenized Stock)
+D	AZN	astrazeneca-plc-dinari-tokenized-stock	AstraZeneca PLC (Dinari Tokenized Stock)
+D	BA	boeing-dinari-tokenized-stock	Boeing (Dinari Tokenized Stock)
+D	BABA	alibaba-group-holding-dinari-tokenized-stock	Alibaba Group Holding (Dinari Tokenized Stock)
+D	BAC	bank-of-america-dinari-tokenized-stock	Bank of America (Dinari Tokenized Stock)
+D	BBDC	barings-bdc-dinari-tokenized-stock	Barings BDC (Dinari Tokenized Stock)
+D	BCSF	bain-capital-specialty-finance-dinari-tokenized-stock	Bain Capital Specialty Finance (Dinari Tokenized Stock)
+D	BITB	bitwise-bitcoin-etf-dinari-tokenized-etf	Bitwise Bitcoin ETF (Dinari Tokenized ETF)
+D	BITX	2x-bitcoin-strategy-etf-dinari-tokenized-etf	2x Bitcoin Strategy ETF (Dinari Tokenized ETF)
+D	BKKT	bakkt-dinari-tokenized-stock	Bakkt (Dinari Tokenized Stock)
+D	BKNG	booking-holdings-dinari-tokenized-stock	Booking Holdings (Dinari Tokenized Stock)
+D	BLK	blackrock-dinari-tokenized-stock	BlackRock (Dinari Tokenized Stock)
+D	BLSH	bullish-dinari-tokenized-stock	Bullish (Dinari Tokenized Stock)
+D	BMNR	bitmine-immersion-technologies-dinari-tokenized-stock	Bitmine Immersion Technologies (Dinari Tokenized Stock)
+D	BOTZ	global-x-funds-global-x-robotics-artificial-intelligence-etf-dinari-tokenized-etf	Global X Funds Global X Robotics & Artificial Intelligence ETF (Dinari Tokenized ETF)
+D	BOXX	alpha-architect-1-3-month-box-etf-dinari-tokenized-etf	Alpha Architect 1-3 Month Box ETF (Dinari Tokenized ETF)
+D	BRK.A	berkshire-hathaway-dinari-tokenized-stock	Berkshire Hathaway (Dinari Tokenized Stock)
+D	BRK.B	berkshire-hathaway-class-b-dinari-tokenized-stock	Berkshire Hathaway Class B (Dinari Tokenized Stock)
+D	BRRR	coinshares-bitcoin-etf-common-of-beneficial-interest-dinari-tokenized-etf	Coinshares Bitcoin ETF Common of Beneficial Interest (Dinari Tokenized ETF)
+D	BTBT	bit-digital-dinari-tokenized-stock	Bit Digital (Dinari Tokenized Stock)
+D	BTCO	invesco-galaxy-bitcoin-etf-dinari-tokenized-etf	Invesco Galaxy Bitcoin ETF (Dinari Tokenized ETF)
+D	BTCW	wisdomtree-bitcoin-fund-dinari-tokenized-etf	WisdomTree Bitcoin Fund (Dinari Tokenized ETF)
+D	BTGO	bitgo-holdings-dinari-tokenized-stock	BitGo Holdings (Dinari Tokenized Stock)
+D	BXSL	blackstone-secured-lending-fund-dinari-tokenized-stock	Blackstone Secured Lending Fund (Dinari Tokenized Stock)
+D	BYD	boyd-gaming-dinari-tokenized-stock	Boyd Gaming (Dinari Tokenized Stock)
+D	CAT	caterpillar-dinari-tokenized-stock	Caterpillar (Dinari Tokenized Stock)
+D	CBOE	cboe-global-markets-dinari-tokenized-stock	Cboe Global Markets (Dinari Tokenized Stock)
+D	CCL	carnival-dinari-tokenized-stock	Carnival (Dinari Tokenized Stock)
+D	CEF	sprott-physical-gold-and-silver-trust-dinari-tokenized-etf	Sprott Physical Gold and Silver Trust (Dinari Tokenized ETF)
+D	CEPO	cantor-equity-partners-i-dinari-tokenized-stock	Cantor Equity Partners I (Dinari Tokenized Stock)
+D	CGBD	carlyle-secured-lending-dinari-tokenized-stock	Carlyle Secured Lending (Dinari Tokenized Stock)
+D	CIFR	cipher-digital-dinari-tokenized-stock	Cipher Digital (Dinari Tokenized Stock)
+D	CLOA	blackrock-etf-trust-ii-ishares-aaa-clo-active-etf-dinari-tokenized-etf	BlackRock ETF Trust II iShares AAA CLO Active ETF (Dinari Tokenized ETF)
+D	CLSK	cleanspark-dinari-tokenized-stock	CleanSpark (Dinari Tokenized Stock)
+D	CME	cme-group-dinari-tokenized-stock	CME Group (Dinari Tokenized Stock)
+D	COIN	coinbase-global-dinari-tokenized-stock	Coinbase Global (Dinari Tokenized Stock)
+D	CORZ	core-scientific-dinari-tokenized-stock	Core Scientific (Dinari Tokenized Stock)
+D	COST	costco-wholesale-dinari-tokenized-stock	Costco Wholesale (Dinari Tokenized Stock)
+D	CRCL	circle-internet-group-dinari-tokenized-stock	Circle Internet Group (Dinari Tokenized Stock)
+D	CRM	salesforce-dinari-tokenized-stock	Salesforce (Dinari Tokenized Stock)
+D	CSCO	cisco-systems-dinari-tokenized-stock	Cisco Systems (Dinari Tokenized Stock)
+D	CSQ	calamos-strategic-total-return-fund-dinari-tokenized-stock	Calamos Strategic Total Return Fund (Dinari Tokenized Stock)
+D	CSWC	capital-southwest-dinari-tokenized-stock	Capital Southwest (Dinari Tokenized Stock)
+D	CVX	chevron-corp-dinari-tokenized-stock	Chevron Corp (Dinari Tokenized Stock)
+D	CYPH	cypherpunk-technologies-dinari-tokenized-stock	Cypherpunk Technologies (Dinari Tokenized Stock)
+D	DAL	delta-air-lines-dinari-tokenized-stock	Delta Air Lines (Dinari Tokenized Stock)
+D	DAPP	vaneck-digital-transformation-etf-dinari-tokenized-etf	VanEck Digital Transformation ETF (Dinari Tokenized ETF)
+D	DEFI	hashdex-commodities-trust-dinari-tokenized-etf	Hashdex Commodities Trust (Dinari Tokenized ETF)
+D	DELL	dell-technologies-dinari-tokenized-stock	Dell Technologies (Dinari Tokenized Stock)
+D	DFDV	defi-development-dinari-tokenized-stock	DeFi Development (Dinari Tokenized Stock)
+D	DIA	state-street-spdr-dow-jones-industrial-average-etf-trust-dinari-tokenized-etf	State Street SPDR Dow Jones Industrial Average ETF Trust (Dinari Tokenized ETF)
+D	DIS	walt-disney-dinari-tokenized-stock	Walt Disney (Dinari Tokenized Stock)
+D	DIVO	amplify-cwp-enhanced-dividend-income-etf-dinari-tokenized-etf	Amplify CWP Enhanced Dividend Income ETF (Dinari Tokenized ETF)
+D	DJT	trump-media-technology-group-dinari-tokenized-stock	Trump Media & Technology Group (Dinari Tokenized Stock)
+D	DLR	digital-realty-trust-dinari-tokenized-stock	Digital Realty Trust (Dinari Tokenized Stock)
+D	EEM	ishares-msci-emerging-markets-etf-dinari-tokenized-etf	iShares MSCI Emerging Markets ETF (Dinari Tokenized ETF)
+D	EQIX	equinix-dinari-tokenized-stock	Equinix (Dinari Tokenized Stock)
+D	ERO	ero-copper-dinari-tokenized-stock	Ero Copper (Dinari Tokenized Stock)
+D	ETHA	ishares-ethereum-trust-etf-dinari-tokenized-etf	iShares Ethereum Trust ETF (Dinari Tokenized ETF)
+D	ETHE	grayscale-ethereum-staking-etf-dinari-tokenized-etf	Grayscale Ethereum Staking ETF (Dinari Tokenized ETF)
+D	ETHU	2x-ether-etf-dinari-tokenized-etf	2x Ether ETF (Dinari Tokenized ETF)
+D	ETOR	etoro-group-dinari-tokenized-stock	eToro Group (Dinari Tokenized Stock)
+D	EXOD	exodus-movement-dinari-tokenized-stock	Exodus Movement (Dinari Tokenized Stock)
+D	EZBC	franklin-bitcoin-etf-dinari-tokenized-etf	Franklin Bitcoin ETF (Dinari Tokenized ETF)
+D	F	ford-motor-dinari-tokenized-stock	Ford Motor (Dinari Tokenized Stock)
+D	FBND	fidelity-total-bond-etf-dinari-tokenized-etf	Fidelity Total Bond ETF (Dinari Tokenized ETF)
+D	FBTC	fidelity-wise-origin-bitcoin-fund-dinari-tokenized-etf	Fidelity Wise Origin Bitcoin Fund (Dinari Tokenized ETF)
+D	FIG	figma-dinari-tokenized-stock	Figma (Dinari Tokenized Stock)
+D	FIS	fidelity-national-information-services-dinari-tokenized-stock	Fidelity National Information Services (Dinari Tokenized Stock)
+D	FITB	fifth-third-bancorp-dinari-tokenized-stock	Fifth Third Bancorp (Dinari Tokenized Stock)
+D	FLD	fold-holdings-dinari-tokenized-stock	Fold Holdings (Dinari Tokenized Stock)
+D	FSK	fs-kkr-capital-dinari-tokenized-stock	FS KKR Capital (Dinari Tokenized Stock)
+D	GBDC	golub-capital-bdc-dinari-tokenized-stock	Golub Capital BDC (Dinari Tokenized Stock)
+D	GBTC	grayscale-bitcoin-trust-etf-dinari-tokenized-etf	Grayscale Bitcoin Trust ETF (Dinari Tokenized ETF)
+D	GEMI	gemini-space-station-dinari-tokenized-stock	Gemini Space Station (Dinari Tokenized Stock)
+D	GLD	spdr-gold-trust-dinari-tokenized-etf	SPDR Gold Trust (Dinari Tokenized ETF)
+D	GLXY	galaxy-digital-dinari-tokenized-stock	Galaxy Digital (Dinari Tokenized Stock)
+D	GME	gamestop-dinari-tokenized-stock	GameStop (Dinari Tokenized Stock)
+D	GOOG	alphabet-class-c-dinari-tokenized-stock	Alphabet Class C (Dinari Tokenized Stock)
+D	GOOGL	alphabet-dinari-tokenized-stock	Alphabet (Dinari Tokenized Stock)
+D	GPGI	gpgi-dinari-tokenized-stock	GPGI (Dinari Tokenized Stock)
+D	GRND	grindr-dinari-tokenized-stock	Grindr (Dinari Tokenized Stock)
+D	GS	goldman-sachs-group-dinari-tokenized-stock	Goldman Sachs Group (Dinari Tokenized Stock)
+D	GSBD	goldman-sachs-bdc-dinari-tokenized-stock	Goldman Sachs BDC (Dinari Tokenized Stock)
+D	HD	home-depot-dinari-tokenized-stock	Home Depot (Dinari Tokenized Stock)
+D	HIMS	hims-hers-health-dinari-tokenized-stock	Hims & Hers Health (Dinari Tokenized Stock)
+D	HLAL	listed-funds-trust-wahed-ftse-usa-shariah-etf-dinari-tokenized-etf	Listed Funds Trust Wahed FTSE USA Shariah ETF (Dinari Tokenized ETF)
+D	HODL	vaneck-bitcoin-etf-dinari-tokenized-etf	VanEck Bitcoin ETF (Dinari Tokenized ETF)
+D	HOOD	robinhood-dinari-tokenized-stock	Robinhood (Dinari Tokenized Stock)
+D	HTGC	hercules-capital-dinari-tokenized-stock	Hercules Capital (Dinari Tokenized Stock)
+D	HUT	hut-8-dinari-tokenized-stock	Hut 8 (Dinari Tokenized Stock)
+D	HYMB	state-street-spdr-nuveen-ice-high-yield-municipal-bond-etf-dinari-tokenized-etf	State Street SPDR Nuveen ICE High Yield Municipal Bond ETF (Dinari Tokenized ETF)
+D	IAU	ishares-gold-trust-dinari-tokenized-etf	iShares Gold Trust (Dinari Tokenized ETF)
+D	IBIT	ishares-bitcoin-trust-etf-dinari-tokenized-etf	iShares Bitcoin Trust ETF (Dinari Tokenized ETF)
+D	IBKR	interactive-brokers-group-dinari-tokenized-stock	Interactive Brokers Group (Dinari Tokenized Stock)
+D	IBM	international-business-machines-dinari-tokenized-stock	International Business Machines (Dinari Tokenized Stock)
+D	INTC	intel-dinari-tokenized-stock	Intel (Dinari Tokenized Stock)
+D	IONQ	ionq-dinari-tokenized-stock	IonQ (Dinari Tokenized Stock)
+D	IREN	iren-dinari-tokenized-stock	IREN (Dinari Tokenized Stock)
+D	ITA	ishares-u-s-aerospace-defense-etf-dinari-tokenized-etf	iShares U.S. Aerospace & Defense ETF (Dinari Tokenized ETF)
+D	IWM	ishares-russell-2000-etf-dinari-tokenized-etf	iShares Russell 2000 ETF (Dinari Tokenized ETF)
+D	JAAA	janus-henderson-aaa-clo-etf-dinari-tokenized-etf	Janus Henderson AAA CLO ETF (Dinari Tokenized ETF)
+D	JBBB	janus-henderson-b-bbb-clo-etf-dinari-tokenized-etf	Janus Henderson B-BBB CLO ETF (Dinari Tokenized ETF)
+D	JD	jd-com-dinari-tokenized-stock	JD.com (Dinari Tokenized Stock)
+D	JNJ	johnson-johnson-dinari-tokenized-stock	Johnson & Johnson (Dinari Tokenized Stock)
+D	JPM	jpmorgan-chase-dinari-tokenized-stock	JPMorgan Chase (Dinari Tokenized Stock)
+D	KBDC	kayne-anderson-bdc-dinari-tokenized-stock	Kayne Anderson BDC (Dinari Tokenized Stock)
+D	KDEF	plus-korea-defense-industry-index-etf-dinari-tokenized-etf	PLUS Korea Defense Industry Index ETF (Dinari Tokenized ETF)
+D	KO	coca-cola-dinari-tokenized-stock	Coca-Cola (Dinari Tokenized Stock)
+D	KTOS	kratos-defense-and-security-solutions-dinari-tokenized-stock	Kratos Defense and Security Solutions (Dinari Tokenized Stock)
+D	KWEB	kraneshares-csi-china-internet-etf-dinari-tokenized-etf	KraneShares CSI China Internet ETF (Dinari Tokenized ETF)
+D	KWIN	kraneshares-wahed-alternative-income-index-etf-dinari-tokenized-etf	KraneShares Wahed Alternative Income Index ETF (Dinari Tokenized ETF)
+D	KYIV	kyivstar-group-dinari-tokenized-stock	Kyivstar Group (Dinari Tokenized Stock)
+D	LLY	eli-lilly-dinari-tokenized-stock	Eli Lilly (Dinari Tokenized Stock)
+D	LMT	lockheed-martin-dinari-tokenized-stock	Lockheed Martin (Dinari Tokenized Stock)
+D	MA	mastercard-dinari-tokenized-stock	Mastercard (Dinari Tokenized Stock)
+D	MAGS	roundhill-magnificent-seven-etf-dinari-tokenized-etf	Roundhill Magnificent Seven ETF (Dinari Tokenized ETF)
+D	MAIN	main-street-capital-dinari-tokenized-stock	Main Street Capital (Dinari Tokenized Stock)
+D	MARA	mara-holdings-dinari-tokenized-stock	MARA Holdings (Dinari Tokenized Stock)
+D	MCD	mcdonald-s-dinari-tokenized-stock	McDonald's (Dinari Tokenized Stock)
+D	MELI	mercadolibre-dinari-tokenized-stock	MercadoLibre (Dinari Tokenized Stock)
+D	META	meta-platforms-dinari-tokenized-stock	Meta Platforms (Dinari Tokenized Stock)
+D	MFIC	midcap-financial-investment-dinari-tokenized-stock	MidCap Financial Investment (Dinari Tokenized Stock)
+D	MP	mp-materials-dinari-tokenized-stock	MP Materials (Dinari Tokenized Stock)
+D	MQ	marqeta-dinari-tokenized-stock	Marqeta (Dinari Tokenized Stock)
+D	MRK	merck-dinari-tokenized-stock	Merck (Dinari Tokenized Stock)
+D	MSDL	morgan-stanley-direct-lending-fund-dinari-tokenized-stock	Morgan Stanley Direct Lending Fund (Dinari Tokenized Stock)
+D	MSFT	microsoft-dinari-tokenized-stock	Microsoft (Dinari Tokenized Stock)
+D	MSTR	strategy-dinari-tokenized-stock	Strategy (Dinari Tokenized Stock)
+D	MSTU	t-rex-2x-long-mstr-daily-target-etf-dinari-tokenized-etf	T-Rex 2X Long MSTR Daily Target ETF (Dinari Tokenized ETF)
+D	MSTY	yieldmax-mstr-option-income-strategy-etf-dinari-tokenized-etf	YieldMax MSTR Option Income Strategy ETF (Dinari Tokenized ETF)
+D	MSTZ	t-rex-2x-inverse-mstr-daily-target-etf-dinari-tokenized-etf	T-Rex 2X Inverse MSTR Daily Target ETF (Dinari Tokenized ETF)
+D	NAKA	nakamoto-dinari-tokenized-stock	Nakamoto (Dinari Tokenized Stock)
+D	NCPL	netcapital-dinari-tokenized-stock	Netcapital (Dinari Tokenized Stock)
+D	NFLX	netflix-dinari-tokenized-stock	Netflix (Dinari Tokenized Stock)
+D	NIO	nio-dinari-tokenized-stock	NIO (Dinari Tokenized Stock)
+D	NKE	nike-dinari-tokenized-stock	Nike (Dinari Tokenized Stock)
+D	NLY	annaly-capital-management-dinari-tokenized-stock	Annaly Capital Management. (Dinari Tokenized Stock)
+D	NMFC	new-mountain-finance-dinari-tokenized-stock	New Mountain Finance (Dinari Tokenized Stock)
+D	NVD	graniteshares-etf-trust-graniteshares-2x-short-nvda-daily-etf-dinari-tokenized-etf	GraniteShares ETF Trust GraniteShares 2x Short NVDA Daily ETF (Dinari Tokenized ETF)
+D	NVDA	nvidia-dinari-tokenized-stock	NVIDIA (Dinari Tokenized Stock)
+D	NVO	novo-nordisk-dinari-tokenized-stock	Novo Nordisk (Dinari Tokenized Stock)
+D	OBDC	blue-owl-capital-dinari-tokenized-stock	Blue Owl Capital (Dinari Tokenized Stock)
+D	OCSL	oaktree-specialty-lending-dinari-tokenized-stock	Oaktree Specialty Lending (Dinari Tokenized Stock)
+D	OKLO	oklo-dinari-tokenized-stock	Oklo (Dinari Tokenized Stock)
+D	OPEN	opendoor-technologies-dinari-tokenized-stock	Opendoor Technologies (Dinari Tokenized Stock)
+D	ORCL	oracle-dinari-tokenized-stock	Oracle (Dinari Tokenized Stock)
+D	PALL	abrdn-physical-palladium-shares-etf-dinari-tokenized-etf	abrdn Physical Palladium Shares ETF (Dinari Tokenized ETF)
+D	PDD	pdd-holdings-dinari-tokenized-stock	PDD Holdings (Dinari Tokenized Stock)
+D	PFE	pfizer-dinari-tokenized-stock	Pfizer (Dinari Tokenized Stock)
+D	PG	procter-gamble-dinari-tokenized-stock	Procter & Gamble (Dinari Tokenized Stock)
+D	PH	parker-hannifin-dinari-tokenized-stock	Parker-Hannifin (Dinari Tokenized Stock)
+D	PHO	invesco-exchange-traded-fund-trust-invesco-water-resources-etf-dinari-tokenized-etf	Invesco Exchange-Traded Fund Trust Invesco Water Resources ETF (Dinari Tokenized ETF)
+D	PLD	prologis-inc-dinari-tokenized-stock	Prologis Inc (Dinari Tokenized Stock)
+D	PLTR	palantir-technologies-dinari-tokenized-stock	Palantir Technologies (Dinari Tokenized Stock)
+D	PPLT	abrdn-physical-platinum-shares-etf-dinari-tokenized-etf	abrdn Physical Platinum Shares ETF (Dinari Tokenized ETF)
+D	PSEC	prospect-capital-dinari-tokenized-stock	Prospect Capital (Dinari Tokenized Stock)
+D	PYPL	paypal-holdings-dinari-tokenized-stock	Paypal Holdings (Dinari Tokenized Stock)
+D	QBTS	d-wave-quantum-dinari-tokenized-stock	D-Wave Quantum (Dinari Tokenized Stock)
+D	QQQ	invesco-qqq-trust-series-1-dinari-tokenized-etf	Invesco QQQ Trust, Series 1 (Dinari Tokenized ETF)
+D	QS	quantumscape-dinari-tokenized-stock	Quantumscape (Dinari Tokenized Stock)
+D	RBLX	roblox-dinari-tokenized-stock	Roblox (Dinari Tokenized Stock)
+D	RDDT	reddit-dinari-tokenized-stock	Reddit (Dinari Tokenized Stock)
+D	REMX	vaneck-rare-earth-and-strategic-metals-etf-dinari-tokenized-etf	VanEck Rare Earth and Strategic Metals ETF (Dinari Tokenized ETF)
+D	RGTI	rigetti-computing-dinari-tokenized-stock	Rigetti Computing (Dinari Tokenized Stock)
+D	RIOT	riot-platforms-dinari-tokenized-stock	Riot Platforms (Dinari Tokenized Stock)
+D	RKLB	rocket-lab-dinari-tokenized-stock	Rocket Lab (Dinari Tokenized Stock)
+D	SATA	strive-series-a-preferred-dinari-tokenized-stock	Strive Series A Preferred (Dinari Tokenized Stock)
+D	SBET	sharplink-dinari-tokenized-stock	Sharplink (Dinari Tokenized Stock)
+D	SBUX	starbucks-dinari-tokenized-stock	Starbucks (Dinari Tokenized Stock)
+D	SH	proshares-short-s-p500-dinari-tokenized-etf	ProShares Short S&P500 (Dinari Tokenized ETF)
+D	SHEL	shell-dinari-tokenized-stock	Shell (Dinari Tokenized Stock)
+D	SHOP	shopify-dinari-tokenized-stock	Shopify (Dinari Tokenized Stock)
+D	SILJ	amplify-junior-silver-miners-etf-dinari-tokenized-etf	Amplify Junior Silver Miners ETF (Dinari Tokenized ETF)
+D	SIVR	abrdn-physical-silver-etf-dinari-tokenized-etf	abrdn Physical Silver ETF (Dinari Tokenized ETF)
+D	SLS	sellas-life-sciences-group-dinari-tokenized-stock	Sellas Life Sciences Group (Dinari Tokenized Stock)
+D	SLV	ishares-silver-trust-dinari-tokenized-etf	iShares Silver Trust (Dinari Tokenized ETF)
+D	SLX	vaneck-steel-etf-dinari-tokenized-etf	VanEck Steel ETF (Dinari Tokenized ETF)
+D	SMH	vaneck-semiconductor-etf-dinari-tokenized-etf	VanEck Semiconductor ETF (Dinari Tokenized ETF)
+D	SNAP	snap-dinari-tokenized-stock	Snap (Dinari Tokenized Stock)
+D	SNOW	snowflake-dinari-tokenized-stock	Snowflake (Dinari Tokenized Stock)
+D	SONY	sony-group-dinari-tokenized-stock	Sony Group (Dinari Tokenized Stock)
+D	SOXL	direxion-daily-semiconductor-bull-3x-etf-dinari-tokenized-etf	Direxion Daily Semiconductor Bull 3X ETF (Dinari Tokenized ETF)
+D	SOXS	direxion-daily-semiconductor-bear-3x-etf-dinari-tokenized-etf	Direxion Daily Semiconductor Bear 3X ETF (Dinari Tokenized ETF)
+D	SOXX	ishares-semiconductor-etf-dinari-tokenized-etf	iShares Semiconductor ETF (Dinari Tokenized ETF)
+D	SPCX	space-exploration-technologies-dinari-tokenized-stock	Space Exploration Technologies (Dinari Tokenized Stock)
+D	SPOT	spotify-technology-dinari-tokenized-stock	Spotify Technology (Dinari Tokenized Stock)
+D	SPPP	sprott-physical-platinum-and-palladium-trust-dinari-tokenized-etf	Sprott Physical Platinum and Palladium Trust (Dinari Tokenized ETF)
+D	SPRE	sp-funds-s-p-global-reit-sharia-etf-dinari-tokenized-etf	SP Funds S&P Global REIT Sharia ETF (Dinari Tokenized ETF)
+D	SPSK	sp-funds-dow-jones-global-sukuk-etf-dinari-tokenized-etf	SP Funds Dow Jones Global Sukuk ETF (Dinari Tokenized ETF)
+D	SPTE	sp-funds-s-p-global-technology-etf-dinari-tokenized-etf	SP Funds S&P Global Technology ETF (Dinari Tokenized ETF)
+D	SPUS	sp-funds-s-p-500-sharia-etf-dinari-tokenized-etf	SP Funds S&P 500 Sharia ETF (Dinari Tokenized ETF)
+D	SPWO	sp-funds-s-p-world-ex-us-etf-dinari-tokenized-etf	SP Funds S&P World (ex-US) ETF (Dinari Tokenized ETF)
+D	SPXU	proshares-ultrapro-short-s-p-500-dinari-tokenized-etf	ProShares UltraPro Short S&P 500 (Dinari Tokenized ETF)
+D	SPY	state-street-spdr-s-p-500-etf-trust-dinari-tokenized-etf	State Street SPDR S&P 500 ETF Trust (Dinari Tokenized ETF)
+D	SQQQ	proshares-ultrapro-short-qqq-dinari-tokenized-etf	ProShares UltraPro Short QQQ (Dinari Tokenized ETF)
+D	SRLN	state-street-blackstone-senior-loan-etf-dinari-tokenized-etf	State Street Blackstone Senior Loan ETF (Dinari Tokenized ETF)
+D	STRC	strategy-stretch-preferred-dinari-tokenized-stock	Strategy Stretch Preferred (Dinari Tokenized Stock)
+D	STRD	strategy-stride-preferred-dinari-tokenized-stock	Strategy Stride Preferred (Dinari Tokenized Stock)
+D	STRF	strategy-strife-preferred-dinari-tokenized-stock	Strategy Strife Preferred (Dinari Tokenized Stock)
+D	STRK	strategy-strike-preferred-dinari-tokenized-stock	Strategy Strike Preferred (Dinari Tokenized Stock)
+D	STT	state-street-dinari-tokenized-stock	State Street (Dinari Tokenized Stock)
+D	SVOL	simplify-volatility-premium-etf-dinari-tokenized-etf	Simplify Volatility Premium ETF (Dinari Tokenized ETF)
+D	TCEHY	tencent-holdings-dinari-tokenized-stock	Tencent Holdings (Dinari Tokenized Stock)
+D	TJX	tjx-companies-dinari-tokenized-stock	TJX Companies (Dinari Tokenized Stock)
+D	TLT	ishares-20-year-treasury-bond-etf-dinari-tokenized-etf	iShares 20 Year Treasury Bond ETF (Dinari Tokenized ETF)
+D	TMF	direxion-daily-20-year-treasury-bull-3x-etf-dinari-tokenized-etf	Direxion Daily 20+ Year Treasury Bull 3X ETF (Dinari Tokenized ETF)
+D	TNA	direxion-daily-small-cap-bull-3x-etf-dinari-tokenized-etf	Direxion Daily Small Cap Bull 3x ETF (Dinari Tokenized ETF)
+D	TQQQ	proshares-ultrapro-qqq-dinari-tokenized-etf	ProShares UltraPro QQQ (Dinari Tokenized ETF)
+D	TRIN	trinity-capital-dinari-tokenized-stock	Trinity Capital (Dinari Tokenized Stock)
+D	TRON	tron-dinari-tokenized-stock	TRON (Dinari Tokenized Stock)
+D	TSLA	tesla-dinari-tokenized-stock	Tesla (Dinari Tokenized Stock)
+D	TSLL	direxion-shares-etf-trust-direxion-daily-tsla-bull-2x-etf-dinari-tokenized-etf	Direxion Shares ETF Trust Direxion Daily TSLA Bull 2X ETF (Dinari Tokenized ETF)
+D	TSLQ	investment-managers-series-trust-ii-tradr-2x-short-tsla-daily-etf-dinari-tokenized-etf	Investment Managers Series Trust II Tradr 2X Short TSLA Daily ETF (Dinari Tokenized ETF)
+D	TSLX	sixth-street-specialty-lending-dinari-tokenized-stock	Sixth Street Specialty Lending (Dinari Tokenized Stock)
+D	TSM	taiwan-semiconductor-manufacturing-dinari-tokenized-stock	Taiwan Semiconductor Manufacturing (Dinari Tokenized Stock)
+D	UBER	uber-technologies-dinari-tokenized-stock	Uber Technologies (Dinari Tokenized Stock)
+D	UFO	procure-etf-trust-ii-procure-space-etf-dinari-tokenized-etf	Procure ETF Trust II Procure Space ETF (Dinari Tokenized ETF)
+D	ULTY	yieldmax-ultra-option-income-strategy-etf-dinari-tokenized-etf	YieldMax Ultra Option Income Strategy ETF (Dinari Tokenized ETF)
+D	UMMA	listed-funds-trust-wahed-dow-jones-islamic-world-etf-dinari-tokenized-etf	Listed Funds Trust Wahed Dow Jones Islamic World ETF (Dinari Tokenized ETF)
+D	URA	global-x-uranium-etf-dinari-tokenized-etf	Global X Uranium ETF (Dinari Tokenized ETF)
+D	URNJ	sprott-funds-trust-sprott-junior-uranium-miners-etf-dinari-tokenized-etf	Sprott Funds Trust Sprott Junior Uranium Miners ETF (Dinari Tokenized ETF)
+D	USFR	wisdomtree-floating-rate-treasury-fund-dinari-tokenized-etf	WisdomTree Floating Rate Treasury Fund (Dinari Tokenized ETF)
+D	USHY	ishares-broad-usd-high-yield-corporate-bond-etf-dinari-tokenized-etf	iShares Broad USD High Yield Corporate Bond ETF (Dinari Tokenized ETF)
+D	USO	united-states-oil-fund-dinari-tokenized-etf	United States Oil Fund (Dinari Tokenized ETF)
+D	USOY	tidal-trust-ii-defiance-oil-enhanced-options-income-etf-dinari-tokenized-etf	Tidal Trust II Defiance Oil Enhanced Options Income ETF (Dinari Tokenized ETF)
+D	V	visa-dinari-tokenized-stock	Visa (Dinari Tokenized Stock)
+D	VEON	veon-dinari-tokenized-stock	VEON (Dinari Tokenized Stock)
+D	VIG	vanguard-dividend-appreciation-etf-dinari-tokenized-etf	Vanguard Dividend Appreciation ETF (Dinari Tokenized ETF)
+D	VIRT	virtu-financial-dinari-tokenized-stock	Virtu Financial (Dinari Tokenized Stock)
+D	VOO	vanguard-s-p-500-etf-dinari-tokenized-etf	Vanguard S&P 500 ETF (Dinari Tokenized ETF)
+D	VWO	vanguard-ftse-emerging-markets-etf-dinari-tokenized-etf	Vanguard FTSE Emerging Markets ETF (Dinari Tokenized ETF)
+D	VXX	ipath-series-b-s-p-500-vix-short-term-futures-etn-dinari-tokenized-etf	iPath Series B S&P 500 VIX Short-Term Futures ETN (Dinari Tokenized ETF)
+D	VYM	vanguard-high-dividend-yield-etf-dinari-tokenized-etf	Vanguard High Dividend Yield ETF (Dinari Tokenized ETF)
+D	WBD	warner-bros-discovery-dinari-tokenized-stock	Warner Bros Discovery (Dinari Tokenized Stock)
+D	WEAT	teucrium-wheat-fund-dinari-tokenized-etf	Teucrium Wheat Fund (Dinari Tokenized ETF)
+D	WGMI	valkyrie-etf-trust-ii-coin-bitcoin-mining-etf-dinari-tokenized-etf	Valkyrie ETF Trust II Coin Bitcoin Mining ETF (Dinari Tokenized ETF)
+D	WMT	walmart-dinari-tokenized-stock	Walmart (Dinari Tokenized Stock)
+D	WOOD	ishares-global-timber-forestry-etf-dinari-tokenized-etf	iShares Global Timber & Forestry ETF (Dinari Tokenized ETF)
+D	WT	wisdomtree-dinari-tokenized-stock	WisdomTree (Dinari Tokenized Stock)
+D	WULF	terawulf-dinari-tokenized-stock	Terawulf (Dinari Tokenized Stock)
+D	XOM	exxon-mobil-dinari-tokenized-stock	Exxon Mobil (Dinari Tokenized Stock)
+D	XOP	state-street-spdr-s-p-oil-gas-exploration-production-etf-dinari-tokenized-etf	State Street SPDR S&P Oil & Gas Exploration & Production ETF (Dinari Tokenized ETF)
+D	XPEV	xpeng-dinari-tokenized-stock	Xpeng (Dinari Tokenized Stock)
+D	XXI	twenty-one-capital-dinari-tokenized-stock	Twenty One Capital (Dinari Tokenized Stock)
+D	XYZ	block-dinari-tokenized-stock	Block (Dinari Tokenized Stock)
+D	YANG	direxion-daily-ftse-china-bear-3x-etf-dinari-tokenized-etf	Direxion Daily FTSE China Bear 3X ETF (Dinari Tokenized ETF)
+D	YINN	direxion-daily-ftse-china-bull-3x-etf-dinari-tokenized-etf	Direxion Daily FTSE China Bull 3X ETF (Dinari Tokenized ETF)
+D	YMAX	yieldmax-universe-fund-of-option-income-etfs-dinari-tokenized-etf	YieldMax Universe Fund of Option Income ETFs (Dinari Tokenized ETF)
+D	YUM	yum-brands-dinari-tokenized-stock	Yum! Brands (Dinari Tokenized Stock)
+ON	AAL	american-airlines-group-ondo-tokenized-stocks	American Airlines Group (Ondo Tokenized Stock)
+ON	AAOI	applied-optoelectronics-ondo-tokenized	Applied Optoelectronics (Ondo Tokenized)
+ON	AAON	aaon-ondo-tokenized	AAON (Ondo Tokenized)
+ON	AAPL	apple-ondo-tokenized-stock	Apple (Ondo Tokenized Stock)
+ON	ABBV	abbvie-ondo-tokenized-stock	AbbVie (Ondo Tokenized Stock)
+ON	ABNB	airbnb-ondo-tokenized-stock	Airbnb (Ondo Tokenized Stock)
+ON	ABT	abbott-ondo-tokenized-stock	Abbott (Ondo Tokenized Stock)
+ON	ACHR	archer-aviation-ondo-tokenized-stocks	Archer Aviation (Ondo Tokenized Stock)
+ON	ACLS	axcelis-technologies-ondo-tokenized	Axcelis Technologies (Ondo Tokenized)
+ON	ACMR	acm-research-ondo-tokenized	ACM Research (Ondo Tokenized)
+ON	ACN	accenture-ondo-tokenized-stock	Accenture (Ondo Tokenized Stock)
+ON	ADBE	adobe-ondo-tokenized-stock	Adobe (Ondo Tokenized Stock)
+ON	ADI	analog-devices-ondo-tokenized-stocks	Analog Devices (Ondo Tokenized Stock)
+ON	AEHR	aehr-test-systems-ondo-tokenized	Aehr Test Systems (Ondo Tokenized)
+ON	AG	first-majestic-silver-ondo-tokenized	First Majestic Silver (Ondo Tokenized)
+ON	AGG	ishares-core-us-aggregate-bond-etf-ondo-tokenized-etf	iShares Core US Aggregate Bond ETF (Ondo Tokenized ETF)
+ON	AIP	arteris-ondo-tokenized	Arteris (Ondo Tokenized)
+ON	AIQ	global-x-artificial-intelligence-technology-etf-ondo-tokenized	Global X Artificial Intelligence & Technology ETF (Ondo Tokenized)
+ON	ALAB	astera-labs-ondo-tokenized	Astera Labs (Ondo Tokenized)
+ON	ALB	albemarle-ondo-tokenized	Albemarle (Ondo Tokenized)
+ON	ALOY	realloys-ondo-tokenized	REalloys (Ondo Tokenized)
+ON	AMAT	applied-materials-ondo-tokenized-stocks	Applied Materials (Ondo Tokenized Stock)
+ON	AMC	amc-entertainment-ondo-tokenized-stocks	AMC Entertainment (Ondo Tokenized Stock)
+ON	AMD	amd-ondo-tokenized-stock	AMD (Ondo Tokenized Stock)
+ON	AME	ametek-ondo-tokenized	AMETEK (Ondo Tokenized)
+ON	AMGN	amgen-ondo-tokenized-stocks	Amgen (Ondo Tokenized Stock)
+ON	AMKR	amkor-technology-ondo-tokenized	Amkor Technology (Ondo Tokenized)
+ON	AMZN	amazon-ondo-tokenized-stock	Amazon (Ondo Tokenized Stock)
+ON	ANET	arista-networks-ondo-tokenized-stocks	Arista Networks (Ondo Tokenized Stock)
+ON	AOSL	alpha-and-omega-semiconductor-ondo-tokenized	Alpha and Omega Semiconductor (Ondo Tokenized)
+ON	APH	amphenol-ondo-tokenized	Amphenol (Ondo Tokenized)
+ON	APLD	applied-digital-ondo-tokenized	Applied Digital (Ondo Tokenized)
+ON	APO	apollo-global-management-ondo-tokenized-stock	Apollo Global Management (Ondo Tokenized Stock)
+ON	APP	applovin-ondo-tokenized-stock	AppLovin (Ondo Tokenized Stock)
+ON	ARGT	global-x-msci-argentina-etf-ondo-tokenized	Global X MSCI Argentina ETF (Ondo Tokenized)
+ON	ARM	arm-holdings-plc-ondo-tokenized-stock	Arm Holdings plc (Ondo Tokenized Stock)
+ON	ARQQ	arqit-quantum-ondo-tokenized	Arqit Quantum (Ondo Tokenized)
+ON	ASML	asml-holding-nv-ondo-tokenized-stock	ASML Holding NV (Ondo Tokenized Stock)
+ON	ASTS	ast-spacemobile-ondo-tokenized	AST SpaceMobile (Ondo Tokenized)
+ON	ATKR	atkore-ondo-tokenized	Atkore (Ondo Tokenized)
+ON	AUR	aurora-innovation-ondo-tokenized	Aurora Innovation (Ondo Tokenized)
+ON	AVGO	broadcom-ondo-tokenized-stock	Broadcom (Ondo Tokenized Stock)
+ON	AXP	american-express-ondo-tokenized-stock	American Express (Ondo Tokenized Stock)
+ON	AXTI	axt-ondo-tokenized	AXT (Ondo Tokenized)
+ON	BA	boeing-ondo-tokenized-stock	Boeing (Ondo Tokenized Stock)
+ON	BABA	alibaba-ondo-tokenized-stock	Alibaba (Ondo Tokenized Stock)
+ON	BAC	bank-of-america-ondo-tokenized-stocks	Bank of America (Ondo Tokenized Stock)
+ON	BAI	ishares-a-i-innovation-and-tech-active-etf-ondo-tokenized	iShares A.I. Innovation and Tech Active ETF (Ondo Tokenized)
+ON	BBAI	bigbear-ai-holdings-ondo-tokenized-stocks	BigBear.ai Holdings (Ondo Tokenized Stock)
+ON	BE	bloom-energy-ondo-tokenized	Bloom Energy (Ondo Tokenized)
+ON	BIDU	baidu-ondo-tokenized-stock	Baidu (Ondo Tokenized Stock)
+ON	BIL	spdr-bloomberg-1-3-month-t-bill-etf-ondo-tokenized	SPDR Bloomberg 1-3 Month T-Bill ETF (Ondo Tokenized)
+ON	BILI	bilibili-ondo-tokenized-stocks	Bilibili (Ondo Tokenized Stock)
+ON	BINC	ishares-flexible-income-active-etf-ondo-tokenized-etf	iShares Flexible Income Active ETF (Ondo Tokenized ETF)
+ON	BKCH	global-x-blockchain-etf-ondo-tokenized	Global X Blockchain ETF (Ondo Tokenized)
+ON	BLCR	ishares-large-cap-core-active-etf-ondo-tokenized	iShares Large Cap Core Active ETF (Ondo Tokenized)
+ON	BLK	blackrock-inc-ondo-tokenized-stock	Blackrock, Inc. (Ondo Tokenized Stock)
+ON	BLSH	bullish-ondo-tokenized-stocks	Bullish (Ondo Tokenized Stock)
+ON	BMNR	bitmine-immersion-technologies-ondo-tokenized-stocks	BitMine Immersion Technologies (Ondo Tokenized Stock)
+ON	BNO	us-brent-oil-fund-ondo-tokenized	US Brent Oil Fund (Ondo Tokenized)
+ON	BOT	robostrategy-ondo-tokenized	RoboStrategy (Ondo Tokenized)
+ON	BOTZ	global-x-robotics-artificial-intelligence-etf-ondo-tokenized	Global X Robotics & Artificial Intelligence ETF (Ondo Tokenized)
+ON	BRHY	ishares-high-yield-active-etf-ondo-tokenized	iShares High Yield Active ETF (Ondo Tokenized)
+ON	BRLN	ishares-floating-rate-loan-active-etf-ondo-tokenized	iShares Floating Rate Loan Active ETF (Ondo Tokenized)
+ON	BRTR	ishares-total-return-active-etf-ondo-tokenized	iShares Total Return Active ETF (Ondo Tokenized)
+ON	BTDR	bitdeer-technologies-ondo-tokenized	Bitdeer Technologies (Ondo Tokenized)
+ON	BTG	b2gold-ondo-tokenized-stocks	B2Gold (Ondo Tokenized Stock)
+ON	BTGO	bitgo-holdings-ondo-tokenized-stock	BitGo Holdings (Ondo Tokenized Stock)
+ON	BWET	breakwave-tanker-shipping-etf-ondo-tokenized	Breakwave Tanker Shipping ETF (Ondo Tokenized)
+ON	BZ	kanzhun-ondo-tokenized-stock	Kanzhun (Ondo Tokenized Stock)
+ON	C	citigroup-ondo-tokenized-stock	Citigroup (Ondo Tokenized Stock)
+ON	CAMT	camtek-ondo-tokenized	Camtek (Ondo Tokenized)
+ON	CAPR	capricor-therapeutics-ondo-tokenized	Capricor Therapeutics (Ondo Tokenized)
+ON	CAT	caterpillar-ondo-tokenized-stock	Caterpillar (Ondo Tokenized Stock)
+ON	CBRS	cerebras-systems-ondo-tokenized	Cerebras Systems (Ondo Tokenized)
+ON	CCJ	cameco-ondo-tokenized	Cameco (Ondo Tokenized)
+ON	CEG	constellation-energy-ondo-tokenized-stock	Constellation Energy (Ondo Tokenized Stock)
+ON	CEVA	ceva-ondo-tokenized	CEVA (Ondo Tokenized)
+ON	CIBR	first-trust-nasdaq-cybersecurity-etf-ondo-tokenized	First Trust NASDAQ Cybersecurity ETF (Ondo Tokenized)
+ON	CIEN	ciena-ondo-tokenized	Ciena (Ondo Tokenized)
+ON	CIFR	cipher-mining-ondo-tokenized-stock	Cipher Mining (Ondo Tokenized Stock)
+ON	CLF	cleveland-cliffs-ondo-tokenized	Cleveland-Cliffs (Ondo Tokenized)
+ON	CLOA	ishares-aaa-clo-active-etf-ondo-tokenized-stock	iShares AAA CLO Active ETF (Ondo Tokenized Stock)
+ON	CLOI	vaneck-clo-etf-ondo-tokenized-stock	VanEck CLO ETF (Ondo Tokenized Stock)
+ON	CLS	celestica-ondo-tokenized	Celestica (Ondo Tokenized)
+ON	CMG	chipotle-ondo-tokenized-stock	Chipotle (Ondo Tokenized Stock)
+ON	COF	capital-one-ondo-tokenized-stock	Capital One (Ondo Tokenized Stock)
+ON	COHR	coherent-ondo-tokenized	Coherent (Ondo Tokenized)
+ON	COHU	cohu-ondo-tokenized	Cohu (Ondo Tokenized)
+ON	COIN	coinbase-ondo-tokenized-stock	Coinbase (Ondo Tokenized Stock)
+ON	COP	conocophillips-ondo-tokenized-stocks	ConocoPhillips (Ondo Tokenized Stock)
+ON	COPX	global-x-copper-miners-etf-ondo-tokenized-etf	Global X Copper Miners ETF (Ondo Tokenized ETF)
+ON	CORO	ishares-international-country-rotation-active-etf-ondo-tokenized	iShares International Country Rotation Active ETF (Ondo Tokenized)
+ON	CORZ	core-scientific-ondo-tokenized	Core Scientific (Ondo Tokenized)
+ON	COST	costco-ondo-tokenized-stock	Costco (Ondo Tokenized Stock)
+ON	CPER	us-copper-index-fund-ondo-tokenized	US Copper Index Fund (Ondo Tokenized)
+ON	CPNG	coupang-ondo-tokenized-stocks	Coupang (Ondo Tokenized Stock)
+ON	CRCL	circle-internet-group-ondo-tokenized-stock	Circle Internet Group (Ondo Tokenized Stock)
+ON	CRDO	credo-technology-group-holding-ondo-tokenized	Credo Technology Group Holding (Ondo Tokenized)
+ON	CRM	salesforce-ondo-tokenized-stock	Salesforce (Ondo Tokenized Stock)
+ON	CRWD	crowdstrike-ondo-tokenized-stocks	CrowdStrike (Ondo Tokenized Stock)
+ON	CRWV	coreweave-ondo-tokenized	CoreWeave (Ondo Tokenized)
+ON	CSCO	cisco-systems-ondo-tokenized-stock	Cisco Systems (Ondo Tokenized Stock)
+ON	CVNA	carvana-ondo-tokenized-stocks	Carvana (Ondo Tokenized Stock)
+ON	CVX	chevron-ondo-tokenized-stock	Chevron (Ondo Tokenized Stock)
+ON	DASH	doordash-ondo-tokenized-stock	DoorDash (Ondo Tokenized Stock)
+ON	DBC	invesco-db-commodity-index-tracking-fund-ondo-tokenized-etf	Invesco DB Commodity Index Tracking Fund (Ondo Tokenized ETF)
+ON	DE	deere-ondo-tokenized-stocks	Deere (Ondo Tokenized Stock)
+ON	DELL	dell-technologies-ondo-tokenized	Dell Technologies (Ondo Tokenized)
+ON	DGRW	wisdomtree-us-quality-dividend-growth-fund-ondo-tokenized	WisdomTree US Quality Dividend Growth Fund (Ondo Tokenized)
+ON	DGXX	digi-power-x-ondo-tokenized	Digi Power X (Ondo Tokenized)
+ON	DIS	disney-ondo-tokenized-stock	Disney (Ondo Tokenized Stock)
+ON	DNN	denison-mines-ondo-tokenized-stocks	Denison Mines (Ondo Tokenized Stock)
+ON	DRAM	roundhill-memory-etf-ondo-tokenized	Roundhill Memory ETF (Ondo Tokenized)
+ON	DRS	leonardo-drs-ondo-tokenized	Leonardo DRS (Ondo Tokenized)
+ON	DTCR	global-x-data-center-digital-infrastructure-etf-ondo-tokenized	Global X Data Center & Digital Infrastructure ETF (Ondo Tokenized)
+ON	DYNF	ishares-us-equity-factor-rotation-active-etf-ondo-tokenized	iShares US Equity Factor Rotation Active ETF (Ondo Tokenized)
+ON	ECH	ishares-msci-chile-etf-ondo-tokenized	iShares MSCI Chile ETF (Ondo Tokenized)
+ON	ECO	okeanis-eco-tankers-ondo-tokenized	Okeanis Eco Tankers (Ondo Tokenized)
+ON	EEM	ishares-msci-emerging-markets-etf-ondo-tokenized-etf	iShares MSCI Emerging Markets ETF (Ondo Tokenized ETF)
+ON	EFA	ishares-msci-eafe-etf-ondo-tokenized-etf	iShares MSCI EAFE ETF (Ondo Tokenized ETF)
+ON	EFV	ishares-msci-eafe-value-etf-ondo-tokenized	iShares MSCI EAFE Value ETF (Ondo Tokenized)
+ON	EMR	emerson-electric-ondo-tokenized	Emerson Electric (Ondo Tokenized)
+ON	ENB	enbridge-ondo-tokenized	Enbridge (Ondo Tokenized)
+ON	ENLV	enlivex-therapeutics-ondo-tokenized	Enlivex Therapeutics (Ondo Tokenized)
+ON	ENPH	enphase-energy-ondo-tokenized	Enphase Energy (Ondo Tokenized)
+ON	ENTG	entegris-ondo-tokenized	Entegris (Ondo Tokenized)
+ON	EQIX	equinix-ondo-tokenized-stock	Equinix (Ondo Tokenized Stock)
+ON	EQT	eqt-ondo-tokenized	EQT (Ondo Tokenized)
+ON	ETHA	ishares-ethereum-trust-ondo-tokenized	iShares Ethereum Trust (Ondo Tokenized)
+ON	ETN	eaton-ondo-tokenized	Eaton (Ondo Tokenized)
+ON	EUHY	ishares-euro-high-yield-corporate-bond-usd-hedged-etf-ondo-tokenized	iShares Euro High Yield Corporate Bond USD Hedged ETF (Ondo Tokenized)
+ON	EWJ	ishares-msci-japan-etf-ondo-tokenized	iShares MSCI Japan ETF (Ondo Tokenized)
+ON	EWY	ishares-msci-south-korea-etf-ondo-tokenized	iShares MSCI South Korea ETF (Ondo Tokenized)
+ON	EWZ	ishares-msci-brazil-etf-ondo-tokenized	iShares MSCI Brazil ETF (Ondo Tokenized)
+ON	EXOD	exodus-movement-ondo-tokenized	Exodus Movement (Ondo Tokenized)
+ON	EXTR	extreme-networks-ondo-tokenized	Extreme Networks (Ondo Tokenized)
+ON	F	ford-motor-ondo-tokenized-stock	Ford Motor (Ondo Tokenized Stock)
+ON	FCEL	fuelcell-energy-ondo-tokenized	FuelCell Energy (Ondo Tokenized)
+ON	FCX	freeport-mcmoran-ondo-tokenized	Freeport-McMoRan (Ondo Tokenized)
+ON	FFOG	franklin-focused-growth-etf-ondo-tokenized	Franklin Focused Growth ETF (Ondo Tokenized)
+ON	FGDL	franklin-responsibly-sourced-gold-etf-ondo-tokenized	Franklin Responsibly Sourced Gold ETF (Ondo Tokenized)
+ON	FIG	figma-ord-shs-ondo-tokenized-stock	Figma Ord Shs (Ondo Tokenized Stock)
+ON	FIGR	figure-technology-solutions-ondo-tokenized-stock	Figure Technology Solutions (Ondo Tokenized Stock)
+ON	FLEX	flex-ondo-tokenized	Flex (Ondo Tokenized)
+ON	FLHY	franklin-high-yield-corporate-etf-ondo-tokenized	Franklin High Yield Corporate ETF (Ondo Tokenized)
+ON	FLNC	fluence-energy-ondo-tokenized	Fluence Energy (Ondo Tokenized)
+ON	FLQL	franklin-us-large-cap-multifactor-index-etf-ondo-tokenized	Franklin US Large Cap Multifactor Index ETF (Ondo Tokenized)
+ON	FN	fabrinet-ondo-tokenized	Fabrinet (Ondo Tokenized)
+ON	FORM	formfactor-ondo-tokenized	FormFactor (Ondo Tokenized)
+ON	FPS	forgent-power-solutions-ondo-tokenized	Forgent Power Solutions (Ondo Tokenized)
+ON	FSOL	fidelity-solana-fund-ondo-tokenized	Fidelity Solana Fund (Ondo Tokenized)
+ON	FTGC	first-trust-global-tactical-commodity-strategy-fund-ondo-tokenized-stock	First Trust Global Tactical Commodity Strategy Fund (Ondo Tokenized Stock)
+ON	FUTU	futu-holdings-ondo-tokenized-stock	Futu Holdings (Ondo Tokenized Stock)
+ON	FXI	ishares-china-large-cap-etf-ondo-tokenized	iShares China Large-Cap ETF (Ondo Tokenized)
+ON	GD	general-dynamics-ondo-tokenized	General Dynamics (Ondo Tokenized)
+ON	GE	general-electric-ondo-tokenized-stock	General Electric (Ondo Tokenized Stock)
+ON	GEMI	gemini-space-station-ondo-tokenized-stock	Gemini Space Station (Ondo Tokenized Stock)
+ON	GEV	ge-vernova-ondo-tokenized	GE Vernova (Ondo Tokenized)
+ON	GFS	globalfoundries-ondo-tokenized	GlobalFoundries (Ondo Tokenized)
+ON	GGOV	ishares-global-government-bond-usd-hedged-active-etf-ondo-tokenized	iShares Global Government Bond USD Hedged Active ETF (Ondo Tokenized)
+ON	GLD	spdr-gold-shares-ondo-tokenized	SPDR Gold Shares (Ondo Tokenized)
+ON	GLTR	abrdn-physical-precious-metals-basket-shares-etf-ondo-tokenized	abrdn Physical Precious Metals Basket Shares ETF (Ondo Tokenized)
+ON	GLW	corning-ondo-tokenized	Corning (Ondo Tokenized)
+ON	GLXY	galaxy-digital-ondo-tokenized	Galaxy Digital (Ondo Tokenized)
+ON	GME	gamestop-ondo-tokenized-stock	GameStop (Ondo Tokenized Stock)
+ON	GNRC	generac-holdings-ondo-tokenized	Generac Holdings (Ondo Tokenized)
+ON	GOOGL	alphabet-class-a-ondo-tokenized-stock	Alphabet Class A (Ondo Tokenized Stock)
+ON	GRAB	grab-holdings-ondo-tokenized-stock	Grab Holdings (Ondo Tokenized Stock)
+ON	GRND	grindr-ondo-tokenized-stock	Grindr (Ondo Tokenized Stock)
+ON	GS	goldman-sachs-ondo-tokenized-stock	Goldman Sachs (Ondo Tokenized Stock)
+ON	HAL	halliburton-ondo-tokenized	Halliburton (Ondo Tokenized)
+ON	HD	home-depot-ondo-tokenized-stock	Home Depot (Ondo Tokenized Stock)
+ON	HII	huntington-ingalls-industries-ondo-tokenized	Huntington Ingalls Industries (Ondo Tokenized)
+ON	HIMS	hims-hers-health-ondo-tokenized-stock	Hims & Hers Health (Ondo Tokenized Stock)
+ON	HIMX	himax-technologies-ondo-tokenized	Himax Technologies (Ondo Tokenized)
+ON	HIVE	hive-digital-technologies-ondo-tokenized	HIVE Digital Technologies (Ondo Tokenized)
+ON	HLIT	harmonic-ondo-tokenized	Harmonic (Ondo Tokenized)
+ON	HOOD	robinhood-markets-ondo-tokenized-stock	Robinhood Markets (Ondo Tokenized Stock)
+ON	HPE	hewlett-packard-enterprise-ondo-tokenized	Hewlett Packard Enterprise (Ondo Tokenized)
+ON	HSAI	hesai-group-ondo-tokenized	Hesai Group (Ondo Tokenized)
+ON	HUBB	hubbell-ondo-tokenized	Hubbell (Ondo Tokenized)
+ON	HUT	hut-8-ondo-tokenized	Hut 8 (Ondo Tokenized)
+ON	HYG	iboxx-high-yield-corporate-bond-etf-ondo-tokenized-etf	iBoxx $ High Yield Corporate Bond ETF (Ondo Tokenized ETF)
+ON	HYGW	ishares-high-yield-corporate-bond-buywrite-strategy-etf-ondo-tokenized-etf	iShares High Yield Corporate Bond BuyWrite Strategy ETF (Ondo Tokenized ETF)
+ON	HYS	pimco-0-5-year-high-yield-corporate-bond-index-etf-ondo-tokenized	PIMCO 0-5 Year High Yield Corporate Bond Index ETF (Ondo Tokenized)
+ON	IALT	ishares-systematic-alternatives-active-etf-ondo-tokenized	iShares Systematic Alternatives Active ETF (Ondo Tokenized)
+ON	IAU	ishares-gold-trust-ondo-tokenized-stock	iShares Gold Trust (Ondo Tokenized Stock)
+ON	IBIT	ishares-bitcoin-trust-ondo-tokenized	iShares Bitcoin Trust (Ondo Tokenized)
+ON	IBM	ibm-ondo-tokenized-stock	IBM (Ondo Tokenized Stock)
+ON	ICHR	ichor-holdings-ondo-tokenized	Ichor Holdings (Ondo Tokenized)
+ON	IDEF	ishares-defense-industrials-active-etf-ondo-tokenized	iShares Defense Industrials Active ETF (Ondo Tokenized)
+ON	IEF	ishares-7-10-year-treasury-bond-etf-ondo-tokenized	iShares 7-10 Year Treasury Bond ETF (Ondo Tokenized)
+ON	IEFA	ishares-core-msci-eafe-etf-ondo-tokenized-etf	iShares Core MSCI EAFE ETF (Ondo Tokenized ETF)
+ON	IEI	ishares-3-7-year-treasury-bond-etf-ondo-tokenized	iShares 3-7 Year Treasury Bond ETF (Ondo Tokenized)
+ON	IEMG	ishares-core-msci-emerging-markets-etf-ondo-tokenized-etf	iShares Core MSCI Emerging Markets ETF (Ondo Tokenized ETF)
+ON	IGEB	ishares-investment-grade-systematic-bond-etf-ondo-tokenized	iShares Investment Grade Systematic Bond ETF (Ondo Tokenized)
+ON	IGV	ishares-expanded-tech-software-etf-ondo-tokenized	iShares Expanded Tech-Software ETF (Ondo Tokenized)
+ON	IJH	ishares-core-s-p-midcap-etf-ondo-tokenized-etf	iShares Core S&P MidCap ETF (Ondo Tokenized ETF)
+ON	IJS	ishares-s-p-small-cap-600-value-etf-ondo-tokenized	iShares S&P Small-Cap 600 Value ETF (Ondo Tokenized)
+ON	INCE	franklin-income-equity-focus-etf-ondo-tokenized	Franklin Income Equity Focus ETF (Ondo Tokenized)
+ON	INDA	ishares-msci-india-etf-ondo-tokenized	iShares MSCI India ETF (Ondo Tokenized)
+ON	INOD	innodata-ondo-tokenized	Innodata (Ondo Tokenized)
+ON	INRO	ishares-us-industry-rotation-active-etf-ondo-tokenized	iShares US Industry Rotation Active ETF (Ondo Tokenized)
+ON	INSW	international-seaways-ondo-tokenized	International Seaways (Ondo Tokenized)
+ON	INTC	intel-ondo-tokenized-stock	Intel (Ondo Tokenized Stock)
+ON	INTU	intuit-ondo-tokenized-stock	Intuit (Ondo Tokenized Stock)
+ON	IONQ	ionq-ondo-tokenized	IonQ (Ondo Tokenized)
+ON	IRDM	iridium-communications-ondo-tokenized	Iridium Communications (Ondo Tokenized)
+ON	IREN	iren-ondo-tokenized-stock	IREN (Ondo Tokenized Stock)
+ON	ISRG	intuitive-surgical-ondo-tokenized-stock	Intuitive Surgical (Ondo Tokenized Stock)
+ON	ITA	ishares-us-aerospace-and-defense-etf-ondo-tokenized	iShares US Aerospace and Defense ETF (Ondo Tokenized)
+ON	ITOT	ishares-core-s-p-total-us-stock-market-etf-ondo-tokenized-etf	iShares Core S&P Total US Stock Market ETF (Ondo Tokenized ETF)
+ON	IVV	ishares-core-s-p-500-etf-ondo-tokenized-etf	iShares Core S&P 500 ETF (Ondo Tokenized ETF)
+ON	IWF	ishares-russell-1000-growth-etf-ondo-tokenized-etf	iShares Russell 1000 Growth ETF (Ondo Tokenized ETF)
+ON	IWM	ishares-russell-2000-etf-ondo-tokenized-etf	iShares Russell 2000 ETF (Ondo Tokenized ETF)
+ON	IWN	ishares-russell-2000-value-etf-ondo-tokenized-etf	iShares Russell 2000 Value ETF (Ondo Tokenized ETF)
+ON	IYW	ishares-us-technology-etf-ondo-tokenized	iShares US Technology ETF (Ondo Tokenized)
+ON	JAAA	janus-henderson-aaa-clo-etf-ondo-tokenized-etf	Janus Henderson AAA CLO ETF (Ondo Tokenized ETF)
+ON	JBL	jabil-ondo-tokenized	Jabil (Ondo Tokenized)
+ON	JD	jd-com-ondo-tokenized-stock	JD.com (Ondo Tokenized Stock)
+ON	JNJ	johnson-johnson-ondo-tokenized-stock	Johnson & Johnson (Ondo Tokenized Stock)
+ON	JPM	jpmorgan-chase-ondo-tokenized-stock	JPMorgan Chase (Ondo Tokenized Stock)
+ON	KEEL	keel-infrastructure-ondo-tokenized	Keel Infrastructure (Ondo Tokenized)
+ON	KEYS	keysight-technologies-ondo-tokenized	Keysight Technologies (Ondo Tokenized)
+ON	KLAC	kla-ondo-tokenized	KLA (Ondo Tokenized)
+ON	KO	coca-cola-ondo-tokenized-stock	Coca-Cola (Ondo Tokenized Stock)
+ON	KOPN	kopin-ondo-tokenized	Kopin (Ondo Tokenized)
+ON	KWEB	kraneshares-csi-china-internet-etf-ondo-tokenized	KraneShares CSI China Internet ETF (Ondo Tokenized)
+ON	LASR	nlight-ondo-tokenized	nLIGHT (Ondo Tokenized)
+ON	LECO	lincoln-electric-ondo-tokenized	Lincoln Electric (Ondo Tokenized)
+ON	LEMB	ishares-j-p-morgan-em-local-currency-bond-etf-ondo-tokenized	iShares J.P. Morgan EM Local Currency Bond ETF (Ondo Tokenized)
+ON	LI	li-auto-ondo-tokenized	Li Auto (Ondo Tokenized)
+ON	LIN	linde-plc-ondo-tokenized-stock	Linde plc (Ondo Tokenized Stock)
+ON	LIT	global-x-lithium-battery-tech-etf-ondo-tokenized	Global X Lithium & Battery Tech ETF (Ondo Tokenized)
+ON	LITE	lumentum-holdings-ondo-tokenized	Lumentum Holdings (Ondo Tokenized)
+ON	LLY	eli-lilly-ondo-tokenized-stock	Eli Lilly (Ondo Tokenized Stock)
+ON	LMT	lockheed-ondo-tokenized-stock	Lockheed (Ondo Tokenized Stock)
+ON	LOW	lowe-s-ondo-tokenized	Lowe's (Ondo Tokenized)
+ON	LPTH	lightpath-technologies-ondo-tokenized	LightPath Technologies (Ondo Tokenized)
+ON	LRCX	lam-research-ondo-tokenized	Lam Research (Ondo Tokenized)
+ON	LSCC	lattice-semiconductor-ondo-tokenized	Lattice Semiconductor (Ondo Tokenized)
+ON	LUNR	intuitive-machines-ondo-tokenized	Intuitive Machines (Ondo Tokenized)
+ON	LWLG	lightwave-logic-ondo-tokenized	Lightwave Logic (Ondo Tokenized)
+ON	MA	mastercard-ondo-tokenized-stock	Mastercard (Ondo Tokenized Stock)
+ON	MARA	mara-holdings-ondo-tokenized-stock	MARA Holdings (Ondo Tokenized Stock)
+ON	MBLY	mobileye-global-ondo-tokenized	Mobileye Global (Ondo Tokenized)
+ON	MCD	mcdonald-s-ondo-tokenized-stock	McDonald's (Ondo Tokenized Stock)
+ON	MEI	methode-electronics-ondo-tokenized	Methode Electronics (Ondo Tokenized)
+ON	MELI	mercadolibre-ondo-tokenized-stock	MercadoLibre (Ondo Tokenized Stock)
+ON	META	meta-platforms-ondo-tokenized-stock	Meta Platforms (Ondo Tokenized Stock)
+ON	MKSI	mks-inc-ondo-tokenized	MKS Inc. (Ondo Tokenized)
+ON	MP	mp-materials-ondo-tokenized	MP Materials (Ondo Tokenized)
+ON	MRK	merck-ondo-tokenized	Merck (Ondo Tokenized)
+ON	MRNA	moderna-ondo-tokenized	Moderna (Ondo Tokenized)
+ON	MRVL	marvell-technology-ondo-tokenized-stock	Marvell Technology (Ondo Tokenized Stock)
+ON	MSFT	microsoft-ondo-tokenized-stock	Microsoft (Ondo Tokenized Stock)
+ON	MSTR	microstrategy-ondo-tokenized-stock	MicroStrategy (Ondo Tokenized Stock)
+ON	MTSI	macom-technology-solutions-holdings-ondo-tokenized	MACOM Technology Solutions Holdings (Ondo Tokenized)
+ON	MTZ	mastec-ondo-tokenized	MasTec (Ondo Tokenized)
+ON	MU	micron-technology-ondo-tokenized-stock	Micron Technology (Ondo Tokenized Stock)
+ON	MXL	maxlinear-ondo-tokenized	MaxLinear (Ondo Tokenized)
+ON	MYRG	myr-group-ondo-tokenized	MYR Group (Ondo Tokenized)
+ON	NAT	nordic-american-tankers-ondo-tokenized	Nordic American Tankers (Ondo Tokenized)
+ON	NBIS	nebius-group-ondo-tokenized	Nebius Group (Ondo Tokenized)
+ON	NEE	nextera-energy-ondo-tokenized	NextEra Energy (Ondo Tokenized)
+ON	NEM	newmont-ondo-tokenized	Newmont (Ondo Tokenized)
+ON	NET	cloudflare-ondo-tokenized	Cloudflare (Ondo Tokenized)
+ON	NFLX	netflix-ondo-tokenized-stock	Netflix (Ondo Tokenized Stock)
+ON	NIKL	sprott-nickel-miners-etf-ondo-tokenized	Sprott Nickel Miners ETF (Ondo Tokenized)
+ON	NIO	nio-ondo-tokenized	NIO (Ondo Tokenized)
+ON	NKE	nike-ondo-tokenized-stock	Nike (Ondo Tokenized Stock)
+ON	NNE	nano-nuclear-energy-ondo-tokenized	NANO Nuclear Energy (Ondo Tokenized)
+ON	NOC	northrop-grumman-ondo-tokenized	Northrop Grumman (Ondo Tokenized)
+ON	NOK	nokia-ondo-tokenized	Nokia (Ondo Tokenized)
+ON	NOW	servicenow-ondo-tokenized-stock	ServiceNow (Ondo Tokenized Stock)
+ON	NTES	netease-ondo-tokenized	NetEase (Ondo Tokenized)
+ON	NUE	nucor-ondo-tokenized	Nucor (Ondo Tokenized)
+ON	NVDA	nvidia-ondo-tokenized-stock	NVIDIA (Ondo Tokenized Stock)
+ON	NVMI	nova-ondo-tokenized	Nova (Ondo Tokenized)
+ON	NVO	novo-nordisk-ondo-tokenized-stock	Novo Nordisk (Ondo Tokenized Stock)
+ON	NVT	nvent-electric-ondo-tokenized	nVent Electric (Ondo Tokenized)
+ON	NVTS	navitas-semiconductor-ondo-tokenized	Navitas Semiconductor (Ondo Tokenized)
+ON	OIH	vaneck-oil-services-etf-ondo-tokenized	VanEck Oil Services ETF (Ondo Tokenized)
+ON	OII	oceaneering-international-ondo-tokenized	Oceaneering International (Ondo Tokenized)
+ON	OKLO	oklo-ondo-tokenized	Oklo (Ondo Tokenized)
+ON	ON	on-semiconductor-ondo-tokenized	ON Semiconductor (Ondo Tokenized)
+ON	ONDS	ondas-holdings-ondo-tokenized	Ondas Holdings (Ondo Tokenized)
+ON	ONTO	onto-innovation-ondo-tokenized	Onto Innovation (Ondo Tokenized)
+ON	OPEN	opendoor-technologies-ondo-tokenized	Opendoor Technologies (Ondo Tokenized)
+ON	OPRA	opera-ondo-tokenized	Opera (Ondo Tokenized)
+ON	ORBX	global-x-space-tech-etf-ondo-tokenized	Global X Space Tech ETF (Ondo Tokenized)
+ON	ORCL	oracle-ondo-tokenized-stock	Oracle (Ondo Tokenized Stock)
+ON	OSCR	oscar-health-ondo-tokenized	Oscar Health (Ondo Tokenized)
+ON	OUST	ouster-ondo-tokenized	Ouster (Ondo Tokenized)
+ON	OXY	occidental-petroleum-ondo-tokenized	Occidental Petroleum (Ondo Tokenized)
+ON	PALL	abrdn-physical-palladium-shares-etf-ondo-tokenized-stocks	abrdn Physical Palladium Shares ETF (Ondo Tokenized ETF)
+ON	PANW	palo-alto-networks-ondo-tokenized-stock	Palo Alto Networks (Ondo Tokenized Stock)
+ON	PAVE	global-x-us-infrastructure-development-etf-ondo-tokenized	Global X US Infrastructure Development ETF (Ondo Tokenized)
+ON	PBR	petrobras-ondo-tokenized-stock	Petrobras (Ondo Tokenized Stock)
+ON	PCG	pg-e-ondo-tokenized	PG&E (Ondo Tokenized)
+ON	PDBC	invesco-optimum-yld-dvsfd-cmd-str-no-k-1-etf-ondo-tokenized-etf	Invesco Optimum Yld Dvsfd Cmd Str No K-1 ETF (Ondo Tokenized ETF)
+ON	PDD	pdd-holdings-ondo-tokenized	PDD Holdings (Ondo Tokenized)
+ON	PENG	penguin-solutions-ondo-tokenized	Penguin Solutions (Ondo Tokenized)
+ON	PEP	pepsico-ondo-tokenized-stock	PepsiCo (Ondo Tokenized Stock)
+ON	PFE	pfizer-ondo-tokenized-stock	Pfizer (Ondo Tokenized Stock)
+ON	PG	procter-gamble-ondo-tokenized-stock	Procter & Gamble (Ondo Tokenized Stock)
+ON	PINS	pinterest-ondo-tokenized	Pinterest (Ondo Tokenized)
+ON	PL	planet-labs-ondo-tokenized	Planet Labs (Ondo Tokenized)
+ON	PLTR	palantir-technologies-ondo-tokenized-stock	Palantir Technologies (Ondo Tokenized Stock)
+ON	PLUG	plug-power-ondo-tokenized	Plug Power (Ondo Tokenized)
+ON	POWI	power-integrations-ondo-tokenized	Power Integrations (Ondo Tokenized)
+ON	POWL	powell-industries-ondo-tokenized	Powell Industries (Ondo Tokenized)
+ON	PPLT	abrdn-physical-platinum-shares-etf-ondo-tokenized	abrdn Physical Platinum Shares ETF (Ondo Tokenized)
+ON	PRIM	primoris-services-ondo-tokenized	Primoris Services (Ondo Tokenized)
+ON	PSQ	proshares-short-qqq-ondo-tokenized	ProShares Short QQQ (Ondo Tokenized)
+ON	PURR	hyperliquid-strategies-ondo-tokenized	Hyperliquid Strategies (Ondo Tokenized)
+ON	PWR	quanta-services-ondo-tokenized	Quanta Services (Ondo Tokenized)
+ON	PYPL	paypal-ondo-tokenized-stock	PayPal (Ondo Tokenized Stock)
+ON	QBTS	d-wave-quantum-ondo-tokenized-stock	D-Wave Quantum (Ondo Tokenized Stock)
+ON	QCOM	qualcomm-ondo-tokenized-stock	Qualcomm (Ondo Tokenized Stock)
+ON	QLTA	ishares-aaa-a-rated-corporate-bond-etf-ondo-tokenized	iShares Aaa - A Rated Corporate Bond ETF (Ondo Tokenized)
+ON	QQQ	invesco-qqq-etf-ondo-tokenized-etf	Invesco QQQ ETF (Ondo Tokenized ETF)
+ON	QTUM	defiance-quantum-etf-ondo-tokenized	Defiance Quantum ETF (Ondo Tokenized)
+ON	QUBT	quantum-computing-ondo-tokenized	Quantum Computing (Ondo Tokenized)
+ON	QYLD	global-x-nasdaq-100-covered-call-etf-ondo-tokenized	Global X NASDAQ 100 Covered Call ETF (Ondo Tokenized)
+ON	RDDT	reddit-ondo-tokenized-stock	Reddit (Ondo Tokenized Stock)
+ON	RDW	redwire-ondo-tokenized	Redwire (Ondo Tokenized)
+ON	REGN	regeneron-pharmaceuticals-ondo-tokenized	Regeneron Pharmaceuticals (Ondo Tokenized)
+ON	REMX	vaneck-rare-earth-and-strategic-metals-etf-ondo-tokenized	VanEck Rare Earth and Strategic Metals ETF (Ondo Tokenized)
+ON	RGTI	rigetti-computing-ondo-tokenized	Rigetti Computing (Ondo Tokenized)
+ON	RIOT	riot-platforms-ondo-tokenized-stock	Riot Platforms (Ondo Tokenized Stock)
+ON	RIVN	rivian-automotive-ondo-tokenized	Rivian Automotive (Ondo Tokenized)
+ON	RKLB	rocket-lab-ondo-tokenized	Rocket Lab (Ondo Tokenized)
+ON	RMBS	rambus-ondo-tokenized	Rambus (Ondo Tokenized)
+ON	ROK	rockwell-automation-ondo-tokenized	Rockwell Automation (Ondo Tokenized)
+ON	RTX	rtx-ondo-tokenized	RTX (Ondo Tokenized)
+ON	SAP	sap-ondo-tokenized	SAP (Ondo Tokenized)
+ON	SATA	strive-preferred-ondo-tokenized	Strive Preferred (Ondo Tokenized)
+ON	SBET	sharplink-gaming-inc-ondo-tokenized-stock	SharpLink Gaming, Inc (Ondo Tokenized Stock)
+ON	SBUX	starbucks-ondo-tokenized-stock	Starbucks (Ondo Tokenized Stock)
+ON	SCCO	southern-copper-ondo-tokenized	Southern Copper (Ondo Tokenized)
+ON	SCHW	charles-schwab-ondo-tokenized-stocks	Charles Schwab (Ondo Tokenized Stock)
+ON	SECU	ishares-securitized-income-active-etf-ondo-tokenized-etf	iShares Securitized Income Active ETF (Ondo Tokenized ETF)
+ON	SEDG	solaredge-technologies-ondo-tokenized	SolarEdge Technologies (Ondo Tokenized)
+ON	SGOV	ishares-0-3-month-treasury-bond-etf-ondo-tokenized-etf	iShares 0-3 Month Treasury Bond ETF (Ondo Tokenized ETF)
+ON	SHLD	global-x-defense-tech-etf-ondo-tokenized	Global X Defense Tech ETF (Ondo Tokenized)
+ON	SHOP	shopify-ondo-tokenized-stock	Shopify (Ondo Tokenized Stock)
+ON	SHY	ishares-1-3-year-treasury-bond-etf-ondo-tokenized	iShares 1-3 Year Treasury Bond ETF (Ondo Tokenized)
+ON	SIL	global-x-silver-miners-etf-ondo-tokenized	Global X Silver Miners ETF (Ondo Tokenized)
+ON	SKHY	sk-hynix-ondo-tokenized	SK Hynix (Ondo Tokenized)
+ON	SLB	slb-ondo-tokenized	SLB (Ondo Tokenized)
+ON	SLV	ishares-silver-trust-ondo-tokenized-stock	iShares Silver Trust (Ondo Tokenized Stock)
+ON	SMCI	super-micro-computer-ondo-tokenized-stock	Super Micro Computer (Ondo Tokenized Stock)
+ON	SMR	nuscale-power-ondo-tokenized	NuScale Power (Ondo Tokenized)
+ON	SNAP	snap-ondo-tokenized	Snap (Ondo Tokenized)
+ON	SNDK	sandisk-ondo-tokenized	SanDisk (Ondo Tokenized)
+ON	SNOW	snowflake-ondo-tokenized-stock	Snowflake (Ondo Tokenized Stock)
+ON	SO	southern-ondo-tokenized-stock	Southern (Ondo Tokenized Stock)
+ON	SOFI	sofi-technologies-ondo-tokenized-stock	SoFi Technologies (Ondo Tokenized Stock)
+ON	SOUN	soundhound-ai-ondo-tokenized	SoundHound AI (Ondo Tokenized)
+ON	SOXL	direxion-daily-semi-bull-3x-etf-ondo-tokenized	Direxion Daily Semi Bull 3X ETF (Ondo Tokenized)
+ON	SOXQ	invesco-phlx-semiconductor-etf-ondo-tokenized	Invesco PHLX Semiconductor ETF (Ondo Tokenized)
+ON	SOXS	direxion-daily-semi-bear-3x-etf-ondo-tokenized	Direxion Daily Semi Bear 3X ETF (Ondo Tokenized)
+ON	SOXX	ishares-semiconductor-etf-ondo-tokenized	iShares Semiconductor ETF (Ondo Tokenized)
+ON	SPCX	spacex-ondo-tokenized-stock	SpaceX (Ondo Tokenized Stock)
+ON	SPGI	s-p-global-ondo-tokenized-stock	S&P Global (Ondo Tokenized Stock)
+ON	SPOT	spotify-ondo-tokenized-stock	Spotify (Ondo Tokenized Stock)
+ON	SPY	spdr-s-p-500-etf-ondo-tokenized-etf	SPDR S&P 500 ETF (Ondo Tokenized ETF)
+ON	SQQQ	proshares-ultrapro-short-qqq-ondo-tokenized	ProShares UltraPro Short QQQ (Ondo Tokenized)
+ON	STLD	steel-dynamics-ondo-tokenized	Steel Dynamics (Ondo Tokenized)
+ON	STM	stmicroelectronics-ondo-tokenized	STMicroelectronics (Ondo Tokenized)
+ON	STNG	scorpio-tankers-ondo-tokenized	Scorpio Tankers (Ondo Tokenized)
+ON	STRC	strategy-stretch-preferred-ondo-tokenized	Strategy Stretch Preferred (Ondo Tokenized)
+ON	STX	seagate-ondo-tokenized	Seagate (Ondo Tokenized)
+ON	SWKS	skyworks-solutions-ondo-tokenized	Skyworks Solutions (Ondo Tokenized)
+ON	SYM	symbotic-ondo-tokenized	Symbotic (Ondo Tokenized)
+ON	SYSB	ishares-systematic-bond-etf-ondo-tokenized	iShares Systematic Bond ETF (Ondo Tokenized ETF)
+ON	T	atnt-ondo-tokenized-stock	AT&T (Ondo Tokenized Stock)
+ON	TASK	taskus-ondo-tokenized	TaskUs (Ondo Tokenized)
+ON	TCOM	trip-com-group-ondo-tokenized-stock	Trip.com Group (Ondo Tokenized Stock)
+ON	TEL	te-connectivity-ondo-tokenized	TE Connectivity (Ondo Tokenized)
+ON	TEN	tsakos-energy-navigation-ondo-tokenized	Tsakos Energy Navigation (Ondo Tokenized)
+ON	TER	teradyne-ondo-tokenized	Teradyne (Ondo Tokenized)
+ON	TIP	ishares-tips-bond-etf-ondo-tokenized-etf	iShares TIPS Bond ETF (Ondo Tokenized ETF)
+ON	TLN	talen-energy-ondo-tokenized-stock	Talen Energy (Ondo Tokenized Stock)
+ON	TLT	ishares-20-year-treasury-bond-etf-ondo-tokenized-etf	iShares 20+ Year Treasury Bond ETF (Ondo Tokenized ETF)
+ON	TM	toyota-ondo-tokenized-stock	Toyota (Ondo Tokenized Stock)
+ON	TMO	thermo-fisher-scientific-ondo-tokenized-stock	Thermo Fisher Scientific (Ondo Tokenized Stock)
+ON	TMUS	t-mobile-us-ondo-tokenized-stock	T-Mobile US (Ondo Tokenized Stock)
+ON	TNK	teekay-tankers-ondo-tokenized	Teekay Tankers (Ondo Tokenized)
+ON	TQQQ	proshares-ultrapro-qqq-ondo-tokenized	ProShares UltraPro QQQ (Ondo Tokenized)
+ON	TSEM	tower-semiconductor-ondo-tokenized	Tower Semiconductor (Ondo Tokenized)
+ON	TSLA	tesla-ondo-tokenized-stock	Tesla (Ondo Tokenized Stock)
+ON	TSM	taiwan-semiconductor-manufacturing-ondo-tokenized-stock	Taiwan Semiconductor Manufacturing (Ondo Tokenized Stock)
+ON	TT	trane-technologies-ondo-tokenized	Trane Technologies (Ondo Tokenized)
+ON	TTMI	ttm-technologies-ondo-tokenized	TTM Technologies (Ondo Tokenized)
+ON	TXN	texas-instruments-ondo-tokenized	Texas Instruments (Ondo Tokenized)
+ON	UAMY	united-states-antimony-ondo-tokenized	United States Antimony (Ondo Tokenized)
+ON	UBER	uber-ondo-tokenized-stock	Uber (Ondo Tokenized Stock)
+ON	UCTT	ultra-clean-holdings-ondo-tokenized	Ultra Clean Holdings (Ondo Tokenized)
+ON	UEC	uranium-energy-ondo-tokenized	Uranium Energy (Ondo Tokenized)
+ON	UMC	united-microelectronics-ondo-tokenized	United Microelectronics (Ondo Tokenized)
+ON	UNG	us-natural-gas-fund-ondo-tokenized	US Natural Gas Fund (Ondo Tokenized)
+ON	UNH	unitedhealth-ondo-tokenized-stock	UnitedHealth (Ondo Tokenized Stock)
+ON	UNP	union-pacific-corporation-ondo-tokenized	Union Pacific Corporation (Ondo Tokenized)
+ON	URA	global-x-uranium-etf-ondo-tokenized	Global X Uranium ETF (Ondo Tokenized)
+ON	URNM	sprott-uranium-miners-etf-ondo-tokenized	Sprott Uranium Miners ETF (Ondo Tokenized)
+ON	USAR	usa-rare-earth-ondo-tokenized	USA Rare Earth (Ondo Tokenized)
+ON	USFR	wisdomtree-floating-rate-treasury-fund-ondo-tokenized	WisdomTree Floating Rate Treasury Fund (Ondo Tokenized)
+ON	USO	united-states-oil-fund-ondo-tokenized	United States Oil Fund (Ondo Tokenized)
+ON	UUUU	energy-fuels-ondo-tokenized	Energy Fuels (Ondo Tokenized)
+ON	V	visa-ondo-tokenized-stock	Visa (Ondo Tokenized Stock)
+ON	VCX	fundrise-innovation-fund-ondo-tokenized	Fundrise Innovation Fund (Ondo Tokenized)
+ON	VDE	vanguard-energy-etf-ondo-tokenized	Vanguard Energy ETF (Ondo Tokenized)
+ON	VFS	vinfast-auto-ondo-tokenized	VinFast Auto (Ondo Tokenized)
+ON	VICR	vicor-ondo-tokenized	Vicor (Ondo Tokenized)
+ON	VNQ	vanguard-real-estate-etf-ondo-tokenized	Vanguard Real Estate ETF (Ondo Tokenized)
+ON	VPG	vishay-precision-group-ondo-tokenized	Vishay Precision Group (Ondo Tokenized)
+ON	VRSN	verisign-ondo-tokenized	VeriSign (Ondo Tokenized)
+ON	VRT	vertiv-ondo-tokenized	Vertiv (Ondo Tokenized)
+ON	VRTX	vertex-pharmaceuticals-ondo-tokenized	Vertex Pharmaceuticals (Ondo Tokenized)
+ON	VSH	vishay-intertechnology-ondo-tokenized	Vishay Intertechnology (Ondo Tokenized)
+ON	VST	vistra-ondo-tokenized	Vistra (Ondo Tokenized)
+ON	VTI	vanguard-total-stock-market-etf-ondo-tokenized	Vanguard Total Stock Market ETF (Ondo Tokenized)
+ON	VTV	vanguard-value-etf-ondo-tokenized	Vanguard Value ETF (Ondo Tokenized)
+ON	VZ	verizon-ondo-tokenized	Verizon (Ondo Tokenized)
+ON	WCC	wesco-international-ondo-tokenized	WESCO International (Ondo Tokenized)
+ON	WDC	western-digital-ondo-tokenized	Western Digital (Ondo Tokenized)
+ON	WFC	wells-fargo-ondo-tokenized-stock	Wells Fargo (Ondo Tokenized Stock)
+ON	WLK	westlake-ondo-tokenized	Westlake (Ondo Tokenized)
+ON	WM	waste-management-ondo-tokenized	Waste Management (Ondo Tokenized)
+ON	WMB	williams-ondo-tokenized	Williams (Ondo Tokenized)
+ON	WMT	walmart-ondo-tokenized-stock	Walmart (Ondo Tokenized Stock)
+ON	WOLF	wolfspeed-ondo-tokenized	Wolfspeed (Ondo Tokenized)
+ON	WS	worthington-steel-ondo-tokenized	Worthington Steel (Ondo Tokenized)
+ON	WULF	terawulf-ondo-tokenized	Terawulf (Ondo Tokenized)
+ON	WYFI	whitefiber-ondo-tokenized	WhiteFiber (Ondo Tokenized)
+ON	XOM	exxon-mobil-ondo-tokenized-stocks	Exxon Mobil (Ondo Tokenized Stock)
+ON	XYLD	global-x-s-p-500-covered-call-etf-ondo-tokenized	Global X S&P 500 Covered Call ETF (Ondo Tokenized)
+ON	XYZ	block-ondo-tokenized-stocks	Block (Ondo Tokenized Stock)
+ON	YEAR	ab-ultra-short-income-etf-ondo-tokenized	AB Ultra Short Income ETF (Ondo Tokenized)
+RH	AAL	american-airlines-group-inc-robinhood-token	American Airlines Group Inc. • Robinhood Token
+RH	AAOI	applied-optoelectronics-robinhood-tokenized-stock	Applied Optoelectronics • Robinhood Token
+RH	AAPL	apple-robinhood-tokenized-stock	Apple • Robinhood Token
+RH	ABCL	abcellera-biologics-inc-robinhood-token	AbCellera Biologics Inc. • Robinhood Token
+RH	ABNB	airbnb-inc-robinhood-token	Airbnb, Inc. • Robinhood Token
+RH	ACHR	archer-aviation-inc-robinhood-token	Archer Aviation Inc. • Robinhood Token
+RH	ADBE	adobe-inc-robinhood-token	Adobe Inc. • Robinhood Token
+RH	AEHR	aehr-test-systems-robinhood-token	Aehr Test Systems • Robinhood Token
+RH	AEIS	advanced-energy-industries-inc-robinhood-token	Advanced Energy Industries, Inc. • Robinhood Token
+RH	AFRM	affirm-holdings-inc-robinhood-token	Affirm Holdings, Inc. • Robinhood Token
+RH	ALAB	astera-labs-inc-robinhood-token	Astera Labs, Inc. • Robinhood Token
+RH	AMAT	applied-materials-robinhood-tokenized-stock	Applied Materials • Robinhood Token
+RH	AMBA	ambarella-inc-robinhood-token	Ambarella, Inc. • Robinhood Token
+RH	AMC	amc-entertainment-holdings-inc-robinhood-token	AMC Entertainment Holdings, Inc. • Robinhood Token
+RH	AMD	amd-robinhood-tokenized-stock	AMD • Robinhood Token
+RH	AMKR	amkor-technology-inc-robinhood-token	Amkor Technology, Inc. • Robinhood Token
+RH	AMPX	amprius-technologies-inc-robinhood-token	Amprius Technologies, Inc. • Robinhood Token
+RH	AMZN	amazon-robinhood-tokenized-stock	Amazon • Robinhood Token
+RH	ANET	arista-networks-robinhood-token	Arista Networks • Robinhood Token
+RH	APH	amphenol-corporation-robinhood-token	Amphenol Corporation • Robinhood Token
+RH	APLD	applied-digital-robinhood-tokenized-stock	Applied Digital • Robinhood Token
+RH	APP	applovin-corporation-robinhood-token	Applovin Corporation • Robinhood Token
+RH	ASML	asml-holding-nv-robinhood-tokenized-stock	ASML Holding NV • Robinhood Token
+RH	ASTS	ast-spacemobile-robinhood-tokenized-stock	AST SpaceMobile • Robinhood Token
+RH	AUR	aurora-innovation-inc-robinhood-token	Aurora Innovation, Inc. • Robinhood Token
+RH	AVAV	aerovironment-inc-robinhood-token	AeroVironment, Inc. • Robinhood Token
+RH	AVGO	broadcom-robinhood-tokenized-stock	Broadcom • Robinhood Token
+RH	AXON	axon-enterprise-inc-robinhood-token	Axon Enterprise, Inc. • Robinhood Token
+RH	AXTI	axt-inc-robinhood-token	AXT Inc • Robinhood Token
+RH	BA	boeing-robinhood-tokenized-stock	Boeing • Robinhood Token
+RH	BABA	alibaba-robinhood-tokenized-stock	Alibaba • Robinhood Token
+RH	BB	blackberry-limited-robinhood-token	BlackBerry Limited • Robinhood Token
+RH	BE	bloom-energy-robinhood-tokenized-stock	Bloom Energy • Robinhood Token
+RH	BMNR	bitmine-immersion-technologies-inc-robinhood-token	Bitmine Immersion Technologies, Inc. • Robinhood Token
+RH	BND	vanguard-total-bond-market-etf-robinhood-token	Vanguard Total Bond Market ETF • Robinhood Token
+RH	BULL	webull-corporation-robinhood-token	Webull Corporation • Robinhood Token
+RH	CAR	avis-budget-group-inc-robinhood-token	Avis Budget Group, Inc. • Robinhood Token
+RH	CBRS	cerebras-systems-robinhood-tokenized-stock	Cerebras Systems • Robinhood Token
+RH	CCJ	cameco-corporation-robinhood-token	Cameco Corporation • Robinhood Token
+RH	CCL	carnival-corporation-robinhood-tokenized-stock	Carnival Corporation • Robinhood Token
+RH	CEG	constellation-energy-corporation-robinhood-token	Constellation Energy Corporation • Robinhood Token
+RH	CELH	celsius-robinhood-tokenized-stock	Celsius • Robinhood Token
+RH	CENX	century-aluminum-company-robinhood-token	Century Aluminum Company • Robinhood Token
+RH	CIEN	ciena-corporation-robinhood-token	Ciena Corporation • Robinhood Token
+RH	CIFR	cipher-digital-inc-robinhood-token	Cipher Digital Inc. • Robinhood Token
+RH	CLOV	clover-health-investments-corp-robinhood-token	Clover Health Investments, Corp. • Robinhood Token
+RH	CLS	celestica-inc-robinhood-token	Celestica, Inc. • Robinhood Token
+RH	CLSK	cleanspark-robinhood-tokenized-stock	CleanSpark • Robinhood Token
+RH	COHR	coherent-corp-robinhood-token	Coherent Corp. • Robinhood Token
+RH	COIN	coinbase-robinhood-tokenized-stock	Coinbase • Robinhood Token
+RH	CORZ	core-scientific-inc-robinhood-token	Core Scientific, Inc. • Robinhood Token
+RH	COST	costco-robinhood-tokenized-stock	Costco • Robinhood Token
+RH	CRCL	circle-internet-group-robinhood-tokenized-stock	Circle Internet Group • Robinhood Token
+RH	CRDO	credo-technology-group-holding-ltd-ordinary-shares-robinhood-token	Credo Technology Group Holding Ltd Ordinary Shares • Robinhood Token
+RH	CRM	salesforce-inc-robinhood-token	Salesforce, Inc. • Robinhood Token
+RH	CRWD	crowdstrike-holdings-robinhood-tokenized-stock	CrowdStrike Holdings • Robinhood Token
+RH	CRWV	coreweave-robinhood-tokenized-stock	CoreWeave • Robinhood Token
+RH	CSCO	cisco-systems-inc-robinhood-token	Cisco Systems, Inc. • Robinhood Token
+RH	CTSH	cognizant-technology-solutions-corporation-class-a-robinhood-token	Cognizant Technology Solutions Corporation Class A • Robinhood Token
+RH	CVNA	carvana-co-robinhood-token	Carvana Co. • Robinhood Token
+RH	CVX	chevron-corporation-robinhood-token	Chevron Corporation • Robinhood Token
+RH	D	dominion-energy-inc-robinhood-token	Dominion Energy, Inc. • Robinhood Token
+RH	DDOG	datadog-robinhood-tokenized-stock	Datadog • Robinhood Token
+RH	DELL	dell-robinhood-tokenized-stock	Dell • Robinhood Token
+RH	DIS	the-walt-disney-company-robinhood-token	The Walt Disney Company • Robinhood Token
+RH	DJT	trump-media-technology-group-corp-robinhood-token	Trump Media & Technology Group Corp. • Robinhood Token
+RH	DKNG	draftkings-inc-robinhood-token	DraftKings Inc. • Robinhood Token
+RH	DOCN	digitalocean-holdings-inc-robinhood-token	DigitalOcean Holdings, Inc. • Robinhood Token
+RH	EBAY	ebay-inc-robinhood-token	eBay Inc. • Robinhood Token
+RH	ELF	e-l-f-beauty-robinhood-tokenized-stock	e.l.f. Beauty • Robinhood Token
+RH	EWT	ishares-msci-taiwan-etf-robinhood-token	iShares MSCI Taiwan ETF • Robinhood Token
+RH	EWY	ishares-msci-south-korea-fund-robinhood-tokenized-stock	iShares MSCI South Korea fund • Robinhood Token
+RH	F	ford-motor-robinhood-tokenized-stock	Ford Motor • Robinhood Token
+RH	FICO	fair-isaac-corporation-robinhood-token	Fair Isaac Corporation • Robinhood Token
+RH	FIG	figma-inc-robinhood-token	Figma, Inc. • Robinhood Token
+RH	FISV	fiserv-inc-robinhood-token	Fiserv, Inc. • Robinhood Token
+RH	FIX	comfort-systems-usa-inc-robinhood-token	Comfort Systems USA, Inc. • Robinhood Token
+RH	FLNC	fluence-energy-robinhood-tokenized-stock	Fluence Energy • Robinhood Token
+RH	FLY	firefly-aerospace-inc-robinhood-token	Firefly Aerospace Inc. • Robinhood Token
+RH	FSLR	first-solar-inc-robinhood-token	First Solar, Inc. • Robinhood Token
+RH	FTNT	fortinet-inc-robinhood-token	Fortinet, Inc. • Robinhood Token
+RH	FUN	six-flags-entertainment-corporation-robinhood-token	Six Flags Entertainment Corporation • Robinhood Token
+RH	FUTU	futu-holdings-robinhood-tokenized-stock	Futu Holdings • Robinhood Token
+RH	GAP	the-gap-inc-robinhood-token	The Gap, Inc. • Robinhood Token
+RH	GDX	vaneck-gold-miners-etf-robinhood-token	VanEck Gold Miners ETF • Robinhood Token
+RH	GE	ge-aerospace-robinhood-token	GE Aerospace • Robinhood Token
+RH	GEV	ge-vernova-inc-robinhood-token	GE Vernova Inc. • Robinhood Token
+RH	GLD	spdr-gold-shares-robinhood-token	SPDR Gold Shares • Robinhood Token
+RH	GLW	corning-robinhood-tokenized-stock	Corning • Robinhood Token
+RH	GLXY	galaxy-digital-inc-robinhood-token	Galaxy Digital Inc. • Robinhood Token
+RH	GME	gamestop-robinhood-tokenized-stock	GameStop • Robinhood Token
+RH	GOOGL	alphabet-class-a-robinhood-tokenized-stock	Alphabet Class A • Robinhood Token
+RH	GRND	grindr-inc-robinhood-token	Grindr Inc. • Robinhood Token
+RH	GS	the-goldman-sachs-group-inc-robinhood-token	The Goldman Sachs Group, Inc. • Robinhood Token
+RH	HAS	hasbro-inc-robinhood-token	Hasbro, Inc. • Robinhood Token
+RH	HII	huntington-ingalls-industries-inc-robinhood-token	Huntington Ingalls Industries, Inc. • Robinhood Token
+RH	HIMS	hims-hers-health-inc-robinhood-token	Hims & Hers Health, Inc. • Robinhood Token
+RH	HL	hecla-mining-company-robinhood-token	Hecla Mining Company • Robinhood Token
+RH	HON	honeywell-international-inc-robinhood-token	Honeywell International Inc. • Robinhood Token
+RH	HPE	hewlett-packard-enterprise-company-robinhood-token	Hewlett Packard Enterprise Company • Robinhood Token
+RH	HUT	hut-8-corp-robinhood-token	Hut 8 Corp. • Robinhood Token
+RH	HWM	howmet-aerospace-inc-robinhood-token	Howmet Aerospace Inc. • Robinhood Token
+RH	IBKR	interactive-brokers-group-inc-robinhood-token	Interactive Brokers Group, Inc. • Robinhood Token
+RH	IBM	international-business-machines-corporation-robinhood-token	International Business Machines Corporation • Robinhood Token
+RH	IBRX	immunitybio-inc-robinhood-token	ImmunityBio, Inc. • Robinhood Token
+RH	INDA	ishares-msci-india-etf-robinhood-token	iShares MSCI India ETF • Robinhood Token
+RH	INFQ	infleqtion-inc-robinhood-token	Infleqtion, Inc. • Robinhood Token
+RH	INOD	innodata-robinhood-tokenized-stock	Innodata • Robinhood Token
+RH	INTC	intel-robinhood-tokenized-stock	Intel • Robinhood Token
+RH	INTU	intuit-robinhood-tokenized-stock	Intuit • Robinhood Token
+RH	IONQ	ionq-robinhood-tokenized-stock	IonQ • Robinhood Token
+RH	IREN	iren-limited-robinhood-tokenized-stock	IREN Limited • Robinhood Token
+RH	JBL	jabil-inc-robinhood-token	Jabil Inc. • Robinhood Token
+RH	JNJ	johnson-johnson-robinhood-token	Johnson & Johnson • Robinhood Token
+RH	JOBY	joby-aviation-inc-robinhood-token	Joby Aviation, Inc. • Robinhood Token
+RH	JPM	jpmorgan-chase-co-robinhood-token	JPMorgan Chase & Co. • Robinhood Token
+RH	KLAC	kla-corporation-robinhood-token	KLA Corporation • Robinhood Token
+RH	KSS	kohl-s-corporation-robinhood-token	Kohl's Corporation • Robinhood Token
+RH	KTOS	kratos-defense-security-solutions-inc-robinhood-token	Kratos Defense & Security Solutions, Inc. • Robinhood Token
+RH	LCID	lucid-group-inc-robinhood-token	Lucid Group, Inc. • Robinhood Token
+RH	LHX	l3harris-technologies-inc-robinhood-token	L3Harris Technologies, Inc. • Robinhood Token
+RH	LITE	lumentum-robinhood-tokenized-stock	Lumentum • Robinhood Token
+RH	LLY	eli-lilly-robinhood-tokenized-stock	Eli Lilly • Robinhood Token
+RH	LMT	lockheed-martin-corp-robinhood-token	Lockheed Martin Corp. • Robinhood Token
+RH	LRCX	lam-research-corporation-robinhood-token	Lam Research Corporation • Robinhood Token
+RH	LULU	lululemon-robinhood-tokenized-stock	Lululemon • Robinhood Token
+RH	LUNR	intuitive-machines-robinhood-tokenized-stock	Intuitive Machines • Robinhood Token
+RH	M	macy-s-inc-robinhood-token	Macy's, Inc. • Robinhood Token
+RH	MARA	mara-holdings-inc-robinhood-token	MARA Holdings, Inc. • Robinhood Token
+RH	MCD	mcdonald-s-corporation-robinhood-token	McDonald's Corporation • Robinhood Token
+RH	MDB	mongodb-robinhood-tokenized-stock	MongoDB • Robinhood Token
+RH	META	meta-platforms-robinhood-tokenized-stock	Meta Platforms • Robinhood Token
+RH	MNST	monster-beverage-corporation-robinhood-token	Monster Beverage Corporation • Robinhood Token
+RH	MOD	modine-manufacturing-co-robinhood-token	Modine Manufacturing Co • Robinhood Token
+RH	MPWR	monolithic-power-systems-inc-robinhood-token	Monolithic Power Systems, Inc. • Robinhood Token
+RH	MRNA	moderna-inc-robinhood-token	Moderna, Inc. • Robinhood Token
+RH	MRVL	marvell-technology-robinhood-tokenized-stock	Marvell Technology • Robinhood Token
+RH	MSFT	microsoft-robinhood-tokenized-stock	Microsoft • Robinhood Token
+RH	MSTR	strategy-inc-robinhood-tokenized-stock	Strategy Inc. • Robinhood Token
+RH	MTSI	macom-technology-solutions-holdings-inc-robinhood-token	MACOM Technology Solutions Holdings, Inc. • Robinhood Token
+RH	MU	micron-technology-robinhood-tokenized-stock	Micron Technology • Robinhood Token
+RH	MXL	maxlinear-robinhood-tokenized-stock	MaxLinear • Robinhood Token
+RH	NAVN	navan-inc-robinhood-token	Navan, Inc. • Robinhood Token
+RH	NBIS	nebius-group-robinhood-tokenized-stock	Nebius Group • Robinhood Token
+RH	NCLH	norwegian-cruise-line-holdings-ltd-robinhood-token	Norwegian Cruise Line Holdings Ltd. • Robinhood Token
+RH	NET	cloudflare-inc-robinhood-token	Cloudflare, Inc. • Robinhood Token
+RH	NFLX	netflix-robinhood-tokenized-stock	Netflix • Robinhood Token
+RH	NNE	nano-nuclear-energy-robinhood-tokenized-stock	Nano Nuclear Energy • Robinhood Token
+RH	NOW	servicenow-robinhood-tokenized-stock	ServiceNow • Robinhood Token
+RH	NTDOY	nintendo-co-ltd-robinhood-token	Nintendo Co., Ltd. • Robinhood Token
+RH	NU	nu-robinhood-tokenized-stock	Nu • Robinhood Token
+RH	NVDA	nvidia-robinhood-tokenized-stock	NVIDIA • Robinhood Token
+RH	NVTS	navitas-semiconductor-robinhood-tokenized-stock	Navitas Semiconductor • Robinhood Token
+RH	OKLO	oklo-inc-robinhood-token	Oklo Inc. • Robinhood Token
+RH	ON	on-semiconductor-corporation-robinhood-token	ON Semiconductor Corporation • Robinhood Token
+RH	ONDS	ondas-inc-robinhood-token	Ondas Inc. • Robinhood Token
+RH	ONTO	onto-innovation-inc-robinhood-token	Onto Innovation Inc. • Robinhood Token
+RH	OPEN	opendoor-technologies-inc-robinhood-token	Opendoor Technologies Inc. • Robinhood Token
+RH	ORCL	oracle-robinhood-tokenized-stock	Oracle • Robinhood Token
+RH	OSCR	oscar-health-inc-robinhood-token	Oscar Health, Inc. • Robinhood Token
+RH	OUST	ouster-inc-robinhood-token	Ouster, Inc. • Robinhood Token
+RH	P	everpure-robinhood-tokenized-stock	Everpure • Robinhood Token
+RH	PANW	palo-alto-networks-inc-robinhood-token	Palo Alto Networks, Inc. • Robinhood Token
+RH	PATH	uipath-inc-robinhood-token	UiPath, Inc. • Robinhood Token
+RH	PENG	penguin-solutions-robinhood-tokenized-stock	Penguin Solutions • Robinhood Token
+RH	PFE	pfizer-inc-robinhood-token	Pfizer Inc. • Robinhood Token
+RH	PINS	pinterest-inc-robinhood-token	Pinterest, Inc. • Robinhood Token
+RH	PL	planet-labs-pbc-robinhood-token	Planet Labs PBC • Robinhood Token
+RH	PLTR	palantir-technologies-robinhood-tokenized-stock	Palantir Technologies • Robinhood Token
+RH	POET	poet-technologies-robinhood-tokenized-stock	POET Technologies • Robinhood Token
+RH	POWL	powell-industries-inc-robinhood-token	Powell Industries, Inc. • Robinhood Token
+RH	PR	permian-resources-robinhood-tokenized-stock	Permian Resources • Robinhood Token
+RH	PSKY	paramount-skydance-corporation-robinhood-token	Paramount Skydance Corporation • Robinhood Token
+RH	PWR	quanta-services-inc-robinhood-token	Quanta Services, Inc. • Robinhood Token
+RH	PYPL	paypal-holdings-inc-robinhood-token	PayPal Holdings, Inc. • Robinhood Token
+RH	QBTS	d-wave-quantum-robinhood-tokenized-stock	D-Wave Quantum • Robinhood Token
+RH	QCOM	qualcomm-robinhood-tokenized-stock	Qualcomm • Robinhood Token
+RH	QNT	quantinuum-inc-robinhood-token	Quantinuum Inc. • Robinhood Token
+RH	QQQ	invesco-qqq-robinhood-tokenized-stock	Invesco QQQ • Robinhood Token
+RH	QUBT	quantum-computing-robinhood-tokenized-stock	Quantum Computing • Robinhood Token
+RH	RBLX	roblox-robinhood-tokenized-stock	Roblox • Robinhood Token
+RH	RCAT	red-cat-holdings-inc-robinhood-token	Red Cat Holdings, Inc. • Robinhood Token
+RH	RDDT	reddit-robinhood-tokenized-stock	Reddit • Robinhood Token
+RH	RDW	redwire-robinhood-tokenized-stock	Redwire • Robinhood Token
+RH	RGTI	rigetti-computing-robinhood-tokenized-stock	Rigetti Computing • Robinhood Token
+RH	RIOT	riot-platforms-inc-robinhood-token	Riot Platforms, Inc. • Robinhood Token
+RH	RIVN	rivian-automotive-robinhood-tokenized-stock	Rivian Automotive • Robinhood Token
+RH	RKLB	rocket-lab-corporation-robinhood-tokenized-stock	Rocket Lab Corporation • Robinhood Token
+RH	RTX	rtx-corporation-robinhood-token	RTX Corporation • Robinhood Token
+RH	RUN	sunrun-inc-robinhood-token	Sunrun Inc. • Robinhood Token
+RH	SATS	echostar-robinhood-tokenized-stock	EchoStar • Robinhood Token
+RH	SCHD	schwab-us-dividend-equity-etf-robinhood-token	Schwab US Dividend Equity ETF • Robinhood Token
+RH	SGOV	ishares-0-3-month-treasury-bond-etf-robinhood-tokenized-stock	iShares 0-3 Month Treasury Bond ETF • Robinhood Token
+RH	SHOP	shopify-robinhood-tokenized-stock	Shopify • Robinhood Token
+RH	SHY	ishares-1-3-year-treasury-bond-etf-robinhood-token	iShares 1-3 Year Treasury Bond ETF • Robinhood Token
+RH	SILJ	amplify-junior-silver-miners-etf-robinhood-token	Amplify Junior Silver Miners ETF • Robinhood Token
+RH	SIMO	silicon-motion-technology-corporation-ads-robinhood-token	Silicon Motion Technology Corporation ADS • Robinhood Token
+RH	SKYHY	sk-hynix-robinhood-token	SK Hynix • Robinhood Token
+RH	SLS	sellas-life-sciences-group-inc-robinhood-token	SELLAS Life Sciences Group, Inc. • Robinhood Token
+RH	SLV	ishares-silver-trust-robinhood-tokenized-stock	iShares Silver Trust • Robinhood Token
+RH	SMCI	super-micro-computer-robinhood-tokenized-stock	Super Micro Computer • Robinhood Token
+RH	SMH	vaneck-semiconductor-etf-robinhood-token	VanEck Semiconductor ETF • Robinhood Token
+RH	SMR	nuscale-power-corporation-robinhood-token	NuScale Power Corporation • Robinhood Token
+RH	SNAP	snap-inc-robinhood-token	Snap Inc. • Robinhood Token
+RH	SNDK	sandisk-corporation-robinhood-tokenized-stock	Sandisk Corporation • Robinhood Token
+RH	SNOW	snowflake-inc-robinhood-token	Snowflake Inc. • Robinhood Token
+RH	SOFI	sofi-technologies-robinhood-tokenized-stock	SoFi Technologies • Robinhood Token
+RH	SOUN	soundhound-ai-inc-robinhood-token	SoundHound AI, Inc • Robinhood Token
+RH	SOXX	ishares-semiconductor-etf-robinhood-tokenized-stock	iShares Semiconductor ETF • Robinhood Token
+RH	SPCX	spacex-robinhood-tokenized-stock	SpaceX • Robinhood Token
+RH	SPMO	invesco-s-p-500-momentum-etf-robinhood-tokenized-stock	Invesco S&P 500 Momentum ETF • Robinhood Token
+RH	SPOT	spotify-technology-s-a-robinhood-token	Spotify Technology S.A. • Robinhood Token
+RH	SPY	spdr-s-p-500-etf-trust-robinhood-tokenized-stock	SPDR S&P 500 ETF Trust • Robinhood Token
+RH	TE	t1-energy-inc-robinhood-token	T1 Energy Inc. • Robinhood Token
+RH	TEAM	atlassian-corporation-robinhood-token	Atlassian Corporation • Robinhood Token
+RH	TEM	tempus-ai-inc-robinhood-token	Tempus AI, Inc. • Robinhood Token
+RH	TER	teradyne-inc-robinhood-token	Teradyne, Inc. • Robinhood Token
+RH	TPL	texas-pacific-land-corporation-robinhood-token	Texas Pacific Land Corporation • Robinhood Token
+RH	TSEM	tower-semiconductor-robinhood-tokenized-stock	Tower Semiconductor • Robinhood Token
+RH	TSLA	tesla-robinhood-tokenized-stock	Tesla • Robinhood Token
+RH	TSM	taiwan-semiconductor-manufacturing-robinhood-tokenized-stock	Taiwan Semiconductor Manufacturing • Robinhood Token
+RH	TTD	the-trade-desk-inc-robinhood-token	The Trade Desk, Inc. • Robinhood Token
+RH	TTWO	take-two-interactive-software-robinhood-tokenized-stock	Take-Two Interactive Software • Robinhood Token
+RH	TWST	twist-bioscience-corporation-robinhood-token	Twist Bioscience Corporation • Robinhood Token
+RH	U	unity-software-inc-robinhood-token	Unity Software Inc. • Robinhood Token
+RH	UAL	united-airlines-holdings-inc-robinhood-token	United Airlines Holdings, Inc. • Robinhood Token
+RH	UBER	uber-technologies-inc-robinhood-token	Uber Technologies, Inc. • Robinhood Token
+RH	UMAC	unusual-machines-inc-robinhood-token	Unusual Machines, Inc. • Robinhood Token
+RH	UMC	united-microelectronics-robinhood-tokenized-stock	United Microelectronics • Robinhood Token
+RH	UNH	unitedhealth-group-incorporated-robinhood-token	UnitedHealth Group Incorporated • Robinhood Token
+RH	UPS	ups-robinhood-tokenized-stock	UPS • Robinhood Token
+RH	URA	global-x-uranium-etf-robinhood-token	Global X Uranium ETF • Robinhood Token
+RH	USAR	usa-rare-earth-robinhood-tokenized-stock	USA Rare Earth • Robinhood Token
+RH	USO	united-states-oil-fund-robinhood-tokenized-stock	United States Oil Fund • Robinhood Token
+RH	V	visa-inc-robinhood-token	Visa Inc. • Robinhood Token
+RH	VICR	vicor-corporation-robinhood-token	Vicor Corporation • Robinhood Token
+RH	VOYG	voyager-technologies-inc-robinhood-token	Voyager Technologies, Inc. • Robinhood Token
+RH	VRT	vertiv-holdings-co-robinhood-token	Vertiv Holdings Co • Robinhood Token
+RH	VSAT	viasat-inc-robinhood-token	ViaSat, Inc. • Robinhood Token
+RH	VSH	vishay-intertechnology-inc-robinhood-token	Vishay Intertechnology, Inc. • Robinhood Token
+RH	VST	vistra-corp-robinhood-token	Vistra Corp. • Robinhood Token
+RH	VTI	vanguard-morningstar-total-stock-market-etf-robinhood-token	Vanguard Morningstar Total Stock Market ETF • Robinhood Token
+RH	WDAY	workday-robinhood-tokenized-stock	Workday • Robinhood Token
+RH	WDC	western-digital-corporation-robinhood-token	Western Digital Corporation • Robinhood Token
+RH	WST	west-pharmaceutical-services-inc-robinhood-token	West Pharmaceutical Services, Inc. • Robinhood Token
+RH	WULF	terawulf-inc-robinhood-token	TeraWulf Inc. • Robinhood Token
+RH	WYFI	whitefiber-inc-robinhood-token	WhiteFiber, Inc. • Robinhood Token
+RH	XLK	state-street-technology-select-sector-spdr-etf-robinhood-tokenized-stock	State Street Technology Select Sector SPDR ETF • Robinhood Token
+RH	XNDU	xanadu-quantum-robinhood-tokenized-stock	Xanadu Quantum • Robinhood Token
+RH	XOM	exxon-mobil-robinhood-tokenized-stock	Exxon Holdings Corporation • Robinhood Token
+RH	ZETA	zeta-global-holdings-corp-robinhood-token	Zeta Global Holdings Corp. • Robinhood Token
+RH	ZM	zoom-robinhood-tokenized-stock	Zoom • Robinhood Token
+RH	ZS	zscaler-robinhood-tokenized-stock	Zscaler • Robinhood Token
+X	A	agilent-technologies-xstock	Agilent Technologies xStock
+X	AA	alcoa-xstock	Alcoa xStock
+X	AAOI	applied-optoelectronics-xstock	Applied Optoelectronics xStock
+X	AAPL	apple-xstock	Apple xStock
+X	ABBV	abbvie-xstock	AbbVie xStock
+X	ABNB	airbnb-xstock	Airbnb xStock
+X	ABT	abbott-xstock	Abbott xStock
+X	ACN	accenture-xstock	Accenture xStock
+X	ADBE	adobe-xstock	Adobe xStock
+X	ADI	analog-devices-xstock	Analog Devices xStock
+X	ADM	archer-daniels-midland-xstock	Archer-Daniels-Midland xStock
+X	ADP	automatic-data-processing-xstock	Automatic Data Processing xStock
+X	ADSK	autodesk-xstock	Autodesk xStock
+X	AEE	ameren-xstock	Ameren xStock
+X	AEP	american-electric-power-xstock	American Electric Power xStock
+X	AFL	aflac-xstock	Aflac xStock
+X	AIAGR	aia-xstock	AIA xStock
+X	AIG	american-international-xstock	American International xStock
+X	AIT	applied-industrial-technologies-xstock	Applied Industrial Technologies xStock
+X	AIZ	assurant-xstock	Assurant xStock
+X	AJG	arthur-j-gallagher-xstock	Arthur J. Gallagher xStock
+X	AKAM	akamai-technologies-xstock	Akamai Technologies xStock
+X	ALAB	astera-labs-xstock	Astera Labs xStock
+X	ALB	albemarle-xstock	Albemarle xStock
+X	ALGN	align-technology-xstock	Align Technology xStock
+X	ALL	allstate-xstock	Allstate xStock
+X	ALLY	ally-financial-xstock	Ally Financial xStock
+X	ALNY	alnylam-pharmaceuticals-xstock	Alnylam Pharmaceuticals xStock
+X	AMAT	applied-materials-inc-xstock	Applied Materials, Inc. xStock
+X	AMBR	amber-xstock	Amber xStock
+X	AMD	amd-xstock	AMD xStock
+X	AME	ametek-xstock	AMETEK xStock
+X	AMGN	amgen-xstock	Amgen xStock
+X	AMP	ameriprise-financial-xstock	Ameriprise Financial xStock
+X	AMT	american-tower-xstock	American Tower xStock
+X	AMZN	amazon-xstock	Amazon xStock
+X	ANET	arista-networks-inc-xstock	Arista Networks, Inc. xStock
+X	ANTAS	anta-sports-products-xstock	ANTA Sports Products xStock
+X	APA	apa-xstock	APA xStock
+X	APD	air-products-and-chemicals-xstock	Air Products and Chemicals xStock
+X	APG	api-xstock	APi xStock
+X	APH	amphenol-xstock	Amphenol xStock
+X	APLD	applied-digital-corporation-xstock	Applied Digital Corporation xStock
+X	APO	apollo-global-management-xstock	Apollo Global Management xStock
+X	APP	applovin-xstock	AppLovin xStock
+X	ARES	ares-management-xstock	Ares Management xStock
+X	ARM	arm-xstock	ARM xStock
+X	ARMK	aramark-xstock	Aramark xStock
+X	ARW	arrow-electronics-xstock	Arrow Electronics xStock
+X	ASML	asml-xstock	ASML xStock
+X	ASMPT	asmpt-xstock	ASMPT xStock
+X	ASTS	ast-spacemobile-xstock	AST SpaceMobile xStock
+X	ATI	ati-xstock	ATI xStock
+X	ATO	atmos-energy-xstock	Atmos Energy xStock
+X	AVB	avalonbay-communities-xstock	AvalonBay Communities xStock
+X	AVGO	broadcom-xstock	Broadcom xStock
+X	AVY	avery-dennison-xstock	Avery Dennison xStock
+X	AWK	american-water-works-xstock	American Water Works xStock
+X	AXON	axon-enterprise-xstock	Axon Enterprise xStock
+X	AXP	american-express-xstock	American Express xStock
+X	AZN	astrazeneca-xstock	AstraZeneca xStock
+X	AZO	autozone-xstock	AutoZone xStock
+X	BA	boeing-xstock	Boeing xStock
+X	BAC	bank-of-america-xstock	Bank of America xStock
+X	BALL	ball-xstock	Ball xStock
+X	BAM	brookfield-asset-management-xstock	Brookfield Asset Management xStock
+X	BANKC	bank-of-china-xstock	Bank Of China xStock
+X	BBY	best-buy-xstock	Best Buy xStock
+X	BDWAP	budweiser-brewing-co-apac-xstock	Budweiser Brewing Co APAC xStock
+X	BDX	becton-dickinson-xstock	Becton Dickinson xStock
+X	BE	bloom-energy-xstock	Bloom Energy xStock
+X	BIIB	biogen-xstock	Biogen xStock
+X	BITX	volatility-shares-2x-bitcoin-strategy-xstock	Volatility Shares 2x Bitcoin Strategy xStock
+X	BJ	bj-s-wholesale-club-xstock	BJ's Wholesale Club xStock
+X	BKNG	booking-xstock	Booking xStock
+X	BKR	baker-hughes-xstock	Baker Hughes xStock
+X	BLK	blackrock-xstock	BlackRock xStock
+X	BLSH	bullish-xstock	Bullish xStock
+X	BMNR	bitmine-xstock	Bitmine xStock
+X	BMY	bristol-myers-squibb-xstock	Bristol-Myers Squibb xStock
+X	BNY	bank-of-new-york-mellon-xstock	Bank of New York Mellon xStock
+X	BOCHK	boc-hong-kong-xstock	BOC Hong Kong xStock
+X	BOCOM	bank-of-communications-xstock	Bank of Communications xStock
+X	BOT	robostrategy-xstock	RoboStrategy xStock
+X	BR	broadridge-financial-solutions-xstock	Broadridge Financial Solutions xStock
+X	BRK.B	berkshire-hathaway-xstock	Berkshire Hathaway xStock
+X	BRO	brown-brown-xstock	Brown & Brown xStock
+X	BSP	bending-spoons-xstock	Bending Spoons xStock
+X	BSX	boston-scientific-xstock	Boston Scientific xStock
+X	BTBT	bit-digital-xstock	Bit Digital xStock
+X	BTGO	bitgo-xstock	Bitgo xStock
+X	BURL	burlington-stores-xstock	Burlington Stores xStock
+X	BWA	borgwarner-xstock	BorgWarner xStock
+X	BWXT	bwx-technologies-xstock	BWX Technologies xStock
+X	BX	blackstone-xstock	Blackstone xStock
+X	BYDCO	byd-xstock	BYD xStock
+X	C	citigroup-xstock	Citigroup xStock
+X	CAH	cardinal-health-xstock	Cardinal Health xStock
+X	CARR	carrier-global-xstock	Carrier Global xStock
+X	CASY	casey-s-general-stores-xstock	Casey's General Stores xStock
+X	CAT	caterpillar-xstock	Caterpillar xStock
+X	CBOE	cboe-global-markets-xstock	Cboe Global Markets xStock
+X	CBRE	cbre-xstock	CBRE xStock
+X	CBRS	cerebras-systems-xstock	Cerebras Systems xStock
+X	CCI	crown-castle-xstock	Crown Castle xStock
+X	CCONB	china-construction-bank-xstock	China Construction Bank xStock
+X	CDNS	cadence-design-systems-xstock	Cadence Design Systems xStock
+X	CDW	cdw-xstock	CDW xStock
+X	CEG	constellation-energy-corporation-xstock	Constellation Energy Corporation xStock
+X	CF	cf-industries-xstock	CF Industries xStock
+X	CFG	citizens-financial-xstock	Citizens Financial xStock
+X	CG	the-carlyle-xstock	The Carlyle xStock
+X	CHD	church-dwight-xstock	Church & Dwight xStock
+X	CHONG	china-hongqiao-xstock	China Hongqiao xStock
+X	CHRW	c-h-robinson-worldwide-xstock	C.H. Robinson Worldwide xStock
+X	CHTR	charter-communications-xstock	Charter Communications xStock
+X	CI	the-cigna-xstock	The Cigna xStock
+X	CIEN	ciena-xstock	Ciena xStock
+X	CINF	cincinnati-financial-xstock	Cincinnati Financial xStock
+X	CITIC	citic-xstock	CITIC xStock
+X	CKAH	ck-asset-xstock	CK Asset xStock
+X	CKHUT	ck-hutchison-xstock	CK Hutchison xStock
+X	CKINF	ck-infrastructure-xstock	CK Infrastructure xStock
+X	CL	colgate-palmolive-xstock	Colgate-Palmolive xStock
+X	CLH	clean-harbors-xstock	Clean Harbors xStock
+X	CLINS	china-life-insurance-xstock	China Life Insurance xStock
+X	CLONP	china-longyuan-power-xstock	China Longyuan Power xStock
+X	CLPHD	clp-xstock	CLP xStock
+X	CLSK	cleanspark-xstock	CleanSpark xStock
+X	CLX	clorox-xstock	Clorox xStock
+X	CMCSA	comcast-xstock	Comcast xStock
+X	CME	cme-xstock	CME xStock
+X	CMEND	china-mengniu-dairy-xstock	China Mengniu Dairy xStock
+X	CMERP	china-merchants-port-xstock	China Merchants Port xStock
+X	CMG	chipotle-mexican-grill-xstock	Chipotle Mexican Grill xStock
+X	CMI	cummins-xstock	Cummins xStock
+X	CMS	cms-energy-xstock	CMS Energy xStock
+X	CNC	centene-xstock	Centene xStock
+X	CNP	centerpoint-energy-xstock	CenterPoint Energy xStock
+X	COF	capital-one-financial-xstock	Capital One Financial xStock
+X	COHR	coherent-xstock	Coherent xStock
+X	COIN	coinbase-xstock	Coinbase xStock
+X	COO	the-cooper-companies-xstock	The Cooper Companies xStock
+X	COP	conocophillips-xstock	ConocoPhillips xStock
+X	COPX	global-x-copper-miners-xstock	Global X Copper Miners xStock
+X	COR	cencora-xstock	Cencora xStock
+X	CORZ	core-scientific-xstock	Core Scientific xStock
+X	COSC	cosco-shipping-xstock	COSCO SHIPPING xStock
+X	COST	costco-xstock	Costco xStock
+X	COVEL	china-overseas-land-investment-xstock	China Overseas Land & Investment xStock
+X	CPAY	corpay-xstock	Corpay xStock
+X	CPETC	china-petroleum-chemical-xstock	China Petroleum & Chemical xStock
+X	CPNG	coupang-xstock	Coupang xStock
+X	CPRT	copart-xstock	Copart xStock
+X	CPT	camden-property-trust-xstock	Camden Property Trust xStock
+X	CRAUT	chery-automobile-xstock	Chery Automobile xStock
+X	CRCL	circle-xstock	Circle xStock
+X	CRESB	china-resources-beer-holdings-xstock	China Resources Beer Holdings xStock
+X	CRESL	china-resources-land-xstock	China Resources Land xStock
+X	CRESM	china-resources-mixc-lifestyle-services-xstock	China Resources Mixc Lifestyle Services xStock
+X	CRESP	china-resources-power-xstock	China Resources Power xStock
+X	CRM	salesforce-xstock	Salesforce xStock
+X	CRS	carpenter-technology-xstock	Carpenter Technology xStock
+X	CRWD	crowdstrike-xstock	CrowdStrike xStock
+X	CRWV	coreweave-xstock	CoreWeave xStock
+X	CSCO	cisco-xstock	Cisco xStock
+X	CSGP	costar-xstock	CoStar xStock
+X	CSHEE	china-shenhua-energy-xstock	China Shenhua Energy xStock
+X	CSL	carlisle-companies-xstock	Carlisle Companies xStock
+X	CSPC	cspc-pharmaceutical-xstock	CSPC Pharmaceutical xStock
+X	CSX	csx-xstock	CSX xStock
+X	CTAS	cintas-xstock	Cintas xStock
+X	CTFJW	chow-tai-fook-jewellery-xstock	Chow Tai Fook Jewellery xStock
+X	CTINS	china-taiping-insurance-xstock	China Taiping Insurance xStock
+X	CTPCA	cathay-pacific-airways-xstock	Cathay Pacific Airways xStock
+X	CTSH	cognizant-technology-solutions-xstock	Cognizant Technology Solutions xStock
+X	CTVA	corteva-xstock	Corteva xStock
+X	CVNA	carvana-xstock	Carvana xStock
+X	CVS	cvs-health-xstock	CVS Health xStock
+X	CVX	chevron-xstock	Chevron xStock
+X	CW	curtiss-wright-xstock	Curtiss-Wright xStock
+X	D	dominion-energy-xstock	Dominion Energy xStock
+X	DAL	delta-air-lines-xstock	Delta Air Lines xStock
+X	DASH	doordash-xstock	DoorDash xStock
+X	DAX	global-x-dax-germany-xstock	Global X DAX Germany xStock
+X	DDOG	datadog-xstock	Datadog xStock
+X	DE	deere-xstock	Deere xStock
+X	DECK	deckers-outdoor-xstock	Deckers Outdoor xStock
+X	DELL	dell-technologies-inc-xstock	Dell Technologies Inc. xStock
+X	DFDV	dfdv-xstock	DFDV xStock
+X	DG	dollar-general-xstock	Dollar General xStock
+X	DGX	quest-diagnostics-xstock	Quest Diagnostics xStock
+X	DHI	d-r-horton-xstock	D.R. Horton xStock
+X	DHR	danaher-xstock	Danaher xStock
+X	DIS	the-walt-disney-xstock	The Walt Disney xStock
+X	DKNG	draftkings-xstock	DraftKings xStock
+X	DKS	dick-s-sporting-goods-xstock	Dick's Sporting Goods xStock
+X	DLR	digital-realty-trust-xstock	Digital Realty Trust xStock
+X	DLTR	dollar-tree-xstock	Dollar Tree xStock
+X	DOC	healthpeak-properties-xstock	Healthpeak Properties xStock
+X	DOV	dover-xstock	Dover xStock
+X	DOW	dow-xstock	Dow xStock
+X	DRI	darden-restaurants-xstock	Darden Restaurants xStock
+X	DT	dynatrace-xstock	Dynatrace xStock
+X	DTE	dte-energy-xstock	DTE Energy xStock
+X	DUK	duke-energy-xstock	Duke Energy xStock
+X	DUOL	duolingo-xstock	Duolingo xStock
+X	DVN	devon-energy-xstock	Devon Energy xStock
+X	DXCM	dexcom-xstock	DexCom xStock
+X	EBAY	ebay-xstock	eBay xStock
+X	ECL	ecolab-xstock	Ecolab xStock
+X	ED	consolidated-edison-xstock	Consolidated Edison xStock
+X	EFX	equifax-xstock	Equifax xStock
+X	EG	everest-xstock	Everest xStock
+X	EIX	edison-international-xstock	Edison International xStock
+X	EL	the-estee-lauder-companies-xstock	The Estee Lauder Companies xStock
+X	ELAN	elanco-animal-health-xstock	Elanco Animal Health xStock
+X	ELS	equity-lifestyle-properties-xstock	Equity Lifestyle Properties xStock
+X	ELV	elevance-health-xstock	Elevance Health xStock
+X	EME	emcor-xstock	EMCOR xStock
+X	EMR	emerson-electric-xstock	Emerson Electric xStock
+X	ENHA	enhanced-group-xstock	Enhanced Group xStock
+X	ENNHL	enn-energy-xstock	ENN Energy xStock
+X	ENTG	entegris-xstock	Entegris xStock
+X	EOG	eog-resources-xstock	EOG Resources xStock
+X	EQH	equitable-xstock	Equitable xStock
+X	EQIX	equinix-xstock	Equinix xStock
+X	EQT	eqt-xstock	EQT xStock
+X	ES	eversource-energy-xstock	Eversource Energy xStock
+X	ESS	essex-property-trust-xstock	Essex Property Trust xStock
+X	ETN	eaton-corporation-plc-xstock	Eaton Corporation plc xStock
+X	ETR	entergy-xstock	Entergy xStock
+X	EVR	evercore-xstock	Evercore xStock
+X	EVRG	evergy-xstock	Evergy xStock
+X	EW	edwards-lifesciences-xstock	Edwards Lifesciences xStock
+X	EWBC	east-west-bancorp-xstock	East West Bancorp xStock
+X	EWG	ishares-msci-germany-xstock	iShares MSCI Germany xStock
+X	EWQ	ishares-msci-france-xstock	iShares MSCI France xStock
+X	EWU	ishares-msci-united-kingdom-xstock	iShares MSCI United Kingdom xStock
+X	EWY	ishares-msci-south-korea-xstock	iShares MSCI South Korea xStock
+X	EXC	exelon-xstock	Exelon xStock
+X	EXE	expand-energy-xstock	Expand Energy xStock
+X	EXEL	exelixis-xstock	Exelixis xStock
+X	EXPD	expeditors-international-of-washington-xstock	Expeditors International of Washington xStock
+X	EXPE	expedia-xstock	Expedia xStock
+X	EXR	extra-space-storage-xstock	Extra Space Storage xStock
+X	F	ford-motor-xstock	Ford Motor xStock
+X	FAAA	fidelity-aaa-clo-xstock	Fidelity AAA CLO xStock
+X	FANG	diamondback-energy-xstock	Diamondback Energy xStock
+X	FAST	fastenal-xstock	Fastenal xStock
+X	FCNCA	first-citizens-bancshares-xstock	First Citizens BancShares xStock
+X	FCX	freeport-mcmoran-xstock	Freeport-McMoRan xStock
+X	FDX	fedex-xstock	FedEx xStock
+X	FDXF	fedex-freight-xstock	FedEx Freight xStock
+X	FE	firstenergy-xstock	FirstEnergy xStock
+X	FERG	ferguson-enterprises-xstock	Ferguson Enterprises xStock
+X	FEZ	spdr-euro-stoxx-50-xstock	SPDR EURO STOXX 50 xStock
+X	FFIV	f5-xstock	F5 xStock
+X	FGDL	franklin-responsibly-sourced-gold-etf-xstock	Franklin Responsibly Sourced Gold ETF xStock
+X	FHN	first-horizon-xstock	First Horizon xStock
+X	FICO	fair-isaac-xstock	Fair Isaac xStock
+X	FIG	figma-xstock	Figma xStock
+X	FIS	fidelity-national-information-services-xstock	Fidelity National Information Services xStock
+X	FISV	fiserv-xstock	Fiserv xStock
+X	FITB	fifth-third-bancorp-xstock	Fifth Third Bancorp xStock
+X	FIX	comfort-systems-usa-xstock	Comfort Systems USA xStock
+X	FLBL	franklin-senior-loan-xstock	Franklin Senior Loan xStock
+X	FLQM	franklin-u-s-mid-cap-multi-factor-xstock	Franklin U.S. Mid Cap Multi-Factor xStock
+X	FNF	fidelity-national-financial-xstock	Fidelity National Financial xStock
+X	FSLR	first-solar-xstock	First Solar xStock
+X	FSML	franklin-small-cap-enhanced-xstock	Franklin Small Cap Enhanced xStock
+X	FTAI	ftai-aviation-xstock	FTAI Aviation xStock
+X	FTNT	fortinet-xstock	Fortinet xStock
+X	FTV	fortive-xstock	Fortive xStock
+X	FUFU	bitfufu-xstock	BitFuFu xStock
+X	FWONK	liberty-media-xstock	Liberty Media xStock
+X	GD	general-dynamics-xstock	General Dynamics xStock
+X	GDX	vaneck-gold-miners-xstock	VanEck Gold Miners xStock
+X	GE	ge-aerospace-xstock	GE Aerospace xStock
+X	GEEL	geely-automobile-xstock	Geely Automobile xStock
+X	GEHC	ge-healthcare-technologies-xstock	GE HealthCare Technologies xStock
+X	GEN	gen-digital-xstock	Gen Digital xStock
+X	GENTE	galaxy-entertainment-xstock	Galaxy Entertainment xStock
+X	GEV	ge-vernova-inc-xstock	GE Vernova Inc. xStock
+X	GGG	graco-xstock	Graco xStock
+X	GILD	gilead-sciences-xstock	Gilead Sciences xStock
+X	GIS	general-mills-xstock	General Mills xStock
+X	GL	globe-life-xstock	Globe Life xStock
+X	GLD	gold-xstock	Gold xStock
+X	GLPI	gaming-and-leisure-properties-xstock	Gaming and Leisure Properties xStock
+X	GLW	corning-xstock	Corning xStock
+X	GLXY	galaxy-digital-xstock	Galaxy Digital xStock
+X	GM	general-motors-xstock	General Motors xStock
+X	GME	gamestop-xstock	Gamestop xStock
+X	GNRC	generac-xstock	Generac xStock
+X	GOOGL	alphabet-xstock	Alphabet xStock
+X	GPC	genuine-parts-xstock	Genuine Parts xStock
+X	GPN	global-payments-xstock	Global Payments xStock
+X	GS	goldman-sachs-xstock	Goldman Sachs xStock
+X	GWW	w-w-grainger-xstock	W.W. Grainger xStock
+X	HAIDL	haidilao-international-xstock	Haidilao International xStock
+X	HAIER	haier-smart-home-xstock	Haier Smart Home xStock
+X	HAL	halliburton-xstock	Halliburton xStock
+X	HAS	hasbro-xstock	Hasbro xStock
+X	HBAN	huntington-bancshares-xstock	Huntington Bancshares xStock
+X	HCA	hca-healthcare-xstock	HCA Healthcare xStock
+X	HD	home-depot-xstock	Home Depot xStock
+X	HEI.A	heico-xstock	HEICO xStock
+X	HIG	the-hartford-insurance-xstock	The Hartford Insurance xStock
+X	HIMS	hims-hers-xstock	Hims & Hers xStock
+X	HKCGA	hong-kong-and-china-gas-xstock	Hong Kong and China Gas xStock
+X	HKEXC	hong-kong-exchanges-and-clearing-xstock	Hong Kong Exchanges and Clearing xStock
+X	HLT	hilton-worldwide-xstock	Hilton Worldwide xStock
+X	HNDLD	henderson-land-development-xstock	Henderson Land Development xStock
+X	HON	honeywell-xstock	Honeywell xStock
+X	HOOD	robinhood-xstock	Robinhood xStock
+X	HPE	hewlett-packard-enterprise-xstock	Hewlett Packard Enterprise xStock
+X	HPQ	hp-xstock	HP xStock
+X	HRZRB	horizon-robotics-xstock	Horizon Robotics xStock
+X	HSDT	helius-medical-technologies-xstock	Helius Medical Technologies xStock
+X	HST	host-hotels-resorts-xstock	Host Hotels & Resorts xStock
+X	HSY	the-hershey-xstock	The Hershey xStock
+X	HUBB	hubbell-xstock	Hubbell xStock
+X	HUM	humana-xstock	Humana xStock
+X	HUT	hut-8-xstock	Hut 8 xStock
+X	HWM	howmet-aerospace-xstock	Howmet Aerospace xStock
+X	IBKR	interactive-brokers-xstock	Interactive Brokers xStock
+X	IBM	international-business-machines-xstock	International Business Machines xStock
+X	ICBC	industrial-and-commercial-bank-of-china-xstock	Industrial And Commercial Bank Of China xStock
+X	ICE	intercontinental-exchange-xstock	Intercontinental Exchange xStock
+X	IDXX	idexx-laboratories-xstock	IDEXX Laboratories xStock
+X	IEMG	core-msci-emerging-markets-xstock	Core MSCI Emerging Markets xStock
+X	IEX	idex-xstock	IDEX xStock
+X	IFF	international-flavors-fragrances-xstock	International Flavors & Fragrances xStock
+X	IJR	s-p-small-cap-xstock	S&P Small Cap xStock
+X	ILMN	illumina-xstock	Illumina xStock
+X	INCY	incyte-xstock	Incyte xStock
+X	INSM	insmed-xstock	Insmed xStock
+X	INTC	intel-xstock	Intel xStock
+X	INTU	intuit-xstock	Intuit xStock
+X	INVH	invitation-homes-xstock	Invitation Homes xStock
+X	IP	international-paper-xstock	International Paper xStock
+X	IQM	franklin-intelligent-machines-xstock	Franklin Intelligent Machines xStock
+X	IQV	iqvia-xstock	IQVIA xStock
+X	IR	ingersoll-rand-xstock	Ingersoll Rand xStock
+X	IREN	iren-xstock	IREN xStock
+X	IRM	iron-mountain-xstock	Iron Mountain xStock
+X	ISRG	intuitive-surgical-xstock	Intuitive Surgical xStock
+X	ITA	ishares-u-s-aerospace-defense-etf-xstock	iShares U.S. Aerospace & Defense ETF xStock
+X	ITT	itt-xstock	ITT xStock
+X	ITW	illinois-tool-works-xstock	Illinois Tool Works xStock
+X	IWM	russell-2000-xstock	Russell 2000 xStock
+X	J	jacobs-solutions-xstock	Jacobs Solutions xStock
+X	JAAA	janus-henderson-aaa-clo-xstock	Janus Henderson AAA CLO xStock
+X	JBHT	jb-hunt-transport-services-xstock	JB Hunt Transport Services xStock
+X	JBL	jabil-xstock	Jabil xStock
+X	JDHLT	jd-health-international-xstock	JD Health International xStock
+X	JDLOG	jd-logistics-xstock	JD Logistics xStock
+X	JLL	jones-lang-lasalle-xstock	Jones Lang LaSalle xStock
+X	JMKE	jersey-mike-s-subs-xstock	Jersey Mike's Subs xStock
+X	JNJ	johnson-johnson-xstock	Johnson & Johnson xStock
+X	JPM	jpmorgan-chase-xstock	JPMorgan Chase xStock
+X	JPST	jpmorgan-ultra-short-income-xstock	JPMorgan Ultra-Short Income xStock
+X	JTGEX	j-t-global-express-xstock	J&T Global Express xStock
+X	KDP	keurig-dr-pepper-xstock	Keurig Dr Pepper xStock
+X	KEY	keycorp-xstock	KeyCorp xStock
+X	KEYS	keysight-technologies-xstock	Keysight Technologies xStock
+X	KHC	the-kraft-heinz-xstock	The Kraft Heinz xStock
+X	KIM	kimco-realty-xstock	Kimco Realty xStock
+X	KKR	kkr-xstock	KKR xStock
+X	KLAC	kla-corporation-xstock	KLA Corporation xStock
+X	KMB	kimberly-clark-xstock	Kimberly-Clark xStock
+X	KMI	kinder-morgan-xstock	Kinder Morgan xStock
+X	KNX	knight-swift-transportation-xstock	Knight-Swift Transportation xStock
+X	KO	coca-cola-xstock	Coca-Cola xStock
+X	KR	the-kroger-xstock	The Kroger xStock
+X	KRAQ	kraq-xstock	KRAQ xStock
+X	KUAI	kuaishou-technology-xstock	Kuaishou Technology xStock
+X	KUNL	kunlun-energy-xstock	Kunlun Energy xStock
+X	KVUE	kenvue-xstock	Kenvue xStock
+X	L	loews-xstock	Loews xStock
+X	LAMR	lamar-advertising-xstock	Lamar Advertising xStock
+X	LAOPG	laopu-gold-xstock	Laopu Gold xStock
+X	LDOS	leidos-xstock	Leidos xStock
+X	LECO	lincoln-electric-xstock	Lincoln Electric xStock
+X	LEN	lennar-xstock	Lennar xStock
+X	LHX	l3harris-technologies-xstock	L3Harris Technologies xStock
+X	LII	lennox-international-xstock	Lennox International xStock
+X	LIN	linde-xstock	Linde xStock
+X	LITE	lumentum-holdings-inc-xstock	Lumentum Holdings Inc. xStock
+X	LLY	eli-lilly-xstock	Eli Lilly xStock
+X	LMT	lockheed-martin-xstock	Lockheed Martin xStock
+X	LNG	cheniere-energy-xstock	Cheniere Energy xStock
+X	LNT	alliant-energy-xstock	Alliant Energy xStock
+X	LOW	lowe-s-companies-xstock	Lowe's Companies xStock
+X	LPLA	lpl-financial-xstock	LPL Financial xStock
+X	LRCX	lam-research-corporation-xstock	Lam Research Corporation xStock
+X	LSCC	lattice-semiconductor-xstock	Lattice Semiconductor xStock
+X	LULU	lululemon-xstock	lululemon xStock
+X	LUV	southwest-airlines-xstock	Southwest Airlines xStock
+X	LVS	las-vegas-sands-xstock	Las Vegas Sands xStock
+X	LYV	live-nation-entertainment-xstock	Live Nation Entertainment xStock
+X	MA	mastercard-xstock	Mastercard xStock
+X	MAA	mid-america-apartment-communities-xstock	Mid-America Apartment Communities xStock
+X	MAR	marriott-international-xstock	Marriott International xStock
+X	MARA	mara-xstock	MARA xStock
+X	MAS	masco-xstock	Masco xStock
+X	MCD	mcdonald-s-xstock	McDonald's xStock
+X	MCHP	microchip-technology-xstock	Microchip Technology xStock
+X	MCK	mckesson-xstock	McKesson xStock
+X	MCO	moody-s-xstock	Moody's xStock
+X	MDB	mongodb-xstock	MongoDB xStock
+X	MDLN	medline-xstock	Medline xStock
+X	MDLZ	mondelez-international-xstock	Mondelez International xStock
+X	MDT	medtronic-xstock	Medtronic xStock
+X	MEIT	meituan-xstock	Meituan xStock
+X	MET	metlife-xstock	MetLife xStock
+X	META	meta-xstock	Meta xStock
+X	MIXU	mixue-xstock	Mixue xStock
+X	MKC	mccormick-xstock	McCormick xStock
+X	MKL	markel-xstock	Markel xStock
+X	MKSI	mks-xstock	MKS xStock
+X	MLI	mueller-industries-xstock	Mueller Industries xStock
+X	MLM	martin-marietta-materials-xstock	Martin Marietta Materials xStock
+X	MMG	mmg-xstock	MMG xStock
+X	MMM	3m-xstock	3M xStock
+X	MNST	monster-xstock	Monster xStock
+X	MO	altria-xstock	Altria xStock
+X	MOO	vaneck-agribusiness-etf-xstock	VanEck Agribusiness ETF xStock
+X	MPC	marathon-petroleum-xstock	Marathon Petroleum xStock
+X	MPWR	monolithic-power-systems-xstock	Monolithic Power Systems xStock
+X	MRK	merck-xstock	Merck xStock
+X	MRNA	moderna-xstock	Moderna xStock
+X	MRSH	marsh-xstock	Marsh xStock
+X	MRVL	marvell-xstock	Marvell xStock
+X	MS	morgan-stanley-xstock	Morgan Stanley xStock
+X	MSCI	msci-xstock	MSCI xStock
+X	MSFT	microsoft-xstock	Microsoft xStock
+X	MSI	motorola-solutions-xstock	Motorola Solutions xStock
+X	MSTR	microstrategy-xstock	MicroStrategy xStock
+X	MTB	m-t-bank-xstock	M&T Bank xStock
+X	MTD	mettler-toledo-international-xstock	Mettler-Toledo International xStock
+X	MTRCP	mtr-xstock	MTR xStock
+X	MTSI	macom-technology-solutions-xstock	MACOM Technology Solutions xStock
+X	MTZ	mastec-xstock	MasTec xStock
+X	MU	micron-technology-xstock	Micron Technology xStock
+X	NBIS	nebius-xstock	Nebius xStock
+X	NBIX	neurocrine-biosciences-xstock	Neurocrine Biosciences xStock
+X	NDAQ	nasdaq-inc-xstock	Nasdaq Inc. xStock
+X	NDSN	nordson-xstock	Nordson xStock
+X	NEE	nextera-energy-xstock	NextEra Energy xStock
+X	NEM	newmont-xstock	Newmont xStock
+X	NET	cloudflare-xstock	Cloudflare xStock
+X	NFLX	netflix-xstock	Netflix xStock
+X	NI	nisource-xstock	NiSource xStock
+X	NKE	nike-xstock	Nike xStock
+X	NLR	vaneck-uranium-and-nuclear-xstock	VanEck Uranium and Nuclear xStock
+X	NLY	annaly-capital-management-xstock	Annaly Capital Management xStock
+X	NOC	northrop-grumman-xstock	Northrop Grumman xStock
+X	NONG	nongfu-spring-xstock	Nongfu Spring xStock
+X	NOW	servicenow-xstock	ServiceNow xStock
+X	NRG	nrg-energy-xstock	NRG Energy xStock
+X	NSC	norfolk-southern-xstock	Norfolk Southern xStock
+X	NTAP	netapp-xstock	NetApp xStock
+X	NTNX	nutanix-xstock	Nutanix xStock
+X	NTRA	natera-xstock	Natera xStock
+X	NTRS	northern-trust-xstock	Northern Trust xStock
+X	NUE	nucor-xstock	Nucor xStock
+X	NVDA	nvidia-xstock	NVIDIA xStock
+X	NVO	novo-nordisk-xstock	Novo Nordisk xStock
+X	NYT	new-york-times-xstock	New York Times xStock
+X	O	realty-income-xstock	Realty Income xStock
+X	ODFL	old-dominion-freight-line-xstock	Old Dominion Freight Line xStock
+X	OHI	omega-healthcare-investors-xstock	Omega Healthcare Investors xStock
+X	OKE	oneok-xstock	ONEOK xStock
+X	OKLO	oklo-xstock	Oklo xStock
+X	OKTA	okta-xstock	Okta xStock
+X	OMC	omnicom-xstock	Omnicom xStock
+X	ON	on-semiconductor-xstock	ON Semiconductor xStock
+X	ONDS	ondas-xstock	Ondas xStock
+X	ONTO	onto-innovation-xstock	Onto Innovation xStock
+X	OPEN	open-xstock	OPEN xStock
+X	ORCL	oracle-xstock	Oracle xStock
+X	ORLY	o-reilly-automotive-xstock	O'Reilly Automotive xStock
+X	OTIS	otis-worldwide-xstock	Otis Worldwide xStock
+X	OVV	ovintiv-xstock	Ovintiv xStock
+X	OXY	occidental-petroleum-xstock	Occidental Petroleum xStock
+X	P	everpure-xstock	Everpure xStock
+X	PALL	abrdn-physical-palladium-shares-xstock	abrdn Physical Palladium Shares xStock
+X	PANW	palo-alto-networks-xstock	Palo Alto Networks xStock
+X	PAYX	paychex-xstock	Paychex xStock
+X	PCAR	paccar-xstock	PACCAR xStock
+X	PCG	pg-e-xstock	PG&E xStock
+X	PEG	public-service-enterprise-xstock	Public Service Enterprise xStock
+X	PEN	penumbra-xstock	Penumbra xStock
+X	PEP	pepsico-xstock	PepsiCo xStock
+X	PFE	pfizer-xstock	Pfizer xStock
+X	PFG	principal-financial-xstock	Principal Financial xStock
+X	PFGC	performance-food-xstock	Performance Food xStock
+X	PG	procter-gamble-xstock	Procter & Gamble xStock
+X	PGR	progressive-xstock	Progressive xStock
+X	PH	parker-hannifin-xstock	Parker Hannifin xStock
+X	PICC	picc-property-and-casualty-xstock	PICC Property and Casualty xStock
+X	PICO	ping-an-insurance-group-co-of-china-xstock	Ping An Insurance Group Co. of China xStock
+X	PINS	pinterest-xstock	Pinterest xStock
+X	PKG	packaging-corp-of-america-xstock	Packaging Corp of America xStock
+X	PL	planet-labs-xstock	Planet Labs xStock
+X	PLD	prologis-xstock	Prologis xStock
+X	PLTR	palantir-xstock	Palantir xStock
+X	PM	philip-morris-xstock	Philip Morris xStock
+X	PNC	pnc-financial-services-xstock	PNC Financial Services xStock
+X	PNFP	pinnacle-financial-partners-xstock	Pinnacle Financial Partners xStock
+X	PNW	pinnacle-west-capital-xstock	Pinnacle West Capital xStock
+X	POPMT	pop-mart-international-xstock	Pop Mart International xStock
+X	PPG	ppg-industries-xstock	PPG Industries xStock
+X	PPL	ppl-xstock	PPL xStock
+X	PPLT	abrdn-physical-platinum-shares-xstock	abrdn Physical Platinum Shares xStock
+X	PR	permian-resources-xstock	Permian Resources xStock
+X	PRAD	prada-xstock	Prada xStock
+X	PRU	prudential-financial-xstock	Prudential Financial xStock
+X	PSA	public-storage-xstock	Public Storage xStock
+X	PSBOC	postal-savings-bank-of-china-xstock	Postal Savings Bank Of China xStock
+X	PSX	phillips-66-xstock	Phillips 66 xStock
+X	PTC	ptc-xstock	PTC xStock
+X	PWAHL	power-assets-xstock	Power Assets xStock
+X	PWR	quanta-services-inc-xstock	Quanta Services, Inc. xStock
+X	PYPL	paypal-xstock	PayPal xStock
+X	Q	qnity-electronics-xstock	Qnity Electronics xStock
+X	QCOM	qualcomm-xstock	Qualcomm xStock
+X	QQQ	nasdaq-xstock	Nasdaq xStock
+X	QSR	restaurant-brands-international-xstock	Restaurant Brands International xStock
+X	QURE	uniqure-xstock	uniQure xStock
+X	RBA	rb-global-xstock	RB Global xStock
+X	RBLX	roblox-xstock	Roblox xStock
+X	RCAT	red-cat-xstock	Red Cat xStock
+X	RDDT	reddit-xstock	Reddit xStock
+X	REG	regency-centers-xstock	Regency Centers xStock
+X	REGN	regeneron-pharmaceuticals-xstock	Regeneron Pharmaceuticals xStock
+X	RF	regions-financial-xstock	Regions Financial xStock
+X	RGA	reinsurance-group-of-america-xstock	Reinsurance Group of America xStock
+X	RGLD	royal-gold-xstock	Royal Gold xStock
+X	RIOT	riot-platforms-xstock	Riot Platforms xStock
+X	RIVN	rivian-automotive-xstock	Rivian Automotive xStock
+X	RJF	raymond-james-financial-xstock	Raymond James Financial xStock
+X	RKLB	rocket-lab-xstock	Rocket Lab xStock
+X	RL	ralph-lauren-xstock	Ralph Lauren xStock
+X	RMD	resmed-xstock	ResMed xStock
+X	RNR	renaissancere-xstock	RenaissanceRe xStock
+X	ROIV	roivant-sciences-xstock	Roivant Sciences xStock
+X	ROK	rockwell-automation-xstock	Rockwell Automation xStock
+X	ROKU	roku-xstock	Roku xStock
+X	ROL	rollins-xstock	Rollins xStock
+X	ROP	roper-technologies-xstock	Roper Technologies xStock
+X	ROST	ross-stores-xstock	Ross Stores xStock
+X	RPM	rpm-international-xstock	RPM International xStock
+X	RRX	regal-rexnord-xstock	Regal Rexnord xStock
+X	RS	reliance-xstock	Reliance xStock
+X	RSG	republic-services-xstock	Republic Services xStock
+X	RTX	rtx-xstock	RTX xStock
+X	RVMD	revolution-medicines-xstock	Revolution Medicines xStock
+X	SAIA	saia-xstock	Saia xStock
+X	SATA	strive-inc-series-a-preferred-xstock	Strive, Inc. Series A Preferred xStock
+X	SBAC	sba-communications-xstock	SBA Communications xStock
+X	SBET	sharplink-gaming-xstock	SharpLink Gaming xStock
+X	SBUX	starbucks-xstock	Starbucks xStock
+X	SCCO	southern-copper-xstock	Southern Copper xStock
+X	SCHF	schwab-international-equity-xstock	Schwab International Equity xStock
+X	SCHW	charles-schwab-xstock	Charles Schwab xStock
+X	SGI	somnigroup-international-xstock	Somnigroup International xStock
+X	SGOV	ishares-0-3-month-treasury-bond-etf-xstock	iShares 0-3 Month Treasury Bond ETF xStock
+X	SHAZ	sharonai-xstock	SharonAI xStock
+X	SHEIN	shein-xstock	SHEIN xStock
+X	SHW	sherwin-williams-xstock	Sherwin-Williams xStock
+X	SINO	sino-land-xstock	Sino Land xStock
+X	SINOT	sinotruk-xstock	Sinotruk xStock
+X	SITC	sitc-international-xstock	SITC International xStock
+X	SJM	j-m-smucker-xstock	J.M. Smucker xStock
+X	SKHY	sk-hynix-xstock	SK Hynix xStock
+X	SLMT	brera-xstock	Brera xStock
+X	SLV	ishares-silver-trust-xstock	iShares Silver Trust xStock
+X	SMCI	super-micro-computer-inc-xstock	Super Micro Computer, Inc. xStock
+X	SMH	vaneck-semiconductor-etf-xstock	VanEck Semiconductor ETF xStock
+X	SMOIH	smoore-international-xstock	Smoore International xStock
+X	SMR	nuscale-power-corporation-xstock	NuScale Power Corporation xStock
+X	SNA	snap-on-xstock	Snap-on xStock
+X	SNBIO	sino-biopharmaceutical-xstock	Sino Biopharmaceutical xStock
+X	SNDK	sandisk-corporation-xstock	Sandisk Corporation xStock
+X	SNDSC	sands-china-xstock	Sands China xStock
+X	SNOW	snowflake-xstock	Snowflake xStock
+X	SNPS	synopsys-xstock	Synopsys xStock
+X	SNX	td-synnex-xstock	TD Synnex xStock
+X	SO	southern-xstock	Southern xStock
+X	SOFI	sofi-technologies-xstock	SoFi Technologies xStock
+X	SOLS	solstice-advanced-materials-xstock	Solstice Advanced Materials xStock
+X	SOXL	direxion-semiconductor-bull-3x-xstock	Direxion Semiconductor Bull 3X xStock
+X	SOXX	ishares-semiconductor-xstock	iShares Semiconductor xStock
+X	SPCE	virgin-galactic-xstock	Virgin Galactic xStock
+X	SPG	simon-property-xstock	Simon Property xStock
+X	SPGI	s-p-global-xstock	S&P Global xStock
+X	SPY	sp500-xstock	SP500 xStock
+X	SRE	sempra-xstock	Sempra xStock
+X	SSNC	ss-c-technologies-xstock	SS&C Technologies xStock
+X	STLD	steel-dynamics-xstock	Steel Dynamics xStock
+X	STRC	strategy-pp-variable-xstock	Strategy PP Variable xStock
+X	STRK	strategy-pp-fixed-xstock	Strategy PP Fixed xStock
+X	STT	state-street-xstock	State Street xStock
+X	STZ	constellation-brands-xstock	Constellation Brands xStock
+X	SUI	sun-communities-xstock	Sun Communities xStock
+X	SUIG	sui-xstock	SUI xStock
+X	SUOPT	sunny-optical-technology-group-xstock	Sunny Optical Technology Group xStock
+X	SWK	stanley-black-decker-xstock	Stanley Black & Decker xStock
+X	SWPRP	swire-properties-xstock	Swire Properties xStock
+X	SYF	synchrony-financial-xstock	Synchrony Financial xStock
+X	SYK	stryker-xstock	Stryker xStock
+X	SYY	sysco-xstock	Sysco xStock
+X	SZIGH	shenzhou-international-xstock	Shenzhou International xStock
+X	T	at-t-xstock	AT&T xStock
+X	TBLL	tbll-xstock	TBLL xStock
+X	TCENT	tencent-xstock	Tencent xStock
+X	TDG	transdigm-xstock	TransDigm xStock
+X	TDY	teledyne-technologies-xstock	Teledyne Technologies xStock
+X	TE	t1-energy-xstock	T1 Energy xStock
+X	TEAM	atlassian-xstock	Atlassian xStock
+X	TEM	tempus-ai-xstock	Tempus AI xStock
+X	TER	teradyne-inc-xstock	Teradyne, Inc. xStock
+X	TFC	truist-financial-xstock	Truist Financial xStock
+X	TGT	target-xstock	Target xStock
+X	THC	tenet-healthcare-xstock	Tenet Healthcare xStock
+X	TJX	tjx-companies-xstock	TJX Companies xStock
+X	TLN	talen-energy-xstock	Talen Energy xStock
+X	TMO	thermo-fisher-xstock	Thermo Fisher xStock
+X	TMUS	t-mobile-xstock	T-Mobile xStock
+X	TNGYI	tingyi-xstock	Tingyi xStock
+X	TOL	toll-brothers-xstock	Toll Brothers xStock
+X	TONX	ton-xstock	TON xStock
+X	TPL	texas-pacific-land-xstock	Texas Pacific Land xStock
+X	TPR	tapestry-xstock	Tapestry xStock
+X	TQQQ	tqqq-xstock	TQQQ xStock
+X	TRGP	targa-resources-xstock	Targa Resources xStock
+X	TRMB	trimble-xstock	Trimble xStock
+X	TRON	tron-xstock	Tron xStock
+X	TROW	t-rowe-price-xstock	T. Rowe Price xStock
+X	TRU	transunion-xstock	TransUnion xStock
+X	TRV	the-travelers-companies-xstock	The Travelers Companies xStock
+X	TSCO	tractor-supply-xstock	Tractor Supply xStock
+X	TSLA	tesla-xstock	Tesla xStock
+X	TSM	tsmc-xstock	TSMC xStock
+X	TSN	tyson-foods-xstock	Tyson Foods xStock
+X	TTWO	take-two-interactive-software-xstock	Take-Two Interactive Software xStock
+X	TW	tradeweb-markets-xstock	Tradeweb Markets xStock
+X	TWLO	twilio-xstock	Twilio xStock
+X	TWST	twist-bioscience-xstock	Twist Bioscience xStock
+X	TXN	texas-instruments-xstock	Texas Instruments xStock
+X	TXT	textron-xstock	Textron xStock
+X	TYL	tyler-technologies-xstock	Tyler Technologies xStock
+X	UAL	united-airlines-xstock	United Airlines xStock
+X	UBER	uber-xstock	Uber xStock
+X	UDR	udr-xstock	UDR xStock
+X	ULTA	ulta-beauty-xstock	Ulta Beauty xStock
+X	UNH	unitedhealth-xstock	UnitedHealth xStock
+X	UNM	unum-xstock	Unum xStock
+X	UNP	union-pacific-xstock	Union Pacific xStock
+X	UPS	united-parcel-service-xstock	United Parcel Service xStock
+X	URA	global-x-uranium-etf-xstock	Global X Uranium ETF xStock
+X	URI	united-rentals-xstock	United Rentals xStock
+X	USAR	usa-rare-earth-inc-xstock	USA Rare Earth Inc. xStock
+X	USB	u-s-bancorp-xstock	U.S. Bancorp xStock
+X	USFD	us-foods-xstock	US Foods xStock
+X	USPX	franklin-u-s-equity-index-xstock	Franklin U.S. Equity Index xStock
+X	UTHR	united-therapeutics-xstock	United Therapeutics xStock
+X	UUUU	energy-fuels-inc-xstock	Energy Fuels Inc. xStock
+X	V	visa-xstock	Visa xStock
+X	VCX	fundrise-innovation-fund-llc-xstock	Fundrise Innovation Fund, LLC xStock
+X	VEEV	veeva-systems-xstock	Veeva Systems xStock
+X	VGK	vanguard-ftse-europe-etf-xstock	Vanguard FTSE Europe ETF xStock
+X	VICI	vici-properties-xstock	VICI Properties xStock
+X	VIDA	vida-global-xstock	Vida Global xStock
+X	VIK	viking-xstock	Viking xStock
+X	VLO	valero-energy-xstock	Valero Energy xStock
+X	VLTO	veralto-xstock	Veralto xStock
+X	VMC	vulcan-materials-xstock	Vulcan Materials xStock
+X	VOO	vanguard-s-p-500-xstock	Vanguard S&P 500 xStock
+X	VRSK	verisk-analytics-xstock	Verisk Analytics xStock
+X	VRSN	verisign-xstock	VeriSign xStock
+X	VRT	vertiv-holdings-co-xstock	Vertiv Holdings Co xStock
+X	VRTX	vertex-pharmaceuticals-xstock	Vertex Pharmaceuticals xStock
+X	VST	vistra-xstock	Vistra xStock
+X	VT	vanguard-total-world-xstock	Vanguard Total World xStock
+X	VTI	vanguard-xstock	Vanguard xStock
+X	VTR	ventas-xstock	Ventas xStock
+X	VTRS	viatris-xstock	Viatris xStock
+X	VUG	vanguard-growth-etf-xstock	Vanguard Growth ETF xStock
+X	VXUS	vanguard-total-international-stock-etf-xstock	Vanguard Total International Stock ETF xStock
+X	VZ	verizon-communications-xstock	Verizon Communications xStock
+X	WAAPL	wrapped-apple-xstock	Wrapped Apple xStock
+X	WAB	westinghouse-air-brake-technologies-xstock	Westinghouse Air Brake Technologies xStock
+X	WABBV	wrapped-abbvie-xstock	Wrapped AbbVie xStock
+X	WABT	wrapped-abbott-xstock	Wrapped Abbott xStock
+X	WACN	wrapped-accenture-xstock	Wrapped Accenture xStock
+X	WAMZN	wrapped-amazon-xstock	Wrapped Amazon xStock
+X	WAPP	wrapped-applovin-xstock	Wrapped AppLovin xStock
+X	WAT	waters-xstock	Waters xStock
+X	WAVGO	wrapped-broadcom-xstock	Wrapped Broadcom xStock
+X	WAZN	wrapped-astrazeneca-xstock	Wrapped AstraZeneca xStock
+X	WBAC	wrapped-bank-of-america-xstock	Wrapped Bank of America xStock
+X	WBD	warner-bros-discovery-xstock	Warner Bros. Discovery xStock
+X	WBRK.B	wrapped-berkshire-hathaway-xstock	Wrapped Berkshire Hathaway xStock
+X	WCC	wesco-international-xstock	WESCO International xStock
+X	WCMCSA	wrapped-comcast-xstock	Wrapped Comcast xStock
+X	WCOIN	wrapped-coinbase-xstock	Wrapped Coinbase xStock
+X	WCRCL	wrapped-circle-xstock	Wrapped Circle xStock
+X	WCRM	wrapped-salesforce-xstock	Wrapped Salesforce xStock
+X	WCRWD	wrapped-crowdstrike-xstock	Wrapped CrowdStrike xStock
+X	WCSCO	wrapped-cisco-xstock	Wrapped Cisco xStock
+X	WCVX	wrapped-chevron-xstock	Wrapped Chevron xStock
+X	WDAY	workday-xstock	Workday xStock
+X	WDC	western-digital-xstock	Western Digital xStock
+X	WDHR	wrapped-danaher-xstock	Wrapped Danaher xStock
+X	WEC	wec-energy-xstock	WEC Energy xStock
+X	WELL	welltower-xstock	Welltower xStock
+X	WEN	wendy-s-xstock	Wendy's xStock
+X	WFC	wells-fargo-xstock	Wells Fargo xStock
+X	WGME	wrapped-gamestop-xstock	Wrapped Gamestop xStock
+X	WGOOGL	wrapped-alphabet-xstock	Wrapped Alphabet xStock
+X	WGS	wrapped-goldman-sachs-xstock	Wrapped Goldman Sachs xStock
+X	WHD	wrapped-home-depot-xstock	Wrapped Home Depot xStock
+X	WHGRO	wh-xstock	WH xStock
+X	WHON	wrapped-honeywell-xstock	Wrapped Honeywell xStock
+X	WHOOD	wrapped-robinhood-xstock	Wrapped Robinhood xStock
+X	WHRFR	wharf-real-estate-investment-xstock	Wharf Real Estate Investment xStock
+X	WIBM	wrapped-international-business-machines-xstock	Wrapped International Business Machines xStock
+X	WINTC	wrapped-intel-xstock	Wrapped Intel xStock
+X	WJNJ	wrapped-johnson-johnson-xstock	Wrapped Johnson & Johnson xStock
+X	WJPM	wrapped-jpmorgan-chase-xstock	Wrapped JPMorgan Chase xStock
+X	WKO	wrapped-coca-cola-xstock	Wrapped Coca-Cola xStock
+X	WLIN	wrapped-linde-xstock	Wrapped Linde xStock
+X	WLLY	wrapped-eli-lilly-xstock	Wrapped Eli Lilly xStock
+X	WM	waste-management-xstock	Waste Management xStock
+X	WMA	wrapped-mastercard-xstock	Wrapped Mastercard xStock
+X	WMB	williams-companies-xstock	Williams Companies xStock
+X	WMCD	wrapped-mcdonald-s-xstock	Wrapped McDonald's xStock
+X	WMDT	wrapped-medtronic-xstock	Wrapped Medtronic xStock
+X	WMETA	wrapped-meta-xstock	Wrapped Meta xStock
+X	WMRK	wrapped-merck-xstock	Wrapped Merck xStock
+X	WMRVL	wrapped-marvell-xstock	Wrapped Marvell xStock
+X	WMSFT	wrapped-microsoft-xstock	Wrapped Microsoft xStock
+X	WMSTR	wrapped-microstrategy-xstock	Wrapped MicroStrategy xStock
+X	WMT	walmart-xstock	Walmart xStock
+X	WNFLX	wrapped-netflix-xstock	Wrapped Netflix xStock
+X	WNVDA	wrapped-nvidia-xstock	Wrapped NVIDIA xStock
+X	WNVO	wrapped-novo-nordisk-xstock	Wrapped Novo Nordisk xStock
+X	WORCL	wrapped-oracle-xstock	Wrapped Oracle xStock
+X	WPC	w-p-carey-xstock	W.P. Carey xStock
+X	WPEP	wrapped-pepsico-xstock	Wrapped PepsiCo xStock
+X	WPFE	wrapped-pfizer-xstock	Wrapped Pfizer xStock
+X	WPG	wrapped-procter-gamble-xstock	Wrapped Procter & Gamble xStock
+X	WPLTR	wrapped-palantir-xstock	Wrapped Palantir xStock
+X	WPM	wrapped-philip-morris-xstock	Wrapped Philip Morris xStock
+X	WRB	w-r-berkley-xstock	W.R. Berkley xStock
+X	WRFHD	the-wharf-holdings-xstock	The Wharf Holdings xStock
+X	WSKHY	wrapped-sk-hynix-xstock	Wrapped SK hynix xStock
+X	WSM	williams-sonoma-xstock	Williams-Sonoma xStock
+X	WSNDK	wrapped-sandisk-corporation-xstock	Wrapped Sandisk Corporation xStock
+X	WSO	watsco-xstock	Watsco xStock
+X	WSPCX	wrapped-spacex-xstock	Wrapped SpaceX xStock
+X	WST	west-pharmaceutical-services-xstock	West Pharmaceutical Services xStock
+X	WTMO	wrapped-thermo-fisher-xstock	Wrapped Thermo Fisher xStock
+X	WTSLA	wrapped-tesla-xstock	Wrapped Tesla xStock
+X	WULF	terawulf-xstock	TeraWulf xStock
+X	WUNH	wrapped-unitedhealth-xstock	Wrapped UnitedHealth xStock
+X	WUXIB	wuxi-biologics-xstock	WuXi Biologics xStock
+X	WWD	woodward-xstock	Woodward xStock
+X	WWMT	wrapped-walmart-xstock	Wrapped Walmart xStock
+X	WXOM	wrapped-exxon-mobil-xstock	Wrapped Exxon Mobil xStock
+X	WXXDC	wuxi-xdc-cayman-xstock	WuXi XDC Cayman xStock
+X	WY	weyerhaeuser-xstock	Weyerhaeuser xStock
+X	XEL	xcel-energy-xstock	Xcel Energy xStock
+X	XIAO	xiaomi-xstock	Xiaomi xStock
+X	XLE	energy-select-sector-spdr-fund-xstock	Energy Select Sector SPDR Fund xStock
+X	XOM	exxon-mobil-xstock	Exxon Mobil xStock
+X	XOP	spdr-s-p-oil-gas-exploration-production-etf-xstock	SPDR S&P Oil & Gas Exploration & Production ETF xStock
+X	XPO	xpo-xstock	XPO xStock
+X	XYL	xylem-xstock	Xylem xStock
+X	XYZ	block-xstock	Block xStock
+X	YLDE	franklin-clearbridge-enhanced-income-xstock	Franklin ClearBridge Enhanced Income xStock
+X	YUM	yum-brands-xstock	Yum Brands xStock
+X	ZBH	zimmer-biomet-xstock	Zimmer Biomet xStock
+X	ZBRA	zebra-technologies-xstock	Zebra Technologies xStock
+X	ZHAOM	zhaojin-mining-industry-xstock	Zhaojin Mining Industry xStock
+X	ZJGLD	zijin-gold-international-xstock	Zijin Gold International xStock
+X	ZM	zoom-communications-xstock	Zoom Communications xStock
+X	ZS	zscaler-xstock	Zscaler xStock
+X	ZTS	zoetis-xstock	Zoetis xStock

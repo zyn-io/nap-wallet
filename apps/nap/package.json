@@ -1,0 +1,12 @@
+{
+  "name": "nap-wallet",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "ui": "node build-ui.mjs",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

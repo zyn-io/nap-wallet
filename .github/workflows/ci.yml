@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check wallet core
+        run: cargo check -p zynzapd --all-targets
+      - name: Test wallet core
+        run: cargo test -p zynzapd
+      - name: Build generated interfaces
+        run: |
+          (cd apps/nap && node build-ui.mjs)
+          (cd apps/extension && node build.mjs)
+          cmp -s zynzapd/ui/index.html apps/nap/dist/index.html
+          node --check apps/extension/dist/popup.js
+
+  desktop-macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install desktop tooling
+        working-directory: apps/nap
+        run: npm ci
+      - name: Check Tauri shell
+        run: cargo check -p nap

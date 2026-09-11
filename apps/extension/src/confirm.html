@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nap Wallet — approve</title>
+<link rel="stylesheet" href="confirm.css">
+</head>
+<body>
+  <header><span class="brand">Nap Wallet</span><span class="chip">approval</span></header>
+  <main>
+    <p class="from">A site is asking your wallet to act.</p>
+    <div class="card">
+      <div class="k">Site</div><div class="v mono" id="origin"></div>
+      <div class="k">Action</div><div class="v" id="desc"></div>
+      <div class="k">Details</div><pre class="v mono" id="params"></pre>
+    </div>
+    <p class="hint">Approving signs and submits with the account in your Nap Wallet app. Nothing is sent until you approve.</p>
+  </main>
+  <footer>
+    <button id="reject">Reject</button>
+    <button id="approve" class="primary">Approve</button>
+  </footer>
+  <script src="confirm.js"></script>
+</body>
+</html>

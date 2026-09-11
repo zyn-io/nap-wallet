@@ -1,0 +1,28 @@
+[package]
+name = "swapvm"
+version = "0.1.0"
+edition = "2021"
+
+# ZynZap's VM: application #1 on Zyn, and one implementation of `zyn-vm`.
+#
+# Dependencies are kept deliberately minimal: this crate must eventually compile
+# as a zkVM guest program (SP1 / RISC Zero), where every dependency is proving
+# surface. No std collections beyond BTree*, no rand, no time, no I/O.
+# The spec crate holds itself to the same rule, so depending on it costs
+# nothing a guest has to pay for.
+[features]
+# `std` is on by default for the host build (server binary, tests, examples).
+# Disabling it builds the crate as a zkVM guest: no_std + alloc.
+default = ["std"]
+std = ["zyn-vm/std", "zyn-bridge/std", "wallet"]
+# Rendering intents for external wallets. Off in a guest build, where there is
+# no user and no wallet.
+wallet = ["zyn-vm/wallet"]
+
+[dependencies]
+zyn-vm = { path = "../zyn-vm", default-features = false }
+zyn-bridge = { path = "../zyn-bridge", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }

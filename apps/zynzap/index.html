@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZynZap</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #0f1a1c; --surface: #15252a; --surface-2: #1c3036; --line: #27414a;
+  --ink: #e9f1f0; --ink-2: #a3b8b5; --ink-3: #6f8683;
+  --accent: #ffb454; --accent-ink: #1a1200; --teal: #4fd1c5; --good: #62d99a; --warn: #ffb454; --bad: #ff7a6e;
+  --sans: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
+button, input, select { font: inherit; }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.brand h1 b { color: var(--accent); }
+.brand span { color: var(--ink-3); font-size: 13px; }
+.chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
+.chip.ok .dot { background: var(--good); } .chip.bad .dot { background: var(--bad); } .chip.warn .dot { background: var(--warn); }
+.btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer; white-space: nowrap; font-weight: 600; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn.small { padding: 5px 10px; font-size: 12.5px; font-weight: 500; }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: 0.5; cursor: progress; }
+nav { display: flex; gap: 4px; padding: 14px 24px 0; }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; color: var(--ink-2); cursor: pointer; font-weight: 600; font-size: 15px; }
+nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
+main { max-width: 1040px; margin: 0 auto; padding: 22px 24px 48px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+section.full { grid-column: 1 / -1; }
+section h2 { margin: 0; font-size: 12.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+section h2 small { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-3); text-align: right; }
+.hint { font-size: 12.5px; color: var(--ink-3); }
+.muted { color: var(--ink-3); font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 140px; }
+input, select { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); min-width: 0; width: 100%; }
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.box { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.box .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.box .lbl button { background: none; border: 0; color: var(--teal); cursor: pointer; padding: 0; font: inherit; text-transform: none; letter-spacing: 0; }
+.box .in { display: flex; gap: 10px; align-items: center; }
+.box .in input { border: 0; background: transparent; font-size: 24px; padding: 0; font-family: var(--mono); }
+.box .in select { width: auto; min-width: 120px; font-weight: 600; }
+.flip { align-self: center; background: var(--surface-2); border: 1px solid var(--line); border-radius: 50%; width: 34px; height: 34px; color: var(--ink-2); cursor: pointer; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; font-size: 13.5px; }
+.kv .k { color: var(--ink-3); } .kv .v { font-family: var(--mono); text-align: right; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-weight: 600; color: var(--ink-3); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 0 6px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 9px 0 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+td:first-child, th:first-child { padding-left: 0; }
+td.r, th.r { text-align: right; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 11.5px; background: var(--surface-2); color: var(--ink-2); letter-spacing: 0.03em; white-space: nowrap; }
+.tag.pending { color: var(--warn); } .tag.exit { color: var(--teal); }
+.pair { font-weight: 700; }
+.addr { display: flex; gap: 8px; align-items: flex-start; }
+.addr code { font-family: var(--mono); font-size: 13px; flex: 1; min-width: 0; color: var(--ink-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.addr code:hover { color: var(--ink); }
+.addr code.full { white-space: normal; overflow-wrap: anywhere; }
+.wrap { overflow-x: auto; }
+.empty { color: var(--ink-3); font-size: 13.5px; padding: 6px 0; }
+.big { font-size: 28px; font-weight: 700; font-family: var(--mono); }
+.step .big { font-size: 22px; }
+.bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+.steps { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.step { padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--ink-2); border-left: 3px solid var(--line); }
+.step b { display: block; color: var(--ink); font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 2px; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--surface-2); border: 1px solid var(--line); color: var(--ink); padding: 10px 16px; border-radius: 10px; font-size: 13.5px; max-width: 90vw; box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+#toast.err { border-color: var(--bad); color: var(--bad); }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); padding: 0; max-width: 440px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog .d-head { padding: 14px 18px; border-bottom: 1px solid var(--line); font-weight: 700; }
+dialog .d-body { padding: 14px 18px; display: grid; grid-template-columns: 100px 1fr; gap: 8px 12px; font-size: 14px; }
+dialog .d-body .k { color: var(--ink-3); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+dialog .d-body .v { overflow-wrap: anywhere; }
+dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; }
+#log { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); max-height: 180px; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+@media (max-width: 640px) { main { padding: 14px; grid-template-columns: 1fr; } header { padding: 12px 14px; } nav { padding: 8px 8px 0; } nav button { flex: 1; padding: 8px 6px; } .steps { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: no-preference) { .btn { transition: opacity .15s, transform .1s; } .btn.primary:active { transform: scale(.98); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><h1>Zyn<b>Zap</b></h1><span id="netlabel">shielded AMM on Zyn</span></div>
+  <div class="chips">
+    <span class="chip" id="chip-node"><span class="dot"></span><span>node</span></span>
+    <span class="chip" id="chip-acct" hidden><span class="dot"></span><span></span></span>
+    <button class="btn primary" id="connect">Connect Nap Wallet</button>
+  </div>
+</header>
+<nav>
+  <button data-tab="swap" class="on">Swap</button>
+  <button data-tab="earn">Earn</button>
+  <button data-tab="bridge">Bridge</button>
+</nav>
+
+<main data-tab="swap" id="tab-swap">
+  <section>
+    <h2>Swap <small>sealed by epoch, shielded</small></h2>
+    <div class="box">
+      <div class="lbl"><span>You pay</span><span>balance <span class="mono" id="bal-in">–</span> <button id="max-in">max</button></span></div>
+      <div class="in"><input id="amt-in" placeholder="0.0" inputmode="decimal"><select id="sel-in"></select></div>
+    </div>
+    <button class="flip" id="flip" title="flip">⇅</button>
+    <div class="box">
+      <div class="lbl"><span>You receive</span><span>balance <span class="mono" id="bal-out">–</span></span></div>
+      <div class="in"><input id="amt-out" placeholder="0.0" readonly><select id="sel-out"></select></div>
+    </div>
+    <div class="kv" id="quote-kv"></div>
+    <button class="btn primary" id="swap">Swap</button>
+    <div class="hint" id="swap-hint"></div>
+    <div id="orders-box" hidden>
+      <div class="hint" style="margin-bottom:4px">Clearing at the next seal</div>
+      <div class="wrap"><table id="orders"><thead><tr><th>Sell</th><th class="r">At least</th><th class="r">Since</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+  <section>
+    <h2>Your balances <small>private to your key</small></h2>
+    <div class="wrap"><table id="balances"><thead><tr><th>Asset</th><th class="r">Spendable</th><th></th></tr></thead><tbody></tbody></table></div>
+    <h2 style="margin-top:8px">Recent</h2>
+    <ul id="log"></ul>
+  </section>
+</main>
+
+<main data-tab="earn" id="tab-earn" hidden>
+  <section class="full">
+    <h2>Pools <small>0.3% of every swap stays with the pool</small></h2>
+    <div class="wrap"><table id="pools"><thead><tr><th>Pool</th><th class="r">Reserves</th><th class="r">Pool price</th><th class="r">Market</th><th class="r">Fee now</th><th class="r">Your share</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="hint">"Market" is the operator's posted reference for a bridged pair (median of public sources). It only ever sets the fee: when the pool has drifted from its market, the fee rises to √r − 1 so arbitrage pays LPs instead of taking from them. It never sets the price.</div>
+  </section>
+  <section>
+    <h2>Add liquidity</h2>
+    <div class="row"><select id="lp-pool" style="width:auto"></select><span class="hint" id="lp-ratio"></span></div>
+    <div class="box"><div class="lbl"><span id="lp-sym0">asset 0</span><span>balance <span class="mono" id="lp-bal0">–</span></span></div><div class="in"><input id="lp-amt0" placeholder="0.0" inputmode="decimal"></div></div>
+    <div class="box"><div class="lbl"><span id="lp-sym1">asset 1</span><span>balance <span class="mono" id="lp-bal1">–</span></span></div><div class="in"><input id="lp-amt1" placeholder="0.0" inputmode="decimal"></div></div>
+    <button class="btn primary" id="lp-add">Add liquidity</button>
+    <div class="hint">Both sides are added at the pool's current ratio; whatever does not fit stays in your balance. You receive LP shares, which are themselves a private balance.</div>
+  </section>
+  <section>
+    <h2>Your positions</h2>
+    <div class="list" id="positions"></div>
+    <div class="row" id="rm-row" hidden><input class="grow num" id="rm-shares" placeholder="shares to remove" inputmode="decimal"><button class="btn small" id="rm-max">Max</button><button class="btn primary" id="rm-remove">Remove</button></div>
+    <div class="hint">Removing returns both assets in the pool's current ratio, fees included.</div>
+  </section>
+</main>
+
+<main data-tab="bridge" id="tab-bridge" hidden>
+  <section class="full">
+    <h2>How the bridge works</h2>
+    <div class="steps">
+      <div class="step"><b>1 · Deposit</b>Send to the vault on the origin chain with a memo naming your Zyn account.</div>
+      <div class="step"><b>2 · Credit</b>After confirmations and one epoch, the mirrored asset is spendable here, privately.</div>
+      <div class="step"><b>3 · Exit</b>Bind a destination once, then withdraw; the operator pays it out at the end of the epoch.</div>
+    </div>
+  </section>
+  <section class="full" id="markets" hidden>
+    <h2>New markets <small id="markets-sub"></small></h2>
+    <div class="wrap"><table id="markets-t"><thead><tr><th>Asset</th><th class="r">Pot / depth</th><th class="r">ZEC.zy side</th><th class="r">Price</th><th>State</th><th class="r">Your share</th></tr></thead><tbody></tbody></table></div>
+    <div class="hint">A bridged asset's own fees build its pot. When the pot is worth more than the threshold, and the protocol holds that much ZEC.zy, a pool opens at exactly the market price and the protocol keeps the shares. Whoever filled the pot shares a grant of ZYN, vesting.</div>
+  </section>
+  <section class="full" id="launch" hidden>
+    <h2>ZYN <small id="launch-sub"></small></h2>
+    <div class="steps" id="launch-pre">
+      <div class="step"><b>Pot</b><span class="big" id="pot">–</span> <span class="muted">ZEC.zy of <span id="pot-threshold">–</span></span><div class="bar" style="margin-top:6px"><i id="pot-bar"></i></div></div>
+      <div class="step"><b>Your part</b><span class="big" id="my-contrib">–</span> <span class="muted">ZEC.zy in fees</span><div class="hint" id="my-share"></div></div>
+      <div class="step"><b>At graduation</b><span id="launch-genesis"></span></div>
+    </div>
+    <div class="steps" id="launch-post" hidden>
+      <div class="step"><b>ZYN price</b><span class="big" id="zyn-price">–</span> <span class="muted">ZEC.zy</span><div class="hint" id="zyn-supply"></div></div>
+      <div class="step"><b>Your ZYN</b><span class="big" id="my-zyn">–</span><div class="hint" id="my-vest"></div></div>
+      <div class="step"><b>Pots</b><div class="hint" id="pots"></div></div>
+    </div>
+    <div class="hint" id="launch-hint"></div>
+  </section>
+  <section>
+    <h2>Zcash <small>ZEC ⇄ ZEC.zy</small></h2>
+    <div class="kv"><span class="k">Nap Wallet balance</span><span class="v" id="zec-bal">–</span><span class="k">ZEC.zy on Zyn</span><span class="v" id="zecz-bal">–</span></div>
+    <div class="row"><input class="grow num" id="dep-amount" placeholder="amount of ZEC" inputmode="decimal"><button class="btn primary" id="deposit">Deposit</button></div>
+    <div class="hint">Paid from your Nap Wallet to the vault, memo included, shielded.</div>
+    <div class="hint" id="zec-bind"></div>
+    <div class="row"><button class="btn" id="bind">Bind my wallet as exit destination</button></div>
+    <div class="row"><input class="grow num" id="wd-amount" placeholder="amount of ZEC.zy" inputmode="decimal"><button class="btn primary" id="withdraw">Withdraw</button></div>
+  </section>
+  <section>
+    <h2>Solana <small>SOL / SPL ⇄ .zy</small></h2>
+    <div class="hint">Deposit from any Solana wallet: send to the vault with this memo. Devnet for now.</div>
+    <div class="addr"><code id="sol-vault"></code><button class="btn small" id="copy-sol-vault">Copy</button></div>
+    <div class="addr"><code id="sol-memo"></code><button class="btn small" id="copy-sol-memo">Copy memo</button></div>
+    <div class="hint" id="sol-bind"></div>
+    <div class="row"><input class="grow mono" id="sol-addr" placeholder="your Solana address" spellcheck="false"><button class="btn" id="bind-sol">Bind</button></div>
+    <div class="row"><select id="sol-asset" style="width:auto"></select><input class="grow num" id="sol-amount" placeholder="amount" inputmode="decimal"><button class="btn primary" id="withdraw-sol">Withdraw</button></div>
+    <div class="hint">One exit destination per account. Switching between a Zcash and a Solana destination waits out the redirect delay.</div>
+  </section>
+  <section class="full">
+    <h2>In flight</h2>
+    <div class="wrap"><table id="flight"><thead><tr><th>Asset</th><th class="r">Amount</th><th>State</th></tr></thead><tbody></tbody></table></div>
+    <div class="hint">EVM chains: the vault contract (ZynVault) is written and tested; no deployment yet.</div>
+  </section>
+</main>
+
+<dialog id="dlg"><div class="d-head" id="dlg-title"></div><div class="d-body" id="dlg-body"></div><div class="d-foot"><button class="btn" id="dlg-no">Cancel</button><button class="btn primary" id="dlg-yes">Confirm</button></div></dialog>
+<div id="toast" hidden></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null;        // { address, zecBalance, zyn }
+let busy = false;
+let quoteTimer = null;
+
+// ---- Where the wallet is. Hosted: the Nap Wallet extension's window.zyn.
+// Served by the wallet itself (/zynzap): its own API on this origin.
+const sameOrigin = location.pathname.startsWith('/zynzap');
+const provider = () => (window.zyn && window.zyn.isZynZap) ? window.zyn : null;
+async function http(path, body) {
+  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Zyn': '1' }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opts).catch(() => { throw new Error('Nap Wallet is not running'); });
+  const j = await r.json().catch(() => ({ error: 'bad reply' }));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+// One name per action; each maps to a provider method or a wallet endpoint.
+const ACTIONS = {
+  quote:            { m: 'zyn_quote',            p: '/api/quote' },
+  swap:             { m: 'zyn_swap',             p: '/api/swap' },
+  deposit:          { m: 'zyn_deposit',          p: '/api/deposit' },
+  withdraw:         { m: 'zyn_withdraw',         p: '/api/withdraw' },
+  bind:             { m: 'zyn_bind',             p: '/api/bind' },
+  bind_sol:         { m: 'zyn_bind_sol',         p: '/api/bind-sol' },
+  withdraw_sol:     { m: 'zyn_withdraw_sol',     p: '/api/withdraw-sol' },
+  add_liquidity:    { m: 'zyn_add_liquidity',    p: '/api/liquidity/add' },
+  remove_liquidity: { m: 'zyn_remove_liquidity', p: '/api/liquidity/remove' },
+};
+async function act(name, params) {
+  const a = ACTIONS[name];
+  const pv = provider();
+  if (pv) return pv.request({ method: a.m, params });
+  if (sameOrigin) return http(a.p, params || {});
+  throw new Error('Install the Nap Wallet extension, or open ZynZap from Nap Wallet');
+}
+async function readState() {
+  const pv = provider();
+  if (pv) {
+    const acct = await pv.request({ method: 'zyn_account' });
+    const zyn = await pv.request({ method: 'zyn_zyn' });
+    return { address: acct.address, network: acct.network, zecBalance: null, zyn };
+  }
+  if (sameOrigin) {
+    const o = await http('/api/overview');
+    return { address: o.address, network: o.network, zecBalance: o.balance.total, unit: o.unit, zyn: o.zyn, job: o.job };
+  }
+  return null;
+}
+
+function toast(text, err) { const t = $('toast'); t.textContent = text; t.className = err ? 'err' : ''; t.hidden = false; clearTimeout(t._h); t._h = setTimeout(() => t.hidden = true, err ? 6000 : 3500); }
+function logLine(text) { const li = document.createElement('li'); li.textContent = new Date().toLocaleTimeString() + '  ' + text; $('log').prepend(li); }
+function fmt(x, d = 6) { const n = Number(x); if (!isFinite(n)) return '–'; let s = n.toFixed(d); if (s.includes('.')) s = s.replace(/\.?0+$/, ''); return s === '' || s === '-' ? '0' : s; }
+function short(s, n = 8) { return s && s.length > 2 * n ? s.slice(0, n) + '…' + s.slice(-4) : (s || ''); }
+// A long string shown short, with the whole of it kept on the element for
+// the copy button and for a click.
+function setAddr(id, value, n = 12) {
+  const el = $(id);
+  if (el.dataset.full === value) return;
+  el.dataset.full = value || '';
+  el.title = value ? value + '  (click to show in full)' : '';
+  el.classList.remove('full');
+  el.textContent = short(value, n);
+}
+document.addEventListener('click', (ev) => {
+  const c = ev.target.closest('.addr code');
+  if (!c || !c.dataset.full) return;
+  const full = c.classList.toggle('full');
+  c.textContent = full ? c.dataset.full : short(c.dataset.full, 12);
+});
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function chip(id, cls, text) { const c = $(id); c.className = 'chip ' + cls; c.lastElementChild.textContent = text; c.hidden = false; }
+function confirmDialog(title, rows) {
+  return new Promise((resolve) => {
+    $('dlg-title').textContent = title;
+    $('dlg-body').innerHTML = rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v ${/address|account|memo/i.test(k) ? 'mono' : ''}">${esc(v)}</div>`).join('');
+    const done = (v) => { $('dlg').close(); $('dlg-yes').onclick = $('dlg-no').onclick = null; resolve(v); };
+    $('dlg-yes').onclick = () => done(true); $('dlg-no').onclick = () => done(false); $('dlg').onclose = () => resolve(false);
+    $('dlg').showModal();
+  });
+}
+async function run(btn, label, fn) {
+  if (busy) return;
+  busy = true; const old = btn.textContent; btn.disabled = true; btn.textContent = label;
+  try { await fn(); } catch (e) { toast(e.message, true); logLine('error: ' + e.message); }
+  busy = false; btn.disabled = false; btn.textContent = old;
+  await load();
+}
+for (const b of document.querySelectorAll('nav button')) b.onclick = () => showTab(b.dataset.tab);
+function showTab(name) {
+  for (const b of document.querySelectorAll('nav button')) b.classList.toggle('on', b.dataset.tab === name);
+  for (const m of document.querySelectorAll('main')) m.hidden = m.dataset.tab !== name;
+  try { localStorage.setItem('zz-tab', name); } catch {}
+}
+
+// ---- helpers over state
+const bal = (id) => { const b = (S && S.zyn.record.spendable || []).find(x => x.asset === id); return b ? Number(b.amount) : 0; };
+const sym = (id) => { const a = (S && S.zyn.assets || []).find(x => x.id === id); return a ? a.symbol : 'asset ' + id; };
+const poolFor = (a, b) => (S.zyn.pools || []).find(p => (p.asset0 === a && p.asset1 === b) || (p.asset1 === a && p.asset0 === b));
+
+function render() {
+  const z = S.zyn;
+  const st = z.status || {};
+  chip('chip-node', st.ok ? 'ok' : 'bad', st.ok ? `${S.network} · epoch ${st.epoch}` : 'node down');
+  $('netlabel').textContent = `chain ${z.chain} · ${S.network}`;
+  chip('chip-acct', 'ok', short(z.account, 6));
+  $('connect').hidden = true;
+  const r = z.record;
+
+  // balances
+  const bb = $('balances').querySelector('tbody'); bb.innerHTML = '';
+  for (const b of r.spendable) { const lp = (z.pools || []).find(p => p.lp_asset === b.asset); bb.insertAdjacentHTML('beforeend', `<tr><td>${lp ? `LP ${lp.symbol0}:${lp.symbol1}` : esc(b.symbol)}</td><td class="r num">${fmt(b.amount, 8)}</td><td></td></tr>`); }
+  for (const b of r.unreleased) bb.insertAdjacentHTML('beforeend', `<tr><td>${esc(b.symbol)}</td><td class="r num">${fmt(b.amount, 8)}</td><td><span class="tag pending">arriving</span></td></tr>`);
+  for (const b of r.exiting) bb.insertAdjacentHTML('beforeend', `<tr><td>${esc(b.symbol)}</td><td class="r num">${fmt(b.amount, 8)}</td><td><span class="tag exit">leaving</span></td></tr>`);
+  if (!bb.children.length) bb.innerHTML = `<tr><td colspan="3" class="empty">${r.known ? 'Nothing on Zyn yet.' : 'This account is new. Bridge something in to start.'}</td></tr>`;
+
+  // swap selects
+  const assets = z.assets || [];
+  for (const id of ['sel-in', 'sel-out']) { const sel = $(id); const cur = sel.value; sel.innerHTML = assets.map(a => `<option value="${a.id}">${esc(a.symbol)}</option>`).join(''); if (cur) sel.value = cur; }
+  if ($('sel-out').value === $('sel-in').value) { const alt = assets.find(a => String(a.id) !== $('sel-in').value); if (alt) $('sel-out').value = alt.id; }
+  $('bal-in').textContent = fmt(bal(+$('sel-in').value), 8); $('bal-out').textContent = fmt(bal(+$('sel-out').value), 8);
+  $('swap-hint').textContent = st.clearing
+    ? 'Swaps queue and clear together at the epoch\'s seal (within about a minute), all at one price: what one side sells the other buys before the curve is touched, so a balanced batch pays the marginal rate. Minimum received is 1% below the quote; an unmet minimum simply does not fill.'
+    : 'Swaps execute on arrival at the curve\'s price. Minimum received is 1% below the quote.';
+  const ob = $('orders').querySelector('tbody'); ob.innerHTML = '';
+  for (const o of z.orders || []) ob.insertAdjacentHTML('beforeend', `<tr><td>${fmt(o.amount_in, 8)} ${esc(o.symbol_in)}</td><td class="r num">${fmt(o.min_out, 8)}</td><td class="r num">seq ${o.seq}</td></tr>`);
+  $('orders-box').hidden = !(z.orders || []).length;
+  if (S && S._openOrders && S._openOrders > (z.orders || []).length) { toast('an order cleared — balances updated'); logLine('order cleared at the seal'); }
+  S._openOrders = (z.orders || []).length;
+
+  // pools + positions
+  const pb = $('pools').querySelector('tbody'); pb.innerHTML = '';
+  for (const p of z.pools || []) {
+    const pos = (z.positions || []).find(x => x.pool === p.id);
+    const spot = Number(p.reserve1) / Number(p.reserve0);
+    const mkt = p.reference ? Number(p.reference.price) : null;
+    const feeCell = p.effective_fee_bps !== p.fee_bps ? `<span class="tag pending">${p.effective_fee_bps} bps</span>` : `${p.fee_bps} bps`;
+    pb.insertAdjacentHTML('beforeend', `<tr><td class="pair">${esc(p.symbol0)} : ${esc(p.symbol1)}</td><td class="r num">${fmt(p.reserve0, 4)} : ${fmt(p.reserve1, 4)}</td><td class="r num">${fmt(spot, 4)}</td><td class="r num">${mkt === null ? '–' : fmt(mkt, 4)}</td><td class="r num">${feeCell}</td><td class="r num">${pos ? (pos.share * 100).toFixed(2) + '%' : '–'}</td><td class="r"><button class="btn small" data-add="${p.id}">Add</button></td></tr>`);
+  }
+  if (!(z.pools || []).length) pb.innerHTML = '<tr><td colspan="7" class="empty">No pools yet.</td></tr>';
+  const lp = $('lp-pool'); const curp = lp.value; lp.innerHTML = (z.pools || []).map(p => `<option value="${p.id}">${esc(p.symbol0)} : ${esc(p.symbol1)}</option>`).join(''); if (curp) lp.value = curp;
+  renderLp();
+  const ps = $('positions'); ps.innerHTML = '';
+  for (const x of z.positions || []) ps.insertAdjacentHTML('beforeend', `<div class="kv" data-pos="${x.pool}" style="padding:8px 0;border-bottom:1px solid var(--line)"><span class="k pair" style="color:var(--ink)">${esc(x.symbol0)} : ${esc(x.symbol1)}</span><span class="v">${(x.share * 100).toFixed(2)}%</span><span class="k">${esc(x.symbol0)}</span><span class="v">${fmt(x.amount0, 8)}</span><span class="k">${esc(x.symbol1)}</span><span class="v">${fmt(x.amount1, 8)}</span><span class="k">shares</span><span class="v">${fmt(x.shares, 8)}</span></div>`);
+  $('rm-row').hidden = !(z.positions || []).length;
+  if (!(z.positions || []).length) ps.innerHTML = '<div class="empty">No positions. Add liquidity to a pool to earn its fee.</div>';
+
+  // launch
+  const L = z.launch;
+  $('launch').hidden = !L;
+  if (L) {
+    const fee = (L.fee_bps / 100).toFixed(2) + '%';
+    if (!L.graduated) {
+      $('launch-pre').hidden = false; $('launch-post').hidden = true;
+      $('launch-sub').textContent = `pre-graduation · ${fee} bridge fee builds the genesis pot`;
+      $('pot').textContent = fmt(L.pot, 4); $('pot-threshold').textContent = fmt(L.threshold, 2);
+      $('pot-bar').style.width = Math.min(100, 100 * Number(L.pot) / Number(L.threshold)) + '%';
+      $('my-contrib').textContent = fmt(L.me.contribution, 6);
+      const share = Number(L.contributed) > 0 ? Number(L.me.contribution) / Number(L.contributed) : 0;
+      $('my-share').textContent = `${(share * 100).toFixed(2)}% of ${L.contributors} contributor${L.contributors === 1 ? '' : 's'} · ≈ ${fmt(share * Number(L.genesis) / 2, 2)} ZYN at graduation, vesting over ${L.vesting_blocks.toLocaleString()} Zcash blocks`;
+      $('launch-genesis').innerHTML = `${fmt(Number(L.genesis) / 2, 0)} ZYN into the ZYN:ZEC.zy pool with the whole pot, ${fmt(Number(L.genesis) / 2, 0)} ZYN to contributors. Then ${fmt(L.rate0, 2)} ZYN per Zcash block, halving every ${L.halving_blocks.toLocaleString()} blocks, cap ${fmt(L.cap, 0)}.`;
+      $('launch-hint').textContent = `Every deposit and exit of ZEC pays ${fee} into the pot; your share of the pot is your share of the contributors' half of the genesis batch. Zcash height now ${L.zcash_height.toLocaleString()}.`;
+    } else {
+      $('launch-pre').hidden = true; $('launch-post').hidden = false;
+      const gp = (z.pools || []).find(p => p.id === L.genesis_pool);
+      const price = gp ? (gp.asset0 === L.zyn ? Number(gp.reserve1) / Number(gp.reserve0) : Number(gp.reserve0) / Number(gp.reserve1)) : null;
+      $('launch-sub').textContent = `graduated at Zcash height ${L.graduated_at.toLocaleString()} · ${fee} bridge fee: half burned, half paired`;
+      // A young launch prices ZYN in fractions of a zatoshi; say it the way round that reads.
+      if (price === null) { $('zyn-price').textContent = '–'; }
+      else if (price < 1e-6) { $('zyn-price').textContent = (1 / price).toLocaleString(undefined, { maximumFractionDigits: 0 }); $('zyn-price').nextElementSibling.textContent = 'ZYN per ZEC.zy'; }
+      else { $('zyn-price').textContent = fmt(price, 8); $('zyn-price').nextElementSibling.textContent = 'ZEC.zy'; }
+      $('zyn-supply').textContent = `supply ${fmt(L.supply, 0)} of ${fmt(L.cap, 0)} · minted ${fmt(L.minted, 0)} · burned ${fmt(Number(L.minted) - Number(L.supply), 2)}`;
+      $('my-zyn').textContent = fmt(bal(L.zyn), 4);
+      const left = Number(L.me.vest_total) - Number(L.me.vest_released);
+      $('my-vest').textContent = left > 0 ? `${fmt(left, 2)} ZYN still vesting until Zcash height ${L.me.vest_end.toLocaleString()}` : (Number(L.me.epoch_fees) > 0 ? `${fmt(L.me.epoch_fees, 6)} ZEC.zy in fees this epoch → rebate at the seal` : 'LP rewards and bridge rebates land here at each seal');
+      $('pots').innerHTML = `LP rewards ${fmt(L.lp_pot, 2)} ZYN<br>bridge rebates ${fmt(L.bridge_pot, 2)} ZYN<br>protocol liquidity ${fmt(L.pol_zyn, 2)} ZYN + ${fmt(L.pol_zec, 4)} ZEC.zy waiting<br>fees to burn/pair ${fmt(L.fee_pot, 6)} ZEC.zy`;
+      $('launch-hint').textContent = `Emission ${fmt(L.rate0, 2)} ZYN per Zcash block, halving every ${L.halving_blocks.toLocaleString()} blocks: half to LPs by the fees their pools earn, a quarter as bridge rebates, a quarter as protocol-owned liquidity. Zcash height now ${L.zcash_height.toLocaleString()}.`;
+    }
+  }
+
+  // new markets
+  const M = (L && L.markets) || [];
+  $('markets').hidden = !M.length;
+  if (M.length) {
+    const th = Number(L.asset_threshold);
+    $('markets-sub').textContent = `${(L.bootstrap_bps / 100).toFixed(2)}% of unminted ZYN to whoever opens one · threshold ${fmt(th, 4)} ZEC.zy`;
+    const mb = $('markets-t').querySelector('tbody'); mb.innerHTML = '';
+    for (const m of M) {
+      const worth = Number(m.zec_needed);
+      const pool = (z.pools || []).find(p => p.id === m.pool);
+      // An open market is described by its pool; a pending one by how far
+      // its pot has got.
+      const state = m.opened
+        ? `<span class="tag exit">open · pool ${m.pool}</span>`
+        : worth >= th ? '<span class="tag pending">waiting on protocol ZEC.zy</span>' : `<span class="tag">${(100 * worth / th).toFixed(1)}% of the way</span>`;
+      const potCell = m.opened ? (pool ? `${fmt(pool.reserve1, 4)} in the pool` : '–') : fmt(m.pot, 6);
+      const worthCell = m.opened ? (pool ? `${fmt(pool.reserve0, 4)} ZEC.zy` : '–') : `${fmt(worth, 6)} of ${fmt(th, 4)}`;
+      const priceCell = m.opened
+        ? (pool ? fmt(Number(pool.reserve1) / Number(pool.reserve0), 4) : '–')
+        : (m.price === '0' ? 'no price yet' : fmt(m.price, 4));
+      const mine = m.me ? `${fmt(m.me.contributed, 6)} in${Number(m.me.vest_total) > 0 ? `, ${fmt(m.me.vest_total, 2)} ZYN` : ''}` : '–';
+      mb.insertAdjacentHTML('beforeend', `<tr><td class="pair">${esc(m.symbol)}</td><td class="r num">${potCell}</td><td class="r num">${worthCell}</td><td class="r num">${priceCell}</td><td>${state}</td><td class="r num">${mine}</td></tr>`);
+    }
+  }
+
+  // bridge
+  $('zec-bal').textContent = S.zecBalance === null ? 'in Nap Wallet' : `${fmt(S.zecBalance, 8)} ${S.unit || ''}`;
+  $('zecz-bal').textContent = fmt(bal(1), 8);
+  const b = z.binding;
+  $('zec-bind').textContent = r.bound_here ? 'Exits go to your Nap Wallet address.' : b && b.kind === 1 ? 'Exits are bound to a Solana address right now.' : r.bound ? 'Bound elsewhere; rebinding waits out the redirect delay.' : 'Not bound yet.';
+  $('bind').textContent = r.bound_here ? 'Bound to my wallet ✓' : 'Bind my wallet as exit destination';
+  $('withdraw').disabled = !r.bound_here;
+  setAddr('sol-vault', z.solana_vault); setAddr('sol-memo', z.memo, 16);
+  $('sol-bind').textContent = z.bound_sol ? `Exits go to ${short(b.address, 8)} on Solana.` : 'Bind a Solana address to withdraw there.';
+  if (z.bound_sol && !$('sol-addr').value) $('sol-addr').value = b.address;
+  $('withdraw-sol').disabled = !z.bound_sol;
+  const sa = $('sol-asset'); const curs = sa.value; sa.innerHTML = assets.filter(a => a.id !== 1).map(a => `<option value="${a.id}">${esc(a.symbol)}</option>`).join(''); if (curs) sa.value = curs;
+  const fb = $('flight').querySelector('tbody'); fb.innerHTML = '';
+  for (const x of r.unreleased) fb.insertAdjacentHTML('beforeend', `<tr><td>${esc(x.symbol)}</td><td class="r num">${fmt(x.amount, 8)}</td><td><span class="tag pending">credited, releases at epoch ${x.epoch + 1}</span></td></tr>`);
+  for (const x of r.exiting) fb.insertAdjacentHTML('beforeend', `<tr><td>${esc(x.symbol)}</td><td class="r num">${fmt(x.amount, 8)}</td><td><span class="tag exit">exit requested at epoch ${x.since}</span></td></tr>`);
+  if (!fb.children.length) fb.innerHTML = '<tr><td colspan="3" class="empty">Nothing in flight.</td></tr>';
+}
+function renderLp() {
+  const p = (S.zyn.pools || []).find(x => x.id === +$('lp-pool').value); if (!p) return;
+  $('lp-sym0').textContent = p.symbol0; $('lp-sym1').textContent = p.symbol1;
+  $('lp-bal0').textContent = fmt(bal(p.asset0), 8); $('lp-bal1').textContent = fmt(bal(p.asset1), 8);
+  const ratio = Number(p.reserve1) / Number(p.reserve0);
+  $('lp-ratio').textContent = isFinite(ratio) && ratio > 0 ? `1 ${p.symbol0} = ${fmt(ratio, 6)} ${p.symbol1}` : '';
+}
+async function load() {
+  try { const s = await readState(); if (!s) { $('connect').hidden = false; return; } if (!s.zyn || !s.zyn.available) { toast(s && s.zyn && s.zyn.why || 'Zyn unavailable', true); return; } S = s; render(); }
+  catch (e) { chip('chip-node', 'bad', 'wallet unreachable'); $('connect').hidden = false; }
+}
+
+// ---- swap
+async function quote() {
+  const amount = $('amt-in').value.trim(); const ai = +$('sel-in').value, ao = +$('sel-out').value;
+  $('quote-kv').innerHTML = ''; $('amt-out').value = '';
+  if (!amount || !(Number(amount) > 0) || ai === ao) return;
+  const p = poolFor(ai, ao); if (!p) { $('quote-kv').innerHTML = '<span class="k">route</span><span class="v">no pool joins these</span>'; return; }
+  try {
+    const q = await act('quote', { asset_in: ai, asset_out: ao, amount });
+    $('amt-out').value = fmt(q.out, 8);
+    const rate = Number(q.out) / Number(amount);
+    $('quote-kv').innerHTML = `<span class="k">rate</span><span class="v">1 ${esc(sym(ai))} ≈ ${fmt(rate, 6)} ${esc(sym(ao))}</span><span class="k">minimum received</span><span class="v">${fmt(Number(q.out) * 0.99, 8)}</span><span class="k">best case, netted</span><span class="v">${fmt(q.best, 8)}</span><span class="k">fee now</span><span class="v">${p.effective_fee_bps} bps${p.effective_fee_bps !== p.fee_bps ? ' (divergence from market)' : ''}</span>${p.reference ? `<span class="k">market</span><span class="v">1 ${esc(p.symbol0)} = ${fmt(p.reference.price, 6)} ${esc(p.symbol1)}</span>` : ''}`;
+  } catch (e) { $('quote-kv').innerHTML = `<span class="k">quote</span><span class="v">${esc(e.message)}</span>`; }
+}
+$('amt-in').oninput = () => { clearTimeout(quoteTimer); quoteTimer = setTimeout(quote, 350); };
+$('sel-in').onchange = $('sel-out').onchange = () => { if ($('sel-in').value === $('sel-out').value) { const alt = S.zyn.assets.find(a => String(a.id) !== $('sel-in').value); if (alt) $('sel-out').value = alt.id; } render(); quote(); };
+$('flip').onclick = () => { const a = $('sel-in').value; $('sel-in').value = $('sel-out').value; $('sel-out').value = a; render(); quote(); };
+$('max-in').onclick = () => { $('amt-in').value = fmt(bal(+$('sel-in').value), 8); quote(); };
+$('swap').onclick = () => run($('swap'), 'Submitting…', async () => {
+  const amount = $('amt-in').value.trim(); const ai = +$('sel-in').value, ao = +$('sel-out').value;
+  if (!amount) throw new Error('enter an amount');
+  const clearing = S.zyn.status && S.zyn.status.clearing;
+  const ok = await confirmDialog('Swap', [['Pay', `${amount} ${sym(ai)}`], ['Receive', `≈ ${$('amt-out').value} ${sym(ao)}`], ['At least', `${fmt(Number($('amt-out').value) * 0.99, 8)} ${sym(ao)}`], ['Settles', clearing ? 'at the next seal, with everyone else on this pool, at one price' : 'now, at the curve\'s price']]);
+  if (!ok) return;
+  const r = await act('swap', { asset_in: ai, asset_out: ao, amount });
+  if (r.queued) { toast('order queued; it clears at the next seal'); logLine(`order ${amount} ${sym(ai)} → ${sym(ao)}, at least ${fmt(r.min_out, 8)} (seq ${r.seq})`); }
+  else { toast(`swapped for ${fmt(r.amount_out, 8)} ${sym(ao)}`); logLine(`swap ${amount} ${sym(ai)} → ${fmt(r.amount_out, 8)} ${sym(ao)} (seq ${r.seq})`); }
+  $('amt-in').value = ''; $('amt-out').value = ''; $('quote-kv').innerHTML = '';
+});
+
+// ---- earn
+$('lp-pool').onchange = renderLp;
+document.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-add]'); if (b) { $('lp-pool').value = b.dataset.add; renderLp(); $('lp-amt0').focus(); } });
+$('lp-amt0').oninput = () => { const p = S.zyn.pools.find(x => x.id === +$('lp-pool').value); const r = Number(p.reserve1) / Number(p.reserve0); if (isFinite(r) && r > 0 && $('lp-amt0').value) $('lp-amt1').value = fmt(Number($('lp-amt0').value) * r, 8); };
+$('lp-amt1').oninput = () => { const p = S.zyn.pools.find(x => x.id === +$('lp-pool').value); const r = Number(p.reserve0) / Number(p.reserve1); if (isFinite(r) && r > 0 && $('lp-amt1').value) $('lp-amt0').value = fmt(Number($('lp-amt1').value) * r, 8); };
+$('lp-add').onclick = () => run($('lp-add'), 'Adding…', async () => {
+  const p = S.zyn.pools.find(x => x.id === +$('lp-pool').value); const a0 = $('lp-amt0').value.trim(), a1 = $('lp-amt1').value.trim();
+  if (!a0 || !a1) throw new Error('enter both amounts');
+  const ok = await confirmDialog('Add liquidity', [['Pool', `${p.symbol0} : ${p.symbol1}`], [p.symbol0, `up to ${a0}`], [p.symbol1, `up to ${a1}`], ['Fee earned', `${p.fee_bps} bps of every swap, pro rata`]]);
+  if (!ok) return;
+  const r = await act('add_liquidity', { pool: p.id, amount0: a0, amount1: a1 });
+  toast(`added ${fmt(r.amount0, 8)} + ${fmt(r.amount1, 8)}, ${fmt(r.shares, 8)} shares`); logLine(`add liquidity pool ${p.id}: ${fmt(r.amount0, 8)} ${p.symbol0} + ${fmt(r.amount1, 8)} ${p.symbol1} → ${fmt(r.shares, 8)} shares (seq ${r.seq})`);
+  $('lp-amt0').value = ''; $('lp-amt1').value = '';
+});
+$('rm-max').onclick = () => { const x = (S.zyn.positions || [])[0]; if (x) $('rm-shares').value = fmt(x.shares, 18); };
+$('rm-remove').onclick = () => run($('rm-remove'), 'Removing…', async () => {
+  const x = (S.zyn.positions || [])[0]; const shares = $('rm-shares').value.trim();
+  if (!x || !shares) throw new Error('enter the shares to remove');
+  const ok = await confirmDialog('Remove liquidity', [['Pool', `${x.symbol0} : ${x.symbol1}`], ['Shares', shares], ['You get back', 'both assets at the current ratio']]);
+  if (!ok) return;
+  const r = await act('remove_liquidity', { pool: x.pool, shares });
+  toast(`got back ${fmt(r.amount0, 8)} ${x.symbol0} + ${fmt(r.amount1, 8)} ${x.symbol1}`); logLine(`remove liquidity pool ${x.pool}: ${fmt(r.amount0, 8)} + ${fmt(r.amount1, 8)} (seq ${r.seq})`);
+  $('rm-shares').value = '';
+});
+
+// ---- bridge
+$('deposit').onclick = () => run($('deposit'), 'Sending…', async () => {
+  const amount = $('dep-amount').value.trim(); if (!amount) throw new Error('enter an amount');
+  const L = S.zyn.launch; const feeLine = L ? [['Bridge fee', `${(L.fee_bps / 100).toFixed(2)}% (${fmt(Number(amount) * L.fee_bps / 10000, 8)} ZEC.zy) → ${L.graduated ? 'burn and protocol liquidity, rebated in ZYN' : 'the genesis pot, your share of the ZYN launch'}`]] : [];
+  const ok = await confirmDialog('Deposit ZEC to Zyn', [['Amount', `${amount} ZEC`], ['To', 'the Zyn vault, shielded'], ['Memo', S.zyn.memo], ...feeLine, ['Credit', `${L ? fmt(Number(amount) * (1 - L.fee_bps / 10000), 8) + ' ' : ''}ZEC.zy after confirmations and one epoch`]]);
+  if (!ok) return;
+  await act('deposit', { amount }); toast('deposit sent from Nap Wallet'); logLine(`deposit ${amount} ZEC → vault`); $('dep-amount').value = '';
+});
+$('bind').onclick = () => run($('bind'), 'Binding…', async () => { await act('bind', {}); toast('bound to your wallet'); logLine('bound exits to Nap Wallet'); });
+$('withdraw').onclick = () => run($('withdraw'), 'Requesting…', async () => {
+  const amount = $('wd-amount').value.trim(); if (!amount) throw new Error('enter an amount');
+  const L2 = S.zyn.launch; const feeLine2 = L2 ? [['Bridge fee', `${(L2.fee_bps / 100).toFixed(2)}%, taken from the amount`]] : [];
+  const ok = await confirmDialog('Withdraw ZEC.zy', [['Amount', `${amount} ZEC.zy`], ...feeLine2, ['You receive', `${L2 ? fmt(Number(amount) * (1 - L2.fee_bps / 10000), 8) : amount} ZEC`], ['To', 'your Nap Wallet, shielded'], ['Paid', 'at the end of the epoch']]);
+  if (!ok) return;
+  const r = await act('withdraw', { amount }); toast('exit requested'); logLine(`withdraw ${amount} ZEC.zy (seq ${r.seq})`); $('wd-amount').value = '';
+});
+$('bind-sol').onclick = () => run($('bind-sol'), 'Binding…', async () => {
+  const address = $('sol-addr').value.trim(); if (!address) throw new Error('enter a Solana address');
+  const ok = await confirmDialog('Bind a Solana exit', [['Address', address], ['Note', 'replaces any Zcash binding after the redirect delay']]);
+  if (!ok) return;
+  await act('bind_sol', { address }); toast('bound'); logLine('bound exits to ' + short(address));
+});
+$('withdraw-sol').onclick = () => run($('withdraw-sol'), 'Requesting…', async () => {
+  const amount = $('sol-amount').value.trim(), asset = +$('sol-asset').value; if (!amount) throw new Error('enter an amount');
+  const ok = await confirmDialog('Withdraw to Solana', [['Amount', `${amount} ${sym(asset)}`], ['To', S.zyn.binding.address], ['Paid', 'at the end of the epoch']]);
+  if (!ok) return;
+  const r = await act('withdraw_sol', { asset, amount }); toast('exit requested'); logLine(`withdraw ${amount} ${sym(asset)} to Solana (seq ${r.seq})`); $('sol-amount').value = '';
+});
+for (const [b, src] of [['copy-sol-vault', 'sol-vault'], ['copy-sol-memo', 'sol-memo']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
+$('connect').onclick = () => load();
+
+try { const t = localStorage.getItem('zz-tab'); if (t) showTab(t); } catch {}
+load();
+setInterval(() => { if (!busy) load(); }, 20000);
+</script>
+</body>
+</html>

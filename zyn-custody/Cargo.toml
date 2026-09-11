@@ -1,0 +1,67 @@
+[package]
+name = "zyn-custody"
+version = "0.1.0"
+edition = "2021"
+
+# The operational half of the bridge: watching a chain for deposits, and
+# holding the key that spends the vault.
+#
+# Everything here talks to the outside world, which is why it is not in the VM
+# and never can be — a program that could see Zcash would not be deterministic.
+# What it produces is intents, which the VM then judges by its own rules.
+#
+# The cryptography is `reddsa`'s FROST over RedPallas: the Zcash Foundation's
+# own implementation, of the signature scheme Orchard spend authorization uses.
+# Threshold signing is not a thing to hand-roll — the failure mode is silent and
+# total — so this crate integrates it and does not reimplement any part of it.
+[dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+zyn-vm = { path = "../zyn-vm" }
+zyn-bridge = { path = "../zyn-bridge" }
+reddsa = { version = "0.5", features = ["frost"] }
+rand_core = "0.6"
+# The node speaks JSON-RPC. Parsing money by hand is exactly the kind of
+# silent-failure surface this workspace avoids elsewhere.
+serde_json = "1"
+orchard = "0.15.5"
+zcash_primitives = "0.30.1"
+zcash_note_encryption = "0.4.2"
+zcash_protocol = "0.10.5"
+zcash_address = "0.13.0"
+# The v5 envelope: marker types for the bundles a payout does not carry.
+# `transparent-inputs` brings BIP-32/44 derivation and secp256k1 signing: what
+# a wallet needs to *receive* transparent funds and shield them, as opposed to
+# merely paying one out.
+zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
+# Both already in the tree via zcash_transparent; named directly so the
+# transparent receiver can hold a secret key and an account id by type.
+zip32 = "0.2.1"
+secp256k1 = "0.29.1"
+sapling-crypto = "0.7.0"
+# base58check, for the transparent addresses an exit pays to under NU6.3.
+sha2 = "0.10"
+frost-rerandomized = "3"
+# Solana custody: plain FROST over ed25519. Same major as the Zcash pair above,
+# so one `frost-core` underlies all three ciphersuites.
+frost-ed25519 = "3"
+frost-core = "3"
+# Checks an aggregated ed25519 signature the way Solana will, before it is
+# broadcast. Pinned to 2.x with the rest of the Zcash-era digest stack.
+ed25519-dalek = "2"
+bridgetree = "0.7.1"
+incrementalmerkletree = "0.8"
+rand = "0.8"
+# EVM RPC endpoints are HTTPS, unlike the Zcash node on loopback that
+# `zebra.rs` hand-rolls a POST for. Blocking rather than async for the same
+# reason as everything else here: the request is one call in a poll loop, and
+# an async runtime would buy nothing.
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+
+[dev-dependencies]
+rand = "0.8"
+# EVM RPC endpoints are HTTPS, unlike the Zcash node on loopback that
+# `zebra.rs` hand-rolls a POST for. Blocking rather than async for the same
+# reason as everything else here: the request is one call in a poll loop, and
+# an async runtime would buy nothing.
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }

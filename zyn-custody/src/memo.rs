@@ -1,0 +1,370 @@
+//! How a Zcash deposit says which Zyn account it is for.
+//!
+//! A shielded deposit carries a 512-byte memo, readable only by a holder of the
+//! vault's viewing key. That is where the recipient's Zyn account goes. It is
+//! not a public leak — the memo is inside the encrypted note, so who can read it
+//! is exactly the question of who holds the viewing key, and nothing more.
+//!
+//! # Why this is strict
+//!
+//! A memo is user-supplied text. Someone will send an empty one, a wallet's
+//! default, a note to themselves, or thirty-two bytes of something else
+//! entirely. Every one of those has to be *unmistakable* for a deposit
+//! instruction, because the failure is crediting a stranger.
+//!
+//! So the format is tagged, versioned, fixed-length, and checked to the byte —
+//! and anything that is not exactly right is not a deposit with a problem, it
+//! is [`MemoError`] and a manual refund. Guessing is the one thing that must
+//! not happen here.
+//!
+//! ```text
+//!   "ZYN"  version:u8  account:[u8; 32]      36 bytes, then zero padding
+//! ```
+//!
+//! # The alternative, and why not
+//!
+//! Zcash addresses support diversifiers, so each account could have its own
+//! deposit address and need no memo at all — which removes the commonest way
+//! people lose funds on exchanges, forgetting one. It also means the watcher
+//! must keep a diversifier-to-account map, and a lost map is lost deposits.
+//! Worth revisiting with a per-deposit diversifier and a scan window; the memo
+//! is the version that is simple enough to be obviously right.
+
+use zyn_vm::spec::AccountId;
+
+/// Marks a memo as a Zyn deposit instruction.
+pub const MEMO_TAG: &[u8; 3] = b"ZYN";
+/// Format version. A memo of another version is refused, not interpreted.
+pub const MEMO_VERSION: u8 = 1;
+/// Tag, version, account.
+pub const MEMO_LEN: usize = 3 + 1 + 32;
+/// A Zcash memo field.
+pub const MEMO_FIELD: usize = 512;
+
+/// The tag of an **anchor** memo — the vault's own self-send carrying a Zyn
+/// state root (`zyn::anchor::MEMO_MAGIC`, kept equal by a test in `zynzapd`).
+/// Distinct from [`MEMO_TAG`] in its first bytes so neither parser can accept
+/// the other's payload.
+pub const ANCHOR_TAG: &[u8; 3] = b"ZYA";
+/// tag + version + chain id + epoch + anchor id.
+pub const ANCHOR_LEN: usize = 3 + 1 + 4 + 8 + 32;
+
+/// The tag of a **forced intent**: a signed submission the sequencer must
+/// apply, carried to the vault on a small note because the sequencer's own
+/// door was shut. Distinct in its first bytes from both other tags.
+pub const FORCED_TAG: &[u8; 3] = b"ZYF";
+/// tag + version + length; the frame follows, then zero padding.
+pub const FORCED_HEADER: usize = 3 + 1 + 2;
+/// The most frame a memo can carry.
+pub const FORCED_MAX: usize = MEMO_FIELD - FORCED_HEADER;
+
+/// Wrap a signed submission frame for the memo. `None` if it does not fit.
+pub fn encode_forced(frame: &[u8]) -> Option<[u8; MEMO_FIELD]> {
+    if frame.is_empty() || frame.len() > FORCED_MAX {
+        return None;
+    }
+    let mut out = [0u8; MEMO_FIELD];
+    out[..3].copy_from_slice(FORCED_TAG);
+    out[3] = MEMO_VERSION;
+    out[4..6].copy_from_slice(&(frame.len() as u16).to_be_bytes());
+    out[FORCED_HEADER..FORCED_HEADER + frame.len()].copy_from_slice(frame);
+    Some(out)
+}
+
+/// The frame inside a forced memo, or `None` if the memo is not one. Strict
+/// like `decode`: the declared length must fit and the padding must be zero.
+pub fn forced_frame(memo: &[u8]) -> Option<&[u8]> {
+    if memo.len() < FORCED_HEADER || &memo[..3] != FORCED_TAG || memo[3] != MEMO_VERSION {
+        return None;
+    }
+    let len = u16::from_be_bytes([memo[4], memo[5]]) as usize;
+    if len == 0 || FORCED_HEADER + len > memo.len() {
+        return None;
+    }
+    if memo[FORCED_HEADER + len..].iter().any(|b| *b != 0) {
+        return None;
+    }
+    Some(&memo[FORCED_HEADER..FORCED_HEADER + len])
+}
+
+/// Who a frame is from, read off its key without checking the signature —
+/// enough to credit the note that carried it to the right account. `None`
+/// for a scheme whose account needs signature recovery (EVM), which a
+/// forced memo does not support.
+pub fn forced_account(frame: &[u8]) -> Option<AccountId> {
+    use zyn_vm::auth::Scheme;
+    // vm_id[32] ‖ valid_until u64 ‖ scheme u8 ‖ key[32] ‖ …
+    if frame.len() < 32 + 8 + 1 + 32 {
+        return None;
+    }
+    let scheme = Scheme::from_tag(frame[40])?;
+    match scheme {
+        Scheme::Ed25519 | Scheme::Ed25519Solana => Some(zyn_vm::auth::account_of(scheme, &frame[41..73])),
+        _ => None,
+    }
+}
+
+/// Whether a memo is an anchor: the tag, the version, the length, and nothing
+/// but zero padding after it. The scanner uses this to keep an anchor out of
+/// the deposit path without knowing anything else about anchors.
+pub fn is_anchor(memo: &[u8]) -> bool {
+    memo.len() >= ANCHOR_LEN
+        && &memo[..3] == ANCHOR_TAG
+        && memo[3] == MEMO_VERSION
+        && memo[ANCHOR_LEN..].iter().all(|b| *b == 0)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MemoError {
+    /// Not a Zyn deposit instruction at all — no tag. The overwhelmingly common
+    /// case: an empty memo, a wallet default, a note to a human.
+    NotADeposit,
+    /// Tagged, but a version this build does not know. Refused rather than
+    /// guessed at: a later version may mean something different by these bytes.
+    UnknownVersion(u8),
+    /// Tagged and versioned, but the wrong length.
+    Malformed,
+    /// Padding after the instruction was not zero. Refused because it is the
+    /// difference between a memo that says one thing and a memo that says one
+    /// thing and also carries something else.
+    TrailingBytes,
+}
+
+/// Build the memo a depositor must send.
+///
+/// A wallet or a UI produces this; a human should never be typing it.
+pub fn encode(account: &AccountId) -> [u8; MEMO_FIELD] {
+    let mut out = [0u8; MEMO_FIELD];
+    out[..3].copy_from_slice(MEMO_TAG);
+    out[3] = MEMO_VERSION;
+    out[4..MEMO_LEN].copy_from_slice(account);
+    out
+}
+
+/// Read the account a memo names.
+///
+/// Accepts the memo at any length from `MEMO_LEN` up, since wallets differ in
+/// whether they pad — but everything past the instruction must be zero.
+pub fn decode(memo: &[u8]) -> Result<AccountId, MemoError> {
+    // The text form, typed into a wallet: `ZYN1:<hex>` then zero padding. The
+    // binary form below is what a UI would build; nobody can type a 0x01.
+    if memo.len() >= 5 && &memo[..5] == b"ZYN1:" {
+        let end = memo.iter().position(|b| *b == 0).unwrap_or(memo.len());
+        let text = core::str::from_utf8(&memo[..end]).map_err(|_| MemoError::Malformed)?;
+        if memo[end..].iter().any(|b| *b != 0) {
+            return Err(MemoError::TrailingBytes);
+        }
+        return decode_text(text);
+    }
+    if memo.len() < MEMO_LEN || &memo[..3] != MEMO_TAG {
+        return Err(MemoError::NotADeposit);
+    }
+    if memo[3] != MEMO_VERSION {
+        return Err(MemoError::UnknownVersion(memo[3]));
+    }
+    if memo[MEMO_LEN..].iter().any(|b| *b != 0) {
+        return Err(MemoError::TrailingBytes);
+    }
+    let account: AccountId = memo[4..MEMO_LEN].try_into().map_err(|_| MemoError::Malformed)?;
+    Ok(account)
+}
+
+/// The same instruction as text, for chains whose memo is a string.
+///
+/// Solana's Memo program carries UTF-8, not a fixed-width field, so the binary
+/// form above has nowhere to live there. This is the same tag, the same
+/// version and the same strictness in a form a person can read in a block
+/// explorer — which matters, because on Solana the memo is public.
+///
+/// ```text
+///   ZYN1:<64 lowercase hex>
+/// ```
+///
+/// Hex rather than base58 or base64 deliberately: it is fixed-length, so a
+/// truncated memo is a length error rather than a different valid account, and
+/// it is the encoding the rest of this workspace already uses for accounts.
+pub fn encode_text(account: &AccountId) -> String {
+    let mut s = String::with_capacity(5 + 64);
+    s.push_str(core::str::from_utf8(MEMO_TAG).unwrap_or("ZYN"));
+    s.push((b'0' + MEMO_VERSION) as char);
+    s.push(':');
+    for b in account {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+/// Read the account a text memo names.
+///
+/// Case-insensitive in the hex and tolerant of surrounding whitespace, because
+/// both survive a round trip through a wallet's input box. Nothing else is
+/// tolerated: a memo that is *nearly* right is a manual refund, not a guess.
+pub fn decode_text(memo: &str) -> Result<AccountId, MemoError> {
+    let m = memo.trim();
+    let tag = core::str::from_utf8(MEMO_TAG).unwrap_or("ZYN");
+    let rest = m.strip_prefix(tag).ok_or(MemoError::NotADeposit)?;
+    let (v, hex) = rest.split_at_checked(1).ok_or(MemoError::NotADeposit)?;
+    let version = v.as_bytes()[0].wrapping_sub(b'0');
+    if !v.as_bytes()[0].is_ascii_digit() {
+        return Err(MemoError::NotADeposit);
+    }
+    if version != MEMO_VERSION {
+        return Err(MemoError::UnknownVersion(version));
+    }
+    let hex = hex.strip_prefix(':').ok_or(MemoError::Malformed)?;
+    if hex.len() != 64 {
+        return Err(MemoError::Malformed);
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| MemoError::Malformed)?;
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn acct(n: u8) -> AccountId {
+        [n; 32]
+    }
+
+    #[test]
+    fn a_memo_round_trips() {
+        for n in [0u8, 1, 200, 255] {
+            assert_eq!(decode(&encode(&acct(n))), Ok(acct(n)));
+        }
+        // And is unpadded-tolerant, since wallets differ.
+        let m = encode(&acct(7));
+        assert_eq!(decode(&m[..MEMO_LEN]), Ok(acct(7)));
+    }
+
+    /// The common case by a wide margin, and it must never be a deposit.
+    #[test]
+    fn an_ordinary_memo_is_not_a_deposit() {
+        for memo in [
+            &b""[..],
+            &b"thanks!"[..],
+            &b"sent from my wallet"[..],
+            &[0u8; 512][..],
+            // Thirty-two bytes of something that is not an instruction.
+            &[0xABu8; 32][..],
+        ] {
+            assert_eq!(decode(memo), Err(MemoError::NotADeposit), "memo {:?} was read", memo);
+        }
+    }
+
+    /// A later version may mean something different by the same bytes, so an
+    /// unknown one is refused rather than read hopefully.
+    #[test]
+    fn an_unknown_version_is_refused_not_guessed() {
+        let mut m = encode(&acct(1));
+        m[3] = 2;
+        assert_eq!(decode(&m), Err(MemoError::UnknownVersion(2)));
+    }
+
+    /// Anything after the instruction must be zero — otherwise a memo could say
+    /// one thing and carry another, and two readers could disagree about which
+    /// part counts.
+    #[test]
+    fn a_memo_carrying_extra_is_refused() {
+        let mut m = encode(&acct(1));
+        m[MEMO_LEN] = 0x01;
+        assert_eq!(decode(&m), Err(MemoError::TrailingBytes));
+        m[MEMO_LEN] = 0;
+        m[511] = 0xFF;
+        assert_eq!(decode(&m), Err(MemoError::TrailingBytes));
+    }
+
+    /// Tagged but truncated: the tag alone must not be enough to be read as an
+    /// instruction.
+    #[test]
+    fn a_truncated_instruction_is_not_a_deposit() {
+        let m = encode(&acct(1));
+        for cut in 0..MEMO_LEN {
+            assert!(decode(&m[..cut]).is_err(), "a memo cut at {} decoded", cut);
+        }
+    }
+
+    #[test]
+    fn a_text_memo_round_trips() {
+        for n in [0u8, 1, 200, 255] {
+            assert_eq!(decode_text(&encode_text(&acct(n))), Ok(acct(n)));
+        }
+        assert_eq!(encode_text(&acct(0)), format!("ZYN1:{}", "00".repeat(32)));
+        // Whitespace and case survive a wallet's input box; nothing else does.
+        assert_eq!(decode_text("  ZYN1:AB{}  ".replace("{}", &"ab".repeat(31)).as_str()),
+                   decode_text(&format!("ZYN1:ab{}", "ab".repeat(31))));
+    }
+
+    /// On Solana the memo is public and typed by whoever sends it, so the
+    /// near-misses are what this has to survive.
+    #[test]
+    fn a_text_memo_that_is_nearly_right_is_refused() {
+        let ok = encode_text(&acct(3));
+        assert_eq!(decode_text(""), Err(MemoError::NotADeposit));
+        assert_eq!(decode_text("gm"), Err(MemoError::NotADeposit));
+        assert_eq!(decode_text("ZYN"), Err(MemoError::NotADeposit));
+        assert_eq!(decode_text("ZYNX:00"), Err(MemoError::NotADeposit));
+        assert_eq!(decode_text(&ok.replace("ZYN1", "ZYN2")), Err(MemoError::UnknownVersion(2)));
+        assert_eq!(decode_text(&ok[..ok.len() - 1]), Err(MemoError::Malformed));
+        assert_eq!(decode_text(&format!("{}0", ok)), Err(MemoError::Malformed));
+        assert_eq!(decode_text(&ok.replace(':', ";")), Err(MemoError::Malformed));
+        // A non-hex character in the right place must not decode as something.
+        assert_eq!(
+            decode_text(&format!("ZYN1:zz{}", "ab".repeat(31))),
+            Err(MemoError::Malformed)
+        );
+    }
+
+    /// A wallet's memo box takes text. The same instruction typed there, in
+    /// a 512-byte field padded with zeros, must credit the same account.
+    #[test]
+    fn a_typed_text_memo_is_accepted_by_the_binary_decoder() {
+        let text = encode_text(&acct(9));
+        let mut field = [0u8; MEMO_FIELD];
+        field[..text.len()].copy_from_slice(text.as_bytes());
+        assert_eq!(decode(&field), Ok(acct(9)));
+        assert_eq!(decode(text.as_bytes()), Ok(acct(9)), "unpadded, as some wallets send");
+        // Text after the instruction is not padding.
+        let mut noisy = field;
+        noisy[text.len()] = b' ';
+        noisy[text.len() + 1] = b'x';
+        assert!(decode(&noisy).is_err());
+    }
+
+    #[test]
+    fn an_anchor_memo_is_not_a_deposit_and_a_deposit_is_not_an_anchor() {
+        let mut anchor = [0u8; MEMO_FIELD];
+        anchor[..3].copy_from_slice(ANCHOR_TAG);
+        anchor[3] = MEMO_VERSION;
+        anchor[4..ANCHOR_LEN].copy_from_slice(&[7u8; ANCHOR_LEN - 4]);
+        assert!(is_anchor(&anchor));
+        assert_eq!(decode(&anchor), Err(MemoError::NotADeposit));
+        let deposit = encode(&[9u8; 32]);
+        assert!(!is_anchor(&deposit));
+        assert_eq!(decode(&deposit), Ok([9u8; 32]));
+        let mut trailing = anchor;
+        trailing[ANCHOR_LEN] = 1;
+        assert!(!is_anchor(&trailing), "an anchor with trailing bytes is not an anchor");
+    }
+
+    #[test]
+    fn a_forced_memo_is_neither_a_deposit_nor_an_anchor_and_round_trips_its_frame() {
+        let mut frame = vec![0u8; 32 + 8 + 1 + 32 + 64 + 7];
+        frame[40] = zyn_vm::auth::Scheme::Ed25519.tag();
+        frame[41..73].copy_from_slice(&[0x33u8; 32]);
+        let memo = encode_forced(&frame).unwrap();
+        assert_eq!(forced_frame(&memo), Some(frame.as_slice()));
+        assert_eq!(decode(&memo), Err(MemoError::NotADeposit));
+        assert!(!is_anchor(&memo));
+        assert_eq!(forced_account(&frame), Some(zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &[0x33u8; 32])));
+        assert!(forced_frame(&encode(&[1u8; 32])).is_none());
+        let mut bad = memo;
+        bad[MEMO_FIELD - 1] = 1;
+        assert!(forced_frame(&bad).is_none(), "trailing bytes");
+        assert!(encode_forced(&[0u8; FORCED_MAX + 1]).is_none(), "too big");
+        assert!(encode_forced(&[]).is_none());
+    }
+}
