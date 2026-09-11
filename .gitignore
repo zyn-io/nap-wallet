@@ -2,9 +2,10 @@
 /target/
 **/target/
 
-# JavaScript and generated faces
+# JavaScript and generated interfaces
 **/node_modules/
 apps/nap/dist/
+apps/nap/src-tauri/gen/
 apps/extension/dist/
 npm-debug.log*
 

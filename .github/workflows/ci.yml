@@ -40,5 +40,8 @@ jobs:
       - name: Install desktop tooling
         working-directory: apps/nap
         run: npm ci
+      - name: Build desktop UI
+        working-directory: apps/nap
+        run: npm run ui
       - name: Check Tauri shell
         run: cargo check -p nap
