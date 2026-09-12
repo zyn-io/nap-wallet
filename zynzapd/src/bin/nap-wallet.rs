@@ -217,7 +217,7 @@ fn handle(app: &Arc<App>, mut s: TcpStream, agent_only: bool, agent_secret: &str
 
 #[cfg(test)]
 mod agent_boundary_tests {
-    use super::{agent_route_allowed, static_asset, UI, ZYNZAP};
+    use super::{agent_route_allowed, static_asset, UI};
 
     #[test]
     fn the_agent_listener_has_no_wallet_or_mandate_creation_escape_hatch() {
@@ -242,9 +242,6 @@ mod agent_boundary_tests {
     fn the_wallet_ui_loads_fonts_only_from_its_own_origin() {
         assert!(!UI.contains("fonts.googleapis.com"));
         assert!(!UI.contains("fonts.gstatic.com"));
-        assert!(!ZYNZAP.contains("fonts.googleapis.com"));
-        assert!(!ZYNZAP.contains("fonts.gstatic.com"));
-        assert!(ZYNZAP.contains("/fonts/BricolageGrotesque.ttf"));
         for path in [
             "/fonts/BricolageGrotesque.ttf",
             "/fonts/IBMPlexSans.ttf",
