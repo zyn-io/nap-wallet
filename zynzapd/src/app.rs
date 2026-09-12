@@ -26,9 +26,9 @@ use zyn_vm::auth::{delegation_bytes_as, Authorization, Scheme, Signed};
 use zyn_vm::session::{session_payload, AssetLimit, Delegation, CAP_SWAP};
 use zyn_vm::verify::{Credential, Delegated};
 
-use crate::client::{account, fixed_of, hex, load_key, unhex32, Node, ZAT};
+use crate::client::{account, fixed_of, hex, unhex32, Node, ZAT};
 use crate::settle::{parse_destination, zcash_commitment};
-use crate::wallet::{network_name, unit, Event, Wallet, WalletBackup, CONFIRMATIONS, ZAT_PER_ZEC};
+use crate::wallet::{network_name, unit, Event, Wallet, WalletBackup, ZynKeySource, CONFIRMATIONS, ZAT_PER_ZEC};
 
 pub const DEFAULT_LIGHTD_TESTNET: &str = "168.119.53.39:8098";
 pub const DEFAULT_NODE: &str = "168.119.53.39:8099";
@@ -174,10 +174,13 @@ impl Binding {
 }
 
 pub struct App {
+    operation: Mutex<()>,
     cfg: Config,
     pub wallet: Mutex<Wallet>,
     pub settings: Mutex<Settings>,
-    pub key: SigningKey,
+    key: Mutex<SigningKey>,
+    zyn_key_source: Mutex<ZynKeySource>,
+    zyn_key_path: PathBuf,
     pub node: Node,
     pub vault: String,
     binding_path: PathBuf,
@@ -206,25 +209,36 @@ impl App {
     /// key, reaching the block server once to confirm the network.
     pub fn open(cfg: &Config) -> Result<App, String> {
         std::fs::create_dir_all(&cfg.dir).map_err(|e| format!("app dir: {}", e))?;
+        crate::restore::recover(&cfg.dir)?;
         let settings = Settings::load(&cfg.dir);
         let wallet = App::open_wallet(cfg, &settings, settings.network, true)?;
         let key_path = cfg.key_path.clone().unwrap_or_else(|| cfg.dir.join("zyn.key"));
-        if !key_path.exists() {
+        let source = if key_path.exists() {
+            App::read_zyn_key_source(&key_path)?
+        } else if let Some(source) = wallet.default_zyn_source() {
+            App::write_zyn_key_source(&key_path, &source, true)?;
+            source
+        } else {
             use rand::RngCore;
             let mut seed = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut seed);
-            std::fs::write(&key_path, seed).map_err(|e| format!("write key: {}", e))?;
-        }
-        let key = load_key(&key_path.to_string_lossy())?;
+            let source = ZynKeySource::Legacy { seed };
+            App::write_zyn_key_source(&key_path, &source, true)?;
+            source
+        };
+        let key = wallet.zyn_signing_key(&source)?;
         let binding_path = cfg.dir.join("binding");
         let binding = App::load_binding(&binding_path);
         let agent_path = cfg.dir.join("agent.json");
         let agent = App::load_agent_store(&agent_path, account(&key));
         Ok(App {
+            operation: Mutex::new(()),
             cfg: cfg.clone(),
             wallet: Mutex::new(wallet),
             settings: Mutex::new(settings),
-            key,
+            key: Mutex::new(key),
+            zyn_key_source: Mutex::new(source),
+            zyn_key_path: key_path,
             node: Node::new(&cfg.node, cfg.chain),
             vault: cfg.vault.clone(),
             binding_path,
@@ -238,6 +252,41 @@ impl App {
             agent_path,
             agent: Mutex::new(agent),
         })
+    }
+
+    pub fn key(&self) -> SigningKey {
+        self.key.lock().expect("Zyn key lock").clone()
+    }
+
+    fn zyn_key_source(&self) -> Result<ZynKeySource, String> {
+        self.zyn_key_source.lock().map_err(|_| "Zyn key lock".to_string()).map(|s| s.clone())
+    }
+
+    fn read_zyn_key_source(path: &Path) -> Result<ZynKeySource, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("cannot read Zyn key: {}", e))?;
+        if bytes.len() == 32 {
+            return Ok(ZynKeySource::Legacy { seed: bytes.try_into().expect("length checked") });
+        }
+        let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Zyn key is neither a legacy 32-byte seed nor a Nap descriptor".to_string())?;
+        ZynKeySource::parse(&value)
+    }
+
+    fn write_zyn_key_source(path: &Path, source: &ZynKeySource, create_new: bool) -> Result<(), String> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(!create_new).create_new(create_new);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path).map_err(|e| format!("cannot write Zyn key descriptor: {}", e))?;
+        let bytes = match source {
+            ZynKeySource::Legacy { seed } => seed.to_vec(),
+            _ => serde_json::to_vec_pretty(&source.json()).map_err(|e| e.to_string())?,
+        };
+        file.write_all(&bytes).map_err(|e| format!("cannot write Zyn key descriptor: {}", e))?;
+        file.sync_all().map_err(|e| format!("cannot sync Zyn key descriptor: {}", e))
     }
 
     pub fn job(&self) -> Option<Job> {
@@ -351,7 +400,7 @@ impl App {
         if let Some(a) = self.deposit_address.lock().ok()?.clone() {
             return Some(a);
         }
-        let addr = self.node.deposit_address(account(&self.key)).ok()?;
+        let addr = self.node.deposit_address(account(&self.key())).ok()?;
         let _ = std::fs::write(self.cfg.dir.join("deposit-address"), &addr);
         *self.deposit_address.lock().ok()? = Some(addr.clone());
         Some(addr)
@@ -406,16 +455,16 @@ impl App {
             }
         };
         let commitment = b.commitment(network)?;
-        let record = self.node.account(&self.key)?.unwrap_or_default();
+        let record = self.node.account(&self.key())?.unwrap_or_default();
         if record.binding != Some(commitment) {
-            let acc = self.node.submit(&self.key, Intent::BindWithdrawal { account: account(&self.key), destination: commitment })?;
+            let acc = self.node.submit(&self.key(), Intent::BindWithdrawal { account: account(&self.key()), destination: commitment })?;
             self.note(format!("bound exits to {}… (seq {})", &address[..address.len().min(12)], acc.seq));
             b.revealed = false;
         }
         self.save_binding(&b)?;
         *self.binding.lock().map_err(|_| "busy")? = Some(b.clone());
         if !b.revealed {
-            self.node.reveal(&self.key, kind, &b.address, &b.salt)?;
+            self.node.reveal(&self.key(), kind, &b.address, &b.salt)?;
             b.revealed = true;
             self.save_binding(&b)?;
             *self.binding.lock().map_err(|_| "busy")? = Some(b.clone());
@@ -668,7 +717,7 @@ fn agent_swap(app: &App, input: &Value) -> Result<Intent, String> {
     let amount_in = agent_fixed(input, "amount_in_raw")?;
     let min_out_raw = input.get("min_out_raw").and_then(Value::as_str).ok_or("min_out_raw is required")?.parse::<i128>().map_err(|_| "invalid min_out_raw")?;
     if min_out_raw < 0 { return Err("min_out_raw cannot be negative".into()); }
-    Ok(Intent::SwapExactIn { account: account(&app.key), asset_in, path, amount_in, min_out: Fixed::raw(min_out_raw) })
+    Ok(Intent::SwapExactIn { account: account(&app.key()), asset_in, path, amount_in, min_out: Fixed::raw(min_out_raw) })
 }
 
 fn agent_policy(app: &App, mandate: &AgentMandate, intent: &Intent, epoch: u64) -> Result<Value, String> {
@@ -678,7 +727,7 @@ fn agent_policy(app: &App, mandate: &AgentMandate, intent: &Intent, epoch: u64) 
     let Intent::SwapExactIn { account: owner, asset_in, path, amount_in, min_out } = intent else {
         return Err("operation_permanently_unavailable".into());
     };
-    if *owner != account(&app.key) { return Err("wrong_account".into()); }
+    if *owner != account(&app.key()) { return Err("wrong_account".into()); }
     if !mandate.allowed_assets.contains(asset_in) { return Err("wrong_asset".into()); }
     if path.iter().any(|p| !mandate.allowed_pools.contains(p)) { return Err("wrong_pool".into()); }
     let max = mandate.max_per_action.iter().find(|(asset, _)| asset == asset_in).map(|(_, amount)| *amount).ok_or("no_amount_limit_for_asset")?;
@@ -704,6 +753,11 @@ fn agent_policy(app: &App, mandate: &AgentMandate, intent: &Intent, epoch: u64) 
 }
 
 pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Value, String> {
+    // In-process identities cannot change halfway through another API request.
+    let _operation = app.operation.lock().map_err(|_| "wallet operation lock")?;
+    if crate::restore::pending(&app.cfg.dir) {
+        return Err("unfinished restore; restart Nap to recover before continuing".into());
+    }
     match (method, path) {
         ("GET", "/api/agent/status") => {
             zyn_only(app)?;
@@ -728,8 +782,8 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("GET", "/api/agent/portfolio") => {
             zyn_only(app)?;
-            let record = app.node.account(&app.key)?.unwrap_or_default();
-            Ok(json!({ "schema": AGENT_SCHEMA, "account": hex(&account(&app.key)), "spendable": record.spendable.into_iter().map(|(asset, amount)| json!({"asset": asset, "amount_raw": amount.0.to_string()})).collect::<Vec<_>>(), "exiting": record.exiting.into_iter().map(|(asset, amount, epoch)| json!({"asset": asset, "amount_raw": amount.0.to_string(), "requested_epoch": epoch})).collect::<Vec<_>>() }))
+            let record = app.node.account(&app.key())?.unwrap_or_default();
+            Ok(json!({ "schema": AGENT_SCHEMA, "account": hex(&account(&app.key())), "spendable": record.spendable.into_iter().map(|(asset, amount)| json!({"asset": asset, "amount_raw": amount.0.to_string()})).collect::<Vec<_>>(), "exiting": record.exiting.into_iter().map(|(asset, amount, epoch)| json!({"asset": asset, "amount_raw": amount.0.to_string(), "requested_epoch": epoch})).collect::<Vec<_>>() }))
         }
         ("POST", "/api/agent/quote") => {
             zyn_only(app)?;
@@ -778,7 +832,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let mut seed = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut seed);
             let mut mandate = AgentMandate { id: String::new(), session_seed: seed, allowed_assets, allowed_pools, max_per_action, max_slippage_bps, valid_from_epoch: status.epoch, valid_until_epoch: status.epoch.saturating_add(epochs), created_at: App::now(), state: "active".into() };
-            mandate.id = App::agent_mandate_id(account(&app.key), &mandate);
+            mandate.id = App::agent_mandate_id(account(&app.key()), &mandate);
             let public = App::mandate_json(&mandate);
             let mut store = app.agent.lock().map_err(|_| "agent store busy")?;
             store.mandates.insert(mandate.id.clone(), mandate);
@@ -814,7 +868,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 let session = SigningKey::from_bytes(&mandate.session_seed);
                 let salt: [u8; 32] = Sha256::digest([b"nap.agent.policy.v1".as_slice(), &mandate.session_seed].concat()).into();
                 let delegation = Delegation {
-                    account: account(&app.key),
+                    account: account(&app.key()),
                     session_key: session.verifying_key().to_bytes(),
                     capabilities: CAP_SWAP,
                     allowed_assets: mandate.allowed_assets.clone(),
@@ -828,7 +882,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 let Signed::Message(certificate) = delegation_bytes_as::<SwapState>(Scheme::Ed25519, app.cfg.chain, &delegation) else { return Err("internal_signature_scheme".into()) };
                 let auth = Authorization::for_vm::<SwapState>(app.cfg.chain, status.epoch, 1.min(mandate.valid_until_epoch.saturating_sub(status.epoch)));
                 let delegation_id = delegation.id(app.cfg.chain, &auth.vm_id);
-                let delegated = Delegated { delegation, owner: Credential::Ed25519 { key: app.key.verifying_key().to_bytes(), signature: app.key.sign(&certificate).to_bytes() }, session_signature: session.sign(&session_payload::<SwapState>(&delegation_id, &auth, &intent)).to_bytes() };
+                let delegated = Delegated { delegation, owner: Credential::Ed25519 { key: app.key().verifying_key().to_bytes(), signature: app.key().sign(&certificate).to_bytes() }, session_signature: session.sign(&session_payload::<SwapState>(&delegation_id, &auth, &intent)).to_bytes() };
                 let accepted = app.node.submit_delegated(&auth, &delegated, &intent)?;
                 Ok(json!({ "schema": AGENT_SCHEMA, "request_id": request_id, "mandate_id": mandate_id, "state": if accepted.queued { "queued" } else { "accepted" }, "seq": accepted.seq, "epoch": accepted.epoch, "receipts": accepted.receipts, "amount_out_raw": accepted.swapped.map(|(_, out)| out.0.to_string()), "decision": decision }))
             })();
@@ -917,6 +971,35 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 None => Ok(json!({ "address": app.vault, "memo": true })),
             }
         }
+        ("GET", "/api/zyn-key") => {
+            zyn_only(app)?;
+            let current_key = app.key();
+            let current = account(&current_key);
+            let source = app.zyn_key_source()?;
+            let derived = {
+                let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+                w.default_zyn_source()
+                    .and_then(|s| w.zyn_signing_key(&s).ok().map(|k| (s, account(&k))))
+            };
+            let record = app.node.account(&current_key)?.unwrap_or_default();
+            let authorities = app.node.collections()?.into_iter()
+                .filter(|c| c.creator == current)
+                .map(|c| json!({ "collection": c.id, "symbol": c.symbol, "phase": c.phase_name() }))
+                .collect::<Vec<_>>();
+            Ok(json!({
+                "account": hex(&current),
+                "source": match source { ZynKeySource::Derived { .. } => "bip39-hkdf", ZynKeySource::Legacy { .. } => "legacy-ed25519" },
+                "derived_account": derived.as_ref().map(|(_, id)| hex(id)),
+                "migration_available": false,
+                "migration_blocked_reason": "Automatic migration is disabled pending verified settlement, resumable checkpoints and retained-authority recovery. Export a complete backup; the original account remains active.",
+                "transferable": record.spendable.iter().filter(|(_, amount)| amount.0 > 0).map(|(asset, amount)| json!({ "asset": asset, "amount": amount.to_string() })).collect::<Vec<_>>(),
+                "exiting": record.exiting.len(), "unreleased": record.unreleased.len(),
+                "non_transferable_creator_authorities": authorities,
+            }))
+        }
+        ("POST", "/api/zyn-key/migrate") => {
+            Err("Automatic migration is disabled until settlement verification and resumable recovery are implemented; the original Zyn key has not been changed".into())
+        }
         ("POST", "/api/deposit") => {
             zyn_only(app)?;
             let zat = zatoshi_of(input, "amount")?;
@@ -924,7 +1007,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             // Without one, fall back to the shared vault address and a memo.
             let (to, memo) = match app.deposit_address() {
                 Some(a) => (a, None),
-                None => (app.vault.clone(), Some(zyn_custody::memo::encode_text(&account(&app.key)))),
+                None => (app.vault.clone(), Some(zyn_custody::memo::encode_text(&account(&app.key())))),
             };
             App::start_job(app, "deposit", move |a| {
                 let txid = send(a, &to, zat, memo.as_deref(), "deposit")?;
@@ -932,8 +1015,10 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             })
         }
         ("POST", "/api/import") => {
+            if app.job().is_some() { return Err("wait for the current wallet job before restoring".into()); }
             let mut w = app.wallet.try_lock().map_err(|_| "wallet busy")?;
             let network = w.network();
+            let backup_supplied = input.get("backup").is_some();
             // Parse and derive the replacement before removing even an empty
             // wallet. `backup` is the complete portable form; mnemonic and
             // raw key fields keep manual and legacy restores straightforward.
@@ -956,6 +1041,22 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if restore.network != network {
                 return Err(format!("this backup is for {}, but Nap is showing {}", network_name(restore.network), network_name(network)));
             }
+            let restore_had_zyn = backup_supplied && restore.zyn().is_some();
+            let requested_zyn = restore.effective_zyn_source();
+            let current_zyn = app.zyn_key_source()?;
+            let restore_zyn = match (&current_zyn, backup_supplied, requested_zyn) {
+                // A phrase-only restore cannot reconstruct an independently
+                // generated account. Keep that authority until the holder
+                // explicitly migrates it or imports a complete v2 backup.
+                (ZynKeySource::Legacy { .. }, false, _) => current_zyn.clone(),
+                (_, _, Some(source)) => source,
+                (_, _, None) => {
+                    use rand::RngCore;
+                    let mut seed = [0u8; 32];
+                    rand::rngs::OsRng.fill_bytes(&mut seed);
+                    ZynKeySource::Legacy { seed }
+                }
+            };
             let (o, i) = w.balance();
             if o + i > 0 || w.pending() > 0 || !app.history(network).is_empty() {
                 return Err("this wallet holds funds or history; back it up and remove it before restoring another".into());
@@ -963,8 +1064,9 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let path = w.path().to_string();
             let lightd = app.settings.lock().map_err(|_| "busy")?.lightd(network)?.to_string();
             let staged_path = format!("{}.restore", path);
-            let _ = std::fs::remove_file(&staged_path);
-            let _ = std::fs::remove_file(format!("{}.state", staged_path));
+            if Path::new(&staged_path).exists() || Path::new(&format!("{}.state", staged_path)).exists() {
+                return Err("a previous staged restore exists; preserve it and inspect before retrying".into());
+            }
             // Seed and open the replacement completely before touching the
             // current wallet. A bad phrase, wrong network, unavailable tree
             // frontier, or unwritable disk therefore leaves the old key live.
@@ -976,17 +1078,59 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                     return Err(e);
                 }
             };
-            drop(staged);
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::remove_file(format!("{}.state", path));
-            std::fs::rename(&staged_path, &path).map_err(|e| format!("cannot install restored wallet key: {}", e))?;
-            std::fs::rename(format!("{}.state", staged_path), format!("{}.state", path)).map_err(|e| format!("cannot install restored wallet state: {}", e))?;
-            let fresh = Wallet::open(&path, Client::new(&lightd))?;
+            let restored_zyn_key = staged.zyn_signing_key(&restore_zyn)?;
+            let restored_zyn_account = account(&restored_zyn_key);
+            let current_zyn_account = account(&app.key());
+            if restored_zyn_account != current_zyn_account {
+                let record = app.node.account(&app.key())?.unwrap_or_default();
+                let open_offer = app.node.offers()?.iter().any(|o| o.maker == current_zyn_account);
+                let creator = app.node.collections()?.iter().any(|c| c.creator == current_zyn_account);
+                let orders = !app.node.orders(&app.key())?.is_empty();
+                let launch = app.node.launch_me(&app.key())?;
+                let launch_claims = launch.contribution.0 > 0 || launch.epoch_fees.0 > 0 || launch.vest_total > launch.vest_released || !launch.markets.is_empty();
+                if record.spendable.iter().any(|(_, amount)| amount.0 > 0)
+                    || !record.exiting.is_empty() || !record.unreleased.is_empty() || open_offer || creator || orders || launch_claims
+                {
+                    let _ = std::fs::remove_file(&staged_path);
+                    let _ = std::fs::remove_file(format!("{}.state", staged_path));
+                    return Err("the current Zyn account still has holdings, pending balances, offers, or creator authority; export it and complete the Zyn migration before restoring a different account".into());
+                }
+            }
+            // Acquire every mutable identity field before touching disk. Stage
+            // all replacement bytes, then commit them with a rollback journal.
+            let mut key = app.key.lock().map_err(|_| "Zyn key lock")?;
+            let mut source = app.zyn_key_source.lock().map_err(|_| "Zyn key lock")?;
+            let mut agents = app.agent.lock().map_err(|_| "agent store busy")?;
+            let mut binding = app.binding.lock().map_err(|_| "binding busy")?;
+            let mut deposit = app.deposit_address.lock().map_err(|_| "deposit address busy")?;
+            let zyn_bytes = match &restore_zyn {
+                ZynKeySource::Legacy { seed } => seed.to_vec(),
+                _ => serde_json::to_vec_pretty(&restore_zyn.json()).map_err(|e| e.to_string())?,
+            };
+            let files = vec![
+                (PathBuf::from(&path), Some(std::fs::read(&staged_path).map_err(|e| e.to_string())?)),
+                (PathBuf::from(format!("{}.state", path)), Some(std::fs::read(format!("{}.state", staged_path)).map_err(|e| e.to_string())?)),
+                (app.zyn_key_path.clone(), Some(zyn_bytes)),
+                (app.agent_path.clone(), None),
+                (app.binding_path.clone(), None),
+                (app.cfg.dir.join("deposit-address"), None),
+            ];
+            let recovery_copy = crate::restore::replace(&app.cfg.dir, &files)?;
+            let fresh = staged.installed_at(path);
             let birthday = fresh.state.birthday;
             let warning = fresh.mnemonic_word_count().filter(|n| *n < 24).map(|n| format!("this imported phrase has {} words and less than the 256 bits recommended for Zcash; move recovered funds to a new 24-word wallet", n));
             *w = fresh;
+            *key = restored_zyn_key; *source = restore_zyn;
+            *agents = AgentStore::default(); *binding = None; *deposit = None;
+            let _ = std::fs::remove_file(&staged_path);
+            let _ = std::fs::remove_file(format!("{}.state", staged_path));
             app.note(format!("restored a {} wallet born at {}; sync to find its notes", network_name(network), birthday));
-            Ok(json!({ "address": w.address(), "birthday": birthday, "warning": warning }))
+            Ok(json!({
+                "address": w.address(), "birthday": birthday, "warning": warning,
+                "zyn_account": hex(&restored_zyn_account),
+                "zyn_backup_complete": restore_had_zyn,
+                "previous_recovery_copy": recovery_copy,
+            }))
         }
         ("POST", "/api/quote") => {
             zyn_only(app)?;
@@ -999,7 +1143,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let (asset_in, pool, amount) = swap_args(app, input)?;
             let (out, _, asset_out) = app.node.quote(asset_in, &[pool], amount)?;
             let min_out = Fixed::raw(out.0 * 99 / 100);
-            let acc = app.node.submit(&app.key, Intent::SwapExactIn { account: account(&app.key), asset_in, path: vec![pool], amount_in: amount, min_out })?;
+            let acc = app.node.submit(&app.key(), Intent::SwapExactIn { account: account(&app.key()), asset_in, path: vec![pool], amount_in: amount, min_out })?;
             if acc.queued {
                 app.note(format!("order queued: {} of asset {} for at least {} of asset {}; clears at the seal (seq {})", amount, asset_in, min_out, asset_out, acc.seq));
                 return Ok(json!({ "seq": acc.seq, "epoch": acc.epoch, "queued": true, "min_out": min_out.to_string() }));
@@ -1029,7 +1173,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         ("GET", "/api/offers") => {
             zyn_only(app)?;
             let offers = app.node.offers().map_err(|e| e.to_string())?;
-            let me = account(&app.key);
+            let me = account(&app.key());
             Ok(json!({ "offers": offers.iter().map(|o| json!({
                 "id": o.id,
                 "maker": hex(&o.maker),
@@ -1057,7 +1201,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             // theft to whoever was about to take it.
             let expires = input.get("expires_at_epoch").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let acc = app.node
-                .place_offer(&app.key, offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
+                .place_offer(&app.key(), offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
                 .map_err(|e| e.to_string())?;
             app.note(format!("offered asset {} at {} ZEC.zy (seq {})", offer_asset, want_amount, acc.seq));
             Ok(json!({ "placed": true, "seq": acc.seq, "epoch": acc.epoch }))
@@ -1065,14 +1209,14 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         ("POST", "/api/take") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.take_offer(&app.key, offer).map_err(|e| e.to_string())?;
+            let acc = app.node.take_offer(&app.key(), offer).map_err(|e| e.to_string())?;
             app.note(format!("took offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "taken": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/cancel-offer") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.cancel_offer(&app.key, offer).map_err(|e| e.to_string())?;
+            let acc = app.node.cancel_offer(&app.key(), offer).map_err(|e| e.to_string())?;
             app.note(format!("cancelled offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "cancelled": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
@@ -1088,7 +1232,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let cap = input.get("cap").and_then(Value::as_u64).ok_or("how many items?")? as u32;
             let fee_bps = input.get("fee_bps").and_then(Value::as_u64).unwrap_or(100) as u16;
             let acc = app.node
-                .create_collection(&app.key, swapvm::state::symbol(sym.as_bytes()), cap, fee_bps)
+                .create_collection(&app.key(), swapvm::state::symbol(sym.as_bytes()), cap, fee_bps)
                 .map_err(|e| e.to_string())?;
             app.note(format!("created collection {} capped at {} (seq {})", sym, cap, acc.seq));
             Ok(json!({ "created": true, "seq": acc.seq, "epoch": acc.epoch }))
@@ -1100,7 +1244,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
             let amount = fixed_of(str_of(input, "amount")?)?;
             if amount.0 <= 0 { return Err("amount must be positive".into()) }
-            let acc = app.node.fund_collection(&app.key, collection, amount).map_err(|e| e.to_string())?;
+            let acc = app.node.fund_collection(&app.key(), collection, amount).map_err(|e| e.to_string())?;
             app.note(format!("funded collection {} with {} ZEC.zy (seq {})", collection, amount, acc.seq));
             Ok(json!({ "funded": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
@@ -1111,7 +1255,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
             let to = match input.get("to").and_then(Value::as_str) {
                 Some(h) => unhex32(h).map_err(|_| "`to` is not a 32-byte account")?,
-                None => account(&app.key),
+                None => account(&app.key()),
             };
             let content = match input.get("content").and_then(Value::as_str) {
                 Some(h) => unhex32(h).map_err(|_| "`content` is not a 32-byte hash")?,
@@ -1122,7 +1266,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 None => swapvm::state::symbol(b"ITEM"),
             };
             let acc = app.node
-                .mint_collection_item(&app.key, collection, to, sym, content)
+                .mint_collection_item(&app.key(), collection, to, sym, content)
                 .map_err(|e| e.to_string())?;
             app.note(format!("minted an item of collection {} to {} (seq {})", collection, hex(&to), acc.seq));
             Ok(json!({ "minted": true, "seq": acc.seq, "epoch": acc.epoch }))
@@ -1131,14 +1275,14 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             zyn_only(app)?;
             let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
             let to = input.get("to").and_then(Value::as_u64).ok_or("advance to which phase?")? as u8;
-            let acc = app.node.advance_collection(&app.key, collection, to).map_err(|e| e.to_string())?;
+            let acc = app.node.advance_collection(&app.key(), collection, to).map_err(|e| e.to_string())?;
             app.note(format!("collection {} advanced to phase {} (seq {})", collection, to, acc.seq));
             Ok(json!({ "advanced": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/redeem") => {
             zyn_only(app)?;
             let asset = input.get("asset").and_then(Value::as_u64).ok_or("which item?")? as u32;
-            let acc = app.node.redeem_collection_item(&app.key, asset).map_err(|e| e.to_string())?;
+            let acc = app.node.redeem_collection_item(&app.key(), asset).map_err(|e| e.to_string())?;
             app.note(format!("redeemed item {} at seq {}", asset, acc.seq));
             Ok(json!({ "redeemed": true, "seq": acc.seq }))
         }
@@ -1163,7 +1307,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let b = app.binding.lock().map_err(|_| "busy")?.clone().ok_or("bind a Solana address first")?;
             if b.kind != 1 { return Err("exits are bound to a Zcash address; bind a Solana address first (a rebind waits out the redirect delay)".into()) }
             let network = app.wallet.lock().map_err(|_| "wallet busy")?.network();
-            let acc = app.node.submit(&app.key, Intent::RequestWithdrawal { account: account(&app.key), asset, amount, destination: b.commitment(network)? })?;
+            let acc = app.node.submit(&app.key(), Intent::RequestWithdrawal { account: account(&app.key()), asset, amount, destination: b.commitment(network)? })?;
             app.note(format!("requested an exit of {} of asset {} to {}… (seq {})", amount, asset, &b.address[..8], acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
@@ -1172,7 +1316,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let pool = input.get("pool").and_then(Value::as_u64).ok_or("pool is required")? as u32;
             let max0 = fixed_of(str_of(input, "amount0")?)?;
             let max1 = fixed_of(str_of(input, "amount1")?)?;
-            let acc = app.node.submit(&app.key, Intent::AddLiquidity { account: account(&app.key), pool, max0, max1, min_shares: Fixed::ZERO })?;
+            let acc = app.node.submit(&app.key(), Intent::AddLiquidity { account: account(&app.key()), pool, max0, max1, min_shares: Fixed::ZERO })?;
             let (a0, a1, sh) = acc.liquidity.unwrap_or((Fixed::ZERO, Fixed::ZERO, Fixed::ZERO));
             app.note(format!("added liquidity to pool {}: {} + {} for {} shares (seq {})", pool, a0, a1, sh, acc.seq));
             Ok(json!({ "seq": acc.seq, "amount0": a0.to_string(), "amount1": a1.to_string(), "shares": sh.to_string() }))
@@ -1181,7 +1325,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             zyn_only(app)?;
             let pool = input.get("pool").and_then(Value::as_u64).ok_or("pool is required")? as u32;
             let shares = fixed_of(str_of(input, "shares")?)?;
-            let acc = app.node.submit(&app.key, Intent::RemoveLiquidity { account: account(&app.key), pool, shares, min0: Fixed::ZERO, min1: Fixed::ZERO })?;
+            let acc = app.node.submit(&app.key(), Intent::RemoveLiquidity { account: account(&app.key()), pool, shares, min0: Fixed::ZERO, min1: Fixed::ZERO })?;
             let (a0, a1, sh) = acc.liquidity.unwrap_or((Fixed::ZERO, Fixed::ZERO, Fixed::ZERO));
             app.note(format!("removed {} shares from pool {}: {} + {} back (seq {})", sh, pool, a0, a1, acc.seq));
             Ok(json!({ "seq": acc.seq, "amount0": a0.to_string(), "amount1": a1.to_string(), "shares": sh.to_string() }))
@@ -1193,7 +1337,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if b.kind != 0 { return Err("exits are bound to a Solana address; bind this wallet first (a rebind waits out the redirect delay)".into()) }
             let network = app.wallet.lock().map_err(|_| "wallet busy")?.network();
             let commitment = b.commitment(network)?;
-            let acc = app.node.submit(&app.key, Intent::RequestWithdrawal { account: account(&app.key), asset: XZEC, amount: Fixed::raw(zat as i128 * ZAT), destination: commitment })?;
+            let acc = app.node.submit(&app.key(), Intent::RequestWithdrawal { account: account(&app.key()), asset: XZEC, amount: Fixed::raw(zat as i128 * ZAT), destination: commitment })?;
             app.note(format!("requested an exit of {:.8} ZEC.zy to this wallet (seq {})", zec(zat), acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
@@ -1202,13 +1346,13 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let to = unhex32(str_of(input, "to")?.trim())?;
             let asset = input.get("asset").and_then(Value::as_u64).ok_or("asset is required")? as u32;
             let amount = fixed_of(str_of(input, "amount")?)?;
-            let intent = Intent::Transfer { from: account(&app.key), to, asset, amount };
+            let intent = Intent::Transfer { from: account(&app.key()), to, asset, amount };
             if input.get("force").and_then(Value::as_bool).unwrap_or(false) {
                 let txid = force_via_zcash(app, &intent)?;
                 app.note(format!("FORCED on Zcash: transfer of {} of asset {} to {}… rides tx {} — the node must apply it within {} blocks", amount, asset, hex(&to[..4]), &txid[..12], 20));
                 return Ok(json!({ "forced": true, "txid": txid }));
             }
-            let acc = app.node.submit(&app.key, intent)?;
+            let acc = app.node.submit(&app.key(), intent)?;
             app.note(format!("sent {} of asset {} on Zyn to {}… (seq {})", amount, asset, hex(&to[..4]), acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
@@ -1218,7 +1362,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let to = unhex32(str_of(input, "to")?.trim())?;
             let asset = input.get("asset").and_then(Value::as_u64).ok_or("asset is required")? as u32;
             let amount = fixed_of(str_of(input, "amount")?)?;
-            let intent = Intent::Transfer { from: account(&app.key), to, asset, amount };
+            let intent = Intent::Transfer { from: account(&app.key()), to, asset, amount };
             let txid = force_via_zcash(app, &intent)?;
             Ok(json!({ "forced": true, "txid": txid }))
         }
@@ -1230,14 +1374,31 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("POST", "/api/export") => {
             let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let source = app.zyn_key_source()?;
+            let source_summary = match &source {
+                ZynKeySource::Derived { version, account } => json!({ "source": "bip39-hkdf", "version": version, "account": account }),
+                ZynKeySource::Legacy { .. } => json!({ "source": "legacy-ed25519", "requires_file_export": true }),
+            };
             app.note("wallet recovery material shown for backup".to_string());
             Ok(json!({
                 "key": w.legacy_backup_key().map(|key| hex(&key)),
                 "mnemonic": w.mnemonic(),
-                "backup": w.export_backup(),
+                "backup": if matches!(source, ZynKeySource::Derived { .. }) { Some(w.export_backup_with_zyn(source)) } else { None },
                 "birthday": w.state.birthday,
                 "network": network_name(w.network()),
+                "zyn": source_summary,
+                "zyn_account": hex(&account(&app.key())),
             }))
+        }
+        ("POST", "/api/export-file") => {
+            if input.get("confirm").and_then(Value::as_bool) != Some(true) {
+                return Err("saving a complete secret backup requires confirm: true".into());
+            }
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let backup = w.export_backup_with_zyn(app.zyn_key_source()?);
+            let path = crate::restore::export_file(&app.cfg.dir, backup.as_bytes())?;
+            // Only the path crosses the page boundary, never legacy seed bytes.
+            Ok(json!({ "path": path, "network": network_name(w.network()), "complete": true }))
         }
         ("GET", "/api/settings") => Ok(app.settings.lock().map_err(|_| "busy")?.json()),
         ("POST", "/api/settings") => {
@@ -1261,7 +1422,18 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if want != w.network() || input.get("lightd_testnet").is_some() || input.get("lightd_mainnet").is_some() {
                 // Reopen against the (possibly new) server: a wrong or
                 // unready server is refused here, and the network stays.
-                let fresh = App::open_wallet(&app.cfg, &s, want, want == before.network && app.cfg.wallet_path.is_some())?;
+                let target_path = app.cfg.dir.join(format!("wallet-{}", network_name(want)));
+                let fresh = if app.cfg.wallet_path.is_none() && !target_path.exists() && w.mnemonic().is_some() {
+                    w.create_network_sibling(&target_path.to_string_lossy(), Client::new(s.lightd(want)?))?
+                } else {
+                    App::open_wallet(&app.cfg, &s, want, want == before.network && app.cfg.wallet_path.is_some())?
+                };
+                if let ZynKeySource::Derived { .. } = app.zyn_key_source()? {
+                    let candidate = fresh.zyn_signing_key(&app.zyn_key_source()?)?;
+                    if candidate.verifying_key() != app.key().verifying_key() {
+                        return Err("the other network wallet has a different recovery phrase; restore the active Nap phrase there before switching so the Zyn account cannot change".into());
+                    }
+                }
                 *w = fresh;
             }
             s.network = want;
@@ -1339,7 +1511,7 @@ fn send(app: &App, to: &str, zat: u64, memo: Option<&str>, kind: &str) -> Result
 /// apply it; a replica holds it to that.
 fn force_via_zcash(app: &App, intent: &Intent) -> Result<String, String> {
     let epoch = app.node.status().map(|s| s.epoch).unwrap_or(0);
-    let frame = crate::client::frame_submission(&app.key, app.node.chain, epoch, intent);
+    let frame = crate::client::frame_submission(&app.key(), app.node.chain, epoch, intent);
     let memo = zyn_custody::memo::encode_forced(&frame)
         .ok_or_else(|| format!("this intent is {} bytes signed; a memo carries at most {}", frame.len(), zyn_custody::memo::FORCED_MAX))?;
     let mut w = app.wallet.lock().map_err(|_| "wallet busy")?;
@@ -1486,7 +1658,7 @@ impl App {
         if !crate::exitproof::should_refresh(kept.as_ref().map(|p| p.epoch), anchored_epoch, has_anchor) {
             return kept;
         }
-        match self.node.account_proof(&self.key) {
+        match self.node.account_proof(&self.key()) {
             Ok(Some(p)) => {
                 let proof = crate::exitproof::ExitProof { chain_id: self.node.chain, epoch: p.epoch, root: p.root, record: p.record, index: p.index, path: p.path, fetched_at: App::now() };
                 if proof.verify() {
@@ -1504,7 +1676,7 @@ impl App {
 }
 
 fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, String> {
-    let id = account(&app.key);
+    let id = account(&app.key());
     let status = app.node.status();
     let exit = match &status {
         Ok(s) => app.refresh_exit_proof(network, s.anchored_epoch, s.anchored_epoch > 0 || s.role == 1),
@@ -1520,10 +1692,10 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
     });
     let assets = app.node.assets().unwrap_or_default();
     let pools = app.node.pools().unwrap_or_default();
-    let record = app.node.account(&app.key);
-    let orders = app.node.orders(&app.key).unwrap_or_default();
+    let record = app.node.account(&app.key());
+    let orders = app.node.orders(&app.key()).unwrap_or_default();
     let launch = app.node.launch().ok().flatten();
-    let me = app.node.launch_me(&app.key).unwrap_or_default();
+    let me = app.node.launch_me(&app.key()).unwrap_or_default();
     let symbol = |a: u32| assets.iter().find(|x| x.id == a).map(|x| x.symbol.clone()).unwrap_or_else(|| format!("asset {}", a));
     let binding = app.binding.lock().map_err(|_| "busy")?.clone();
     let bound_here = match (&binding, &record) {

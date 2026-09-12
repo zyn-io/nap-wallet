@@ -967,4 +967,18 @@ mod forced_frame_tests {
             .expect("the scanner must recover the signer, or it makes no sighting");
         assert_eq!(signer, account(&k), "the frame named the wrong account");
     }
+
+    #[test]
+    fn browser_protocol_fixture_matches_rust_byte_for_byte() {
+        let seed = crate::client::unhex32("57d47cefdba062bb9669a7a64e9072e49d2b5bc66892952429240e4c91b16183").unwrap();
+        let k = SigningKey::from_bytes(&seed);
+        let id = account(&k);
+        let signature = k.sign(&read_challenge(11, &id, 42)).to_bytes();
+        let mut read = Encoder::new();
+        read.bytes(&id).u64(42).u8(Scheme::Ed25519.tag()).bytes(k.verifying_key().as_bytes()).bytes(&signature);
+        assert_eq!(hex(read.finish()), "b85db260ec3a7c0a22c19c1f3380bfc75599c0ea4eeeeda69177ab12f9da56ea000000000000002a01308ab8b209813f5912287682b50950d62782abc61507f0a80abafd0f7a33a7a612d919d7b6805ae80ff169cbbf7be20b8548456aaf38d6c60a892dc25be1c0fa28d8e5af2a0bb8411aec809507942a8e1b58219c97f151141b172e16b18d210e");
+
+        let intent = Intent::Transfer { from: id, to: [0x11; 32], asset: 7, amount: Fixed::ONE };
+        assert_eq!(hex(&frame_submission(&k, 11, 42, &intent)), "7eb9445f363ad075fb2c76833138f0fe4f69b4a4d136e424c08d84f0ed795bcf000000000000008e01308ab8b209813f5912287682b50950d62782abc61507f0a80abafd0f7a33a7a6f19baeaf36700150c81b46dd04ba1f054cd41cacd0318ebb874021be01b07b41c3435cf32fe6a7eee43e8acb4b4af152d7b8acb83e5f32aff6d154d4ad676f0d02b85db260ec3a7c0a22c19c1f3380bfc75599c0ea4eeeeda69177ab12f9da56ea11111111111111111111111111111111111111111111111111111111111111110000000700000000000000000de0b6b3a7640000");
+    }
 }

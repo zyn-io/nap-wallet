@@ -401,9 +401,15 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
   </section>
   <section>
     <h2>Backup</h2>
-    <div class="hint">The recovery phrase or backup file controls the wallet. Keep one offline. The backup includes the network, birthday and derivation account needed for a complete restore.</div>
-    <div class="row"><button class="btn danger" id="export">Show recovery backup</button><button class="btn" id="download-backup">Download backup</button></div>
+    <div class="hint">The recovery phrase or version-2 backup controls the wallet. Keep one offline. The backup includes Zcash recovery plus the Zyn derivation descriptor—or the independent legacy Zyn seed when one still exists.</div>
+    <div class="row"><button class="btn danger" id="export">Show recovery phrase</button><button class="btn" id="download-backup">Save complete backup</button></div>
     <div class="key" id="key" hidden></div>
+  </section>
+  <section>
+    <h2>Zyn recovery</h2>
+    <div class="hint" id="zyn-key-status">Checking whether this account is phrase-derived…</div>
+    <div class="key" id="zyn-key-review" hidden></div>
+    <div class="row"><button class="btn" id="migrate-zyn" hidden>Review migration to phrase</button></div>
   </section>
   <section>
     <h2>Restore</h2>
@@ -633,6 +639,154 @@ function identicon(hex, cells) {
 let selectedItem = null;
 let itemSendOpen = false;
 
+// ---------------------------------------------------------------------------
+// Media: bytes are checked, never trusted.
+//
+// An item commits `content = H(manifest)`, and the manifest names each file by
+// its SHA-256 and nothing else. So a file may arrive from anywhere — a gateway,
+// a peer at an event, a USB stick — and be checked against what was committed
+// before it is shown. A wrong or hostile source is detected, not trusted.
+//
+// Fetching is OFF until a gateway is configured. Asking a server for the art of
+// the item you own tells that server your IP, which item you hold, and when —
+// the same disclosure that made us bundle the fonts (C18). Anything already in
+// the local store renders with no network at all, which is why handing someone
+// the file along with the item is the private path: it arrives once, by hand,
+// and is never requested again.
+const MEDIA_DB = 'nap-media';
+let mediaSources = [];
+try { mediaSources = JSON.parse(localStorage.getItem('nap_media_sources') || '[]'); } catch (_) { mediaSources = []; }
+
+function mediaStore(mode) {
+  return new Promise((ok, no) => {
+    const r = indexedDB.open(MEDIA_DB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('blobs');
+    r.onerror = () => no(r.error);
+    r.onsuccess = () => ok(r.result.transaction('blobs', mode).objectStore('blobs'));
+  });
+}
+
+function cacheGet(hash) {
+  return mediaStore('readonly').then((st) => new Promise((ok) => {
+    const q = st.get(hash);
+    q.onsuccess = () => ok(q.result || null);
+    q.onerror = () => ok(null);
+  })).catch(() => null);
+}
+
+function cachePut(hash, buf) {
+  return mediaStore('readwrite').then((st) => { st.put(buf, hash); }).catch(() => {});
+}
+
+async function sha256Hex(buf) {
+  const d = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Accept bytes for `hash` from any source. Returns true only if they are what
+// was committed. This is the one door media comes through.
+async function acceptMedia(hash, buf) {
+  const plain = await sha256Hex(buf);
+  const leaf = await contentHashHex(buf);
+  if (plain !== hash && leaf !== hash) return false;
+  await cachePut(hash, buf);
+  return true;
+}
+
+// Local first, then each configured gateway in turn, verifying every time.
+// `digest` says how the name is computed from the bytes: plain SHA-256 for
+// media, leaf-prefixed for a manifest.
+async function loadMediaRaw(hash, digest) {
+  const hit = await cacheGet(hash);
+  if (hit) return hit;
+  for (const base of mediaSources) {
+    try {
+      const res = await fetch(base.replace(/\/$/, '') + '/' + hash);
+      if (!res.ok) continue;
+      const buf = await res.arrayBuffer();
+      if (await digest(buf) === hash) { await cachePut(hash, buf); return buf; }
+    } catch (_) { /* try the next one */ }
+  }
+  return null;
+}
+
+function loadMedia(hash) {
+  return loadMediaRaw(hash, sha256Hex);
+}
+
+// A manifest is itself a blob, addressed by the content hash the item
+// committed — so from 32 bytes on chain a wallet can find and check everything
+// else with no registry and nothing to trust. `content` is hash_leaf(preimage),
+// i.e. SHA-256 of 0x00 followed by the bytes, which is what separates a leaf
+// from an internal node.
+const MANIFEST_DOMAIN = 'zyn.manifest.v1';
+const manifestCache = new Map();
+
+async function contentHashHex(buf) {
+  const pre = new Uint8Array(buf.byteLength + 1);
+  pre[0] = 0x00;
+  pre.set(new Uint8Array(buf), 1);
+  return sha256Hex(pre);
+}
+
+function parseManifest(buf) {
+  const v = new DataView(buf);
+  const dec = new TextDecoder();
+  let o = 0;
+  const take = (n) => { const b = new Uint8Array(buf, o, n); o += n; return b; };
+  const u32 = () => { const x = v.getUint32(o); o += 4; return x; };
+  const u64 = () => { const x = Number(v.getBigUint64(o)); o += 8; return x; };
+  const str = () => dec.decode(take(u32()));
+  const hex = (b) => Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+  if (dec.decode(take(MANIFEST_DOMAIN.length)) !== MANIFEST_DOMAIN) throw new Error('not a manifest');
+  const name = str();
+  const description = str();
+  const media = [];
+  for (let i = 0, n = u32(); i < n; i++) {
+    const role = v.getUint8(o); o += 1;
+    const sha256 = hex(take(32));
+    media.push({ role, sha256, mime: str(), bytes: u64(), width: u32(), height: u32(), duration_ms: u32() });
+  }
+  const attributes = [];
+  for (let i = 0, n = u32(); i < n; i++) attributes.push({ trait_type: str(), value: str() });
+  return { name, description, media, attributes };
+}
+
+// Fetch and check an item's manifest. Rejects one that does not hash to the
+// content the chain committed, so a substituted description is caught.
+async function loadManifest(content) {
+  if (!content) return null;
+  if (manifestCache.has(content)) return manifestCache.get(content);
+  const buf = await loadMediaRaw(content, (b) => contentHashHex(b));
+  if (!buf) return null;
+  let m = null;
+  try { m = parseManifest(buf); } catch (_) { m = null; }
+  manifestCache.set(content, m);
+  return m;
+}
+
+// Render an item's art into `el`, falling back to the identicon when the bytes
+// are not here. The identicon is derived from the content hash, so it is always
+// honest about which item it stands for even when the art is absent.
+async function paintArt(el, item) {
+  if (!el) return;
+  const man = await loadManifest(item.content);
+  if (!man) return;
+  const media = man.media.find((m) => m.role === 0);
+  if (!media) return;
+  const buf = await loadMedia(media.sha256);
+  if (!buf) return;
+  if (buf.byteLength !== media.bytes) return;
+  const url = URL.createObjectURL(new Blob([buf], { type: media.mime || 'application/octet-stream' }));
+  if ((media.mime || '').startsWith('video/')) {
+    el.innerHTML = `<video src="${url}" autoplay loop muted playsinline></video>`;
+  } else {
+    el.innerHTML = `<img src="${url}" alt="${esc(man.name || '')}">`;
+  }
+  el.dataset.verified = '1';
+}
+
 function renderItems(z) {
   const items = z.items || [];
   $('it-account-qr').innerHTML = z.account_qr_svg || '';
@@ -646,11 +800,13 @@ function renderItems(z) {
   for (const it of items) {
     const d = document.createElement('div');
     d.className = 'nft' + (selectedItem === it.asset ? ' sel' : '');
-    d.innerHTML = `<div class="art">${identicon(it.content || '')}</div>` +
+    d.innerHTML = `<div class="art" data-art="${esc(it.asset)}">${identicon(it.content || '')}</div>` +
       `<div class="sym">${esc(it.symbol)}</div>` +
       `<div class="back">${it.redeem_price ? 'backed ' + esc(it.redeem_price) + ' ZEC' : 'no floor yet'}</div>`;
     d.onclick = () => { selectedItem = it.asset; itemSendOpen = false; renderItems(z); };
     grid.appendChild(d);
+    // Verified art replaces the identicon only once the bytes check out.
+    paintArt(d.querySelector('.art'), it);
   }
   $('it-count').textContent = items.length ? String(items.length) : '';
   $('it-empty').hidden = items.length > 0;
@@ -663,6 +819,7 @@ function renderItems(z) {
   const coll = (z.collections || []).find((c) => c.id === it.collection);
   $('it-sym').textContent = it.symbol;
   $('it-art').innerHTML = identicon(it.content || '', 7);
+  paintArt($('it-art'), it);
   $('it-back').textContent = it.redeem_price ? `${it.redeem_price} ZEC` : 'not redeemable yet';
   $('it-coll').textContent = coll ? `${coll.symbol} (#${coll.id})` : '—';
   $('it-phase').textContent = coll ? coll.phase_name : '—';
@@ -755,6 +912,7 @@ function showTab(name) {
   for (const b of document.querySelectorAll('nav button')) b.classList.toggle('on', b.dataset.tab === name);
   for (const m of document.querySelectorAll('main')) m.hidden = m.dataset.tab !== name;
   try { localStorage.setItem('tab', name); } catch {}
+  if (name === 'settings') loadZynKey().catch((e) => { $('zyn-key-status').textContent = e.message; });
 }
 
 function render(s) {
@@ -974,13 +1132,45 @@ document.addEventListener('click', async (ev) => {
 });
 $('export').onclick = () => run($('export'), '…', async () => {
   const r = await api('/api/export', {}); $('key').hidden = false;
-  $('key').textContent = r.mnemonic ? `Recovery phrase:\n${r.mnemonic}\n\nPortable backup:\n${r.backup}` : `Legacy wallet (no phrase exists for this key)\n\nPortable backup:\n${r.backup}`;
+  $('key').textContent = r.mnemonic ? `Recovery phrase:\n${r.mnemonic}\n\n${r.backup ? 'Portable backup:\n' + r.backup : 'Your independent Zyn key is NOT recovered by these words. Use Save complete backup; that secret is written directly to a private file.'}` : 'Legacy wallet: no phrase exists for this key. Use Save complete backup to save both identities directly to a private file.';
 });
 $('download-backup').onclick = () => run($('download-backup'), 'Preparing…', async () => {
-  const r = await api('/api/export', {});
-  const blob = new Blob([r.backup + '\n'], { type: 'application/json' });
-  const url = URL.createObjectURL(blob), a = document.createElement('a');
-  a.href = url; a.download = `nap-wallet-${r.network}-backup.json`; a.click(); URL.revokeObjectURL(url);
+  if (!await confirmDialog('Save complete recovery backup', [['Contains', 'Both Zcash and Zyn recovery secrets'], ['Location', 'A private file on the device running Nap'], ['Next step', 'Move a copy to secure offline storage; never upload it to a bug report']])) return;
+  const r = await api('/api/export-file', { confirm: true });
+  $('key').hidden = false;
+  $('key').textContent = `Complete backup saved on the device running Nap:\n${r.path}\n\nKeep this file secret. Copy it to secure offline storage. The page never received the independent Zyn seed.`;
+});
+async function loadZynKey() {
+  const r = await api('/api/zyn-key');
+  const legacy = r.source === 'legacy-ed25519';
+  $('zyn-key-status').textContent = legacy
+    ? 'This existing wallet still uses an independent Zyn key. Its seed is included in the portable backup; the recovery phrase alone does not restore this account.'
+    : 'This Zyn account is derived from the same recovery phrase as Nap. Browser and desktop restore the same account.';
+  $('migrate-zyn').hidden = !r.migration_available;
+  const lines = [
+    `Current account: ${r.account}`,
+    r.derived_account ? `Phrase-derived account: ${r.derived_account}` : 'Phrase-derived account: unavailable for a legacy Zcash key',
+    `Transferable holdings: ${r.transferable.length}`,
+    `Pending exit/release records: ${r.exiting + r.unreleased}`,
+    `Creator authorities that cannot move: ${r.non_transferable_creator_authorities.length}`,
+    r.migration_blocked_reason || '',
+  ];
+  $('zyn-key-review').textContent = lines.join('\n');
+  $('zyn-key-review').hidden = !legacy;
+}
+$('migrate-zyn').onclick = () => run($('migrate-zyn'), 'Migrating…', async () => {
+  const r = await api('/api/zyn-key');
+  const ok = await confirmDialog('Move to phrase-derived Zyn account', [
+    ['From', r.account], ['To', r.derived_account],
+    ['Movable holdings', String(r.transferable.length)],
+    ['Creator authorities', `${r.non_transferable_creator_authorities.length} stay on the old key`],
+    ['Legacy key', 'Preserved as zyn.key.legacy; keep it backed up'],
+    ['Agent sessions', 'Cleared and must be recreated'],
+  ]);
+  if (!ok) return;
+  const moved = await api('/api/zyn-key/migrate', { confirm: true });
+  logLine(`migrated Zyn account to ${moved.to.slice(0, 12)}…; moved ${moved.moved.length} holdings`);
+  await loadZynKey();
 });
 $('reset').onclick = () => run($('reset'), 'Resetting…', async () => { await api('/api/reset', { birthday: +$('reset-height').value }); logLine('rescanning from ' + $('reset-height').value); });
 // The amount is whatever is in the box when you copy, so the link a person

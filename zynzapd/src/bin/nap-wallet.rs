@@ -55,7 +55,7 @@ fn main() {
     let app = Arc::new(App::open(&cfg).unwrap_or_else(|e| { eprintln!("nap-wallet: {}", e); std::process::exit(1) }));
     {
         let w = app.wallet.lock().unwrap();
-        eprintln!("nap-wallet: {} wallet {}  account {}  node {} chain {}", network_name(w.network()), w.address(), hex(&account(&app.key)), cfg.node, cfg.chain);
+        eprintln!("nap-wallet: {} wallet {}  account {}  node {} chain {}", network_name(w.network()), w.address(), hex(&account(&app.key())), cfg.node, cfg.chain);
     }
     let agent_listener = TcpListener::bind(&agent_listen).expect("bind agent API");
     let agent_app = Arc::clone(&app);
@@ -223,6 +223,7 @@ mod agent_boundary_tests {
     fn the_agent_listener_has_no_wallet_or_mandate_creation_escape_hatch() {
         for (method, path) in [
             ("POST", "/api/export"),
+            ("POST", "/api/export-file"),
             ("POST", "/api/import"),
             ("POST", "/api/send"),
             ("POST", "/api/withdraw"),

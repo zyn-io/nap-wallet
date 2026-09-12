@@ -13,6 +13,7 @@ pub mod settle;
 pub mod wallet;
 pub mod client;
 pub mod app;
+mod restore;
 pub mod exitproof;
 pub mod feeds;
 pub mod publish;

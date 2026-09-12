@@ -24,7 +24,25 @@ Orchard spending key. They keep their original behavior and cannot be converted
 into an equivalent mnemonic. Their transparent receiver continues to derive
 from those bytes so existing transparent funds stay recoverable.
 
-## Portable backup version 1
+## Current backup and Zyn recovery
+
+Current exports use version 2 when the Zyn descriptor is included. See
+[the versioned Zyn derivation](NAP-ZYN-KEY-DERIVATION.md) for the exact HKDF
+contract and shared Rust/browser/independent OpenSSL vectors. Existing random
+Zyn keys remain independent: the phrase alone does not restore them. Export
+the complete backup and keep it secret. Automatic legacy migration is disabled
+pending verified settlement and resumable recovery.
+
+Use **Save complete backup** to write both identities directly to a restricted
+file on the device running Nap. The UI shows that path, not the legacy Zyn
+seed. Move a copy into secure offline storage. An extension saves on its paired
+daemon device, not necessarily the device displaying the extension.
+
+Restore retains a protected `restore-backup-*` directory and journals the
+replacement of both identities. Do not delete a pending journal; restart Nap
+to roll back an interrupted installation. See [release runbook](NAP-RELEASE.md).
+
+## Historical portable backup version 1
 
 Mnemonic-backed wallet:
 
