@@ -1678,6 +1678,9 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
         "node": app.node.addr,
         "chain": app.node.chain,
         "account": hex(&id),
+        // Zyn transfers address the account directly. Encode the same raw id
+        // the send form accepts, so scanning needs no wallet-specific parser.
+        "account_qr_svg": qr_svg(&hex(&id)),
         "memo": zyn_custody::memo::encode_text(&id),
         "vault": app.vault,
         // This account's own deposit address. Where present, deposits need no

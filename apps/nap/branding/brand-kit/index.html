@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Nap Wallet brand identity and usage guide">
+  <title>Nap Wallet — Brand Kit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    @import url("assets/brand-tokens.css");
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--nap-charcoal);
+      background: var(--nap-ivory);
+      font: 16px/1.6 var(--nap-sans);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: .24;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.08'/%3E%3C/svg%3E");
+    }
+    a { color: inherit; }
+    img { display: block; max-width: 100%; }
+    button { font: inherit; }
+    .shell { width: min(1320px, calc(100% - 48px)); margin-inline: auto; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: color-mix(in srgb, var(--nap-ivory) 88%, transparent);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid color-mix(in srgb, var(--nap-charcoal) 16%, transparent);
+    }
+    .topbar .shell { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .mini-brand { display: flex; align-items: center; gap: 12px; font: 700 19px/1 var(--nap-display); }
+    .mini-brand img { width: 45px; height: 34px; object-fit: contain; object-position: left center; }
+    .mini-brand em { color: var(--nap-gold-deep); font-style: normal; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    nav a { padding: 8px 12px; border-radius: 999px; color: #555b5d; text-decoration: none; font-size: 13px; font-weight: 600; }
+    nav a:hover { background: #fff; color: var(--nap-charcoal); }
+
+    .hero {
+      min-height: 770px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.42fr) minmax(300px, .58fr);
+      gap: clamp(40px, 8vw, 120px);
+      align-items: center;
+      padding-block: clamp(80px, 11vw, 150px);
+      overflow: hidden;
+    }
+    .eyebrow { margin: 0 0 18px; text-transform: uppercase; letter-spacing: .15em; font-size: 12px; font-weight: 600; color: var(--nap-gold-deep); }
+    h1, h2, h3 { font-family: var(--nap-display); letter-spacing: -.045em; }
+    h1 { margin: 0; font-size: clamp(68px, 10vw, 144px); line-height: .82; max-width: 890px; font-weight: 750; }
+    h1 span { display: block; color: var(--nap-gold-deep); }
+    .lede { max-width: 620px; margin: 34px 0 0; font-size: clamp(18px, 2vw, 24px); line-height: 1.5; color: #555b5d; }
+    .hero-card {
+      position: relative;
+      border-radius: 240px 240px 36px 36px;
+      background: var(--nap-charcoal);
+      color: var(--nap-ivory);
+      min-height: 510px;
+      padding: 64px 38px 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      isolation: isolate;
+    }
+    .hero-card::before {
+      content: "";
+      position: absolute;
+      inset: 14px;
+      z-index: -1;
+      border: 1px solid rgba(247,244,234,.2);
+      border-radius: inherit;
+    }
+    .hero-card img { width: 104%; margin-left: -2%; margin-bottom: 40px; filter: drop-shadow(0 16px 0 rgba(0,0,0,.1)); }
+    .hero-card p { margin: 0; font-size: 15px; color: #c9c9c4; }
+    .hero-card strong { color: var(--nap-gold); font: 650 23px/1.2 var(--nap-display); display: block; margin-bottom: 8px; }
+
+    .band { background: var(--nap-gold); color: var(--nap-charcoal); overflow: hidden; margin: -20px 0 100px; }
+    .band-track { display: flex; gap: 44px; width: max-content; padding: 15px 0; font: 700 17px/1 var(--nap-display); text-transform: uppercase; letter-spacing: .08em; animation: drift 28s linear infinite; }
+    .band-track span::after { content: "✦"; margin-left: 44px; }
+    @keyframes drift { to { transform: translateX(-50%); } }
+
+    section { padding-block: 92px; border-top: 1px solid color-mix(in srgb, var(--nap-charcoal) 16%, transparent); }
+    .section-head { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 40px; margin-bottom: 54px; }
+    .number { font: 500 13px/1 var(--nap-mono); color: var(--nap-gold-deep); }
+    h2 { margin: 0; font-size: clamp(42px, 6vw, 82px); line-height: .95; font-weight: 700; }
+    .section-copy { max-width: 680px; margin: 22px 0 0; font-size: 19px; color: #5f6466; }
+
+    .logo-stage { background: #fff; border-radius: 34px; padding: clamp(30px, 7vw, 100px); min-height: 460px; display: grid; place-items: center; border: 1px solid var(--nap-line); }
+    .logo-stage img { width: min(100%, 1050px); }
+    .download-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+    .download {
+      border: 1px solid var(--nap-charcoal);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: transform 140ms ease, background 140ms ease;
+    }
+    .download:hover { transform: translateY(-2px); background: #fff; }
+
+    .icon-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .icon-panel { border-radius: 40px; padding: clamp(24px, 4vw, 64px); display: grid; place-items: center; min-height: 520px; }
+    .icon-panel.light { background: #fff; border: 1px solid var(--nap-line); }
+    .icon-panel.dark { background: #17191b; color: var(--nap-ivory); }
+    .icon-panel img { width: min(100%, 390px); }
+    .icon-note { margin-top: 20px; display: flex; justify-content: space-between; gap: 16px; font: 500 12px/1.4 var(--nap-mono); text-transform: uppercase; letter-spacing: .08em; }
+    .dark .icon-note { color: #c8c9c5; }
+
+    .swatches { display: grid; grid-template-columns: repeat(12, 1fr); min-height: 540px; border-radius: 34px; overflow: hidden; border: 1px solid rgba(32,35,38,.15); }
+    .swatch { grid-column: span 4; min-height: 260px; padding: 28px; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; border: 0; text-align: left; color: inherit; position: relative; }
+    .swatch:nth-child(n+4) { grid-column: span 3; min-height: 220px; }
+    .swatch strong { font: 650 25px/1 var(--nap-display); }
+    .swatch code { font: 500 13px/1 var(--nap-mono); }
+    .swatch small { opacity: .7; }
+    .swatch .copied { opacity: 0; transform: translateY(4px); transition: .15s; font: 500 11px/1 var(--nap-mono); text-transform: uppercase; }
+    .swatch.was-copied .copied { opacity: 1; transform: none; }
+    .charcoal { background: var(--nap-charcoal); color: var(--nap-ivory); }
+    .gold { background: var(--nap-gold); }
+    .ivory { background: var(--nap-ivory); }
+    .taupe { background: var(--nap-taupe); }
+    .teal { background: var(--nap-teal); color: #fff; }
+    .mist { background: var(--nap-teal-soft); }
+    .deep { background: var(--nap-gold-deep); color: #fff; }
+
+    .type-grid { display: grid; grid-template-columns: 1.3fr .7fr; gap: 20px; }
+    .type-card { border-radius: 30px; border: 1px solid var(--nap-line); background: #fff; padding: clamp(28px, 5vw, 62px); min-height: 390px; overflow: hidden; }
+    .type-card.dark { background: var(--nap-charcoal); color: var(--nap-ivory); border-color: transparent; }
+    .type-label { font: 500 12px/1 var(--nap-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--nap-gold-deep); }
+    .type-card.dark .type-label { color: var(--nap-gold); }
+    .display-sample { margin: 72px 0 30px; font: 700 clamp(52px, 7vw, 106px)/.9 var(--nap-display); letter-spacing: -.06em; }
+    .body-sample { margin: 58px 0 28px; font-size: 21px; max-width: 610px; }
+    .mono-sample { margin-top: 60px; font: 400 18px/1.8 var(--nap-mono); color: #c7c9c7; overflow-wrap: anywhere; }
+    .alphabet { color: #777d7e; letter-spacing: .08em; }
+
+    .voice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .voice-card { min-height: 300px; border-radius: 28px; padding: 30px; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid var(--nap-line); background: #fff; }
+    .voice-card:nth-child(2) { background: var(--nap-teal-soft); }
+    .voice-card:nth-child(3) { background: var(--nap-charcoal); color: var(--nap-ivory); }
+    .voice-card b { font: 650 32px/1.05 var(--nap-display); letter-spacing: -.04em; }
+    .voice-card p { margin: 0; color: #676c6e; }
+    .voice-card:nth-child(3) p { color: #bcc0c0; }
+    .voice-example { margin-top: 44px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .say { padding: 30px; border-radius: 24px; background: #fff; border: 1px solid var(--nap-line); }
+    .say.good { border-top: 7px solid var(--nap-teal); }
+    .say.bad { border-top: 7px solid #b8b8b2; color: #707475; }
+    .say small { text-transform: uppercase; letter-spacing: .12em; font: 500 11px/1 var(--nap-mono); }
+    .say q { display: block; margin-top: 22px; quotes: none; font: 600 clamp(24px, 3vw, 38px)/1.18 var(--nap-display); letter-spacing: -.03em; }
+
+    .ui-demo { background: #ecece7; border: 1px solid var(--nap-line); border-radius: 34px; padding: clamp(22px, 4vw, 48px); }
+    .wallet-card { width: min(100%, 760px); margin: auto; border-radius: 20px; background: #fff; border: 1px solid #d7d8d2; box-shadow: inset 0 3px 0 var(--nap-teal); padding: 32px; }
+    .wallet-card header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    .wallet-card header span { color: var(--nap-teal); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 600; }
+    .status { border-radius: 999px; padding: 5px 10px; background: var(--nap-teal-soft); color: var(--nap-teal); font-size: 11px; }
+    .balance { margin: 42px 0 5px; font: 700 clamp(54px, 9vw, 92px)/1 var(--nap-display); letter-spacing: -.06em; color: var(--nap-gold-deep); }
+    .wallet-card .meta { color: var(--nap-text-muted); font-size: 14px; }
+    .actions { margin-top: 34px; display: flex; gap: 10px; }
+    .action { border: 0; border-radius: 10px; padding: 12px 18px; background: var(--nap-teal); color: #fff; font-weight: 600; }
+    .action.secondary { background: #eeeee9; color: var(--nap-charcoal); }
+
+    .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .rule { background: #fff; border: 1px solid var(--nap-line); border-radius: 28px; overflow: hidden; }
+    .rule-art { min-height: 280px; display: grid; place-items: center; padding: 35px; background: #eeeee8; }
+    .rule-art.dark { background: var(--nap-charcoal); }
+    .rule-art img { max-height: 230px; }
+    .rule-copy { padding: 25px 28px; }
+    .rule-copy b { font: 650 24px/1 var(--nap-display); }
+    .rule-copy p { color: #686d6f; margin: 10px 0 0; }
+
+    footer { margin-top: 90px; background: var(--nap-charcoal); color: var(--nap-ivory); padding: 90px 0 46px; }
+    .footer-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 60px; align-items: end; }
+    footer h2 { color: var(--nap-gold); max-width: 760px; }
+    footer p { color: #b8bcb9; max-width: 480px; }
+    .footer-meta { margin-top: 80px; padding-top: 24px; border-top: 1px solid #3b3f40; display: flex; justify-content: space-between; gap: 30px; font: 400 12px/1.5 var(--nap-mono); color: #9a9e9c; }
+
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      .hero-card { min-height: 430px; max-width: 520px; }
+      .section-head { grid-template-columns: 1fr; gap: 14px; }
+      .type-grid, .voice-grid, .footer-grid { grid-template-columns: 1fr; }
+      .swatch, .swatch:nth-child(n+4) { grid-column: span 6; }
+    }
+    @media (max-width: 640px) {
+      .shell { width: min(100% - 28px, 1320px); }
+      nav { display: none; }
+      .hero { min-height: auto; padding-block: 80px; }
+      h1 { font-size: clamp(58px, 20vw, 90px); }
+      section { padding-block: 68px; }
+      .icon-pair, .voice-example, .rules { grid-template-columns: 1fr; }
+      .icon-panel { min-height: 380px; }
+      .swatch, .swatch:nth-child(n+4) { grid-column: 1 / -1; min-height: 180px; }
+      .footer-meta { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .band-track { animation: none; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <div class="mini-brand"><img src="assets/mark-color.svg" alt=""><span>Nap <em>Wallet</em></span></div>
+      <nav aria-label="Brand guide">
+        <a href="#identity">Identity</a><a href="#color">Color</a><a href="#type">Type</a><a href="#voice">Voice</a><a href="#product">Product</a><a href="#assets">Assets</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="shell hero">
+      <div>
+        <p class="eyebrow">Brand system · Version 1.0</p>
+        <h1>Your money, <span>quietly yours.</span></h1>
+        <p class="lede">A warm, precise identity for private money—built around a mole that feels most at home out of sight.</p>
+      </div>
+      <aside class="hero-card">
+        <img src="assets/app-icon-dark.svg" alt="Nap Wallet dark application icon">
+        <p><strong>Quietly capable.</strong>Approachable enough to welcome you. Serious enough to hold value.</p>
+      </aside>
+    </div>
+
+    <div class="band" aria-hidden="true"><div class="band-track">
+      <span>Private by design</span><span>Calm by default</span><span>Built on Zcash + Zyn</span><span>Only this key can see it</span>
+      <span>Private by design</span><span>Calm by default</span><span>Built on Zcash + Zyn</span><span>Only this key can see it</span>
+    </div></div>
+
+    <section id="identity">
+      <div class="shell">
+        <div class="section-head"><span class="number">01 / IDENTITY</span><div><h2>A guardian<br>below ground.</h2><p class="section-copy">The mole is private by nature, not by posture. Its two closed eyes communicate confidence. The broad claws make the species unmistakable; the wallet keeps the product immediate.</p></div></div>
+        <div class="logo-stage"><img src="assets/logo-horizontal.svg" alt="Nap Wallet horizontal logo"></div>
+        <div class="download-row"><a class="download" href="assets/logo-horizontal.svg" download>Download lockup SVG ↓</a><a class="download" href="assets/mark-color.svg" download>Download mark SVG ↓</a></div>
+      </div>
+    </section>
+
+    <section id="icons">
+      <div class="shell">
+        <div class="section-head"><span class="number">02 / ICONS</span><div><h2>Visible in<br>either world.</h2><p class="section-copy">On dark surfaces, a single warm-ivory keyline separates the mole from its burrow. It follows the outer silhouette only; the wallet and facial details stay clean.</p></div></div>
+        <div class="icon-pair">
+          <div class="icon-panel light"><div><img src="assets/app-icon-light.svg" alt="Light app icon"><div class="icon-note"><span>Light field</span><span>No keyline</span></div></div></div>
+          <div class="icon-panel dark"><div><img src="assets/app-icon-dark.svg" alt="Dark app icon"><div class="icon-note"><span>Dark field</span><span>Ivory keyline</span></div></div></div>
+        </div>
+        <div class="download-row"><a class="download" href="assets/app-icon-light.svg" download>Light icon SVG ↓</a><a class="download" href="assets/app-icon-dark.svg" download>Dark icon SVG ↓</a></div>
+      </div>
+    </section>
+
+    <section id="color">
+      <div class="shell">
+        <div class="section-head"><span class="number">03 / COLOR</span><div><h2>Gold holds.<br>Teal moves.</h2><p class="section-copy">Gold represents stored value. Teal represents action and private state. This division keeps the identity warm without sacrificing the wallet's established interaction language.</p></div></div>
+        <div class="swatches" aria-label="Brand colors">
+          <button class="swatch charcoal" data-copy="#202326"><strong>Burrow Charcoal</strong><span><code>#202326</code><br><small>Identity · primary text</small><i class="copied">Copied</i></span></button>
+          <button class="swatch gold" data-copy="#E0A51B"><strong>Restful Gold</strong><span><code>#E0A51B</code><br><small>Value · wallet</small><i class="copied">Copied</i></span></button>
+          <button class="swatch ivory" data-copy="#F7F4EA"><strong>Warm Ivory</strong><span><code>#F7F4EA</code><br><small>Canvas · keyline</small><i class="copied">Copied</i></span></button>
+          <button class="swatch taupe" data-copy="#BFA58E"><strong>Snout Taupe</strong><span><code>#BFA58E</code><br><small>Character only</small><i class="copied">Copied</i></span></button>
+          <button class="swatch teal" data-copy="#0E6F6E"><strong>Privacy Teal</strong><span><code>#0E6F6E</code><br><small>Action · focus</small><i class="copied">Copied</i></span></button>
+          <button class="swatch mist" data-copy="#D6EBE9"><strong>Teal Mist</strong><span><code>#D6EBE9</code><br><small>Private panels</small><i class="copied">Copied</i></span></button>
+          <button class="swatch deep" data-copy="#A87509"><strong>Deep Gold</strong><span><code>#A87509</code><br><small>Small text · clasp</small><i class="copied">Copied</i></span></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="type">
+      <div class="shell">
+        <div class="section-head"><span class="number">04 / TYPE</span><div><h2>Friendly face.<br>Exact figures.</h2><p class="section-copy">Bricolage Grotesque carries brand moments. IBM Plex Sans keeps the product composed. IBM Plex Mono distinguishes addresses, hashes, and records that can be verified.</p></div></div>
+        <div class="type-grid">
+          <div class="type-card"><span class="type-label">Display · Bricolage Grotesque 700</span><div class="display-sample">Rest easy.</div><p class="alphabet">ABCDEFGHIJKLMNOPQRSTUVWXYZ<br>abcdefghijklmnopqrstuvwxyz 0123456789</p></div>
+          <div class="type-card dark"><span class="type-label">Data · IBM Plex Mono 400</span><div class="mono-sample">0.002 ZEC<br>epoch 4493<br>utest14aa2rp…hdpfux<br>private / verified</div></div>
+          <div class="type-card" style="grid-column:1/-1"><span class="type-label">Product · IBM Plex Sans 400–600</span><p class="body-sample">Only this key can see your Zyn balances. Public roots and block heights stay visible so you can verify the record without revealing what you own.</p><p class="alphabet">Regular for guidance · Medium for actions · Semibold for labels</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="voice">
+      <div class="shell">
+        <div class="section-head"><span class="number">05 / VOICE</span><div><h2>Calm is<br>not vague.</h2><p class="section-copy">Nap speaks plainly about outcomes, waits, risks, and recovery. Reassurance comes from honest information—not cute language or absolute promises.</p></div></div>
+        <div class="voice-grid"><article class="voice-card"><b>Quietly<br>capable</b><p>Lead with what happened. Keep machinery one layer deeper.</p></article><article class="voice-card"><b>Warm,<br>not childish</b><p>Use the mole to welcome and guide, never to trivialize risk.</p></article><article class="voice-card"><b>Precise,<br>not clinical</b><p>Name irreversible outcomes before protocol operations.</p></article></div>
+        <div class="voice-example"><div class="say good"><small>Say this</small><q>Preparing your private payment. About a minute.</q></div><div class="say bad"><small>Not this</small><q>Proving the payment via Ironwood v6…</q></div></div>
+      </div>
+    </section>
+
+    <section id="product">
+      <div class="shell">
+        <div class="section-head"><span class="number">06 / PRODUCT</span><div><h2>Identity serves<br>the interface.</h2><p class="section-copy">The wallet remains neutral and information-first. Gold highlights value. Teal identifies the next action. The mole belongs in onboarding, empty states, recovery, and moments of completion.</p></div></div>
+        <div class="ui-demo"><div class="wallet-card"><header><span>Private balance</span><i class="status">● In sync</i></header><div class="balance">12.48 <small style="font-size:.3em;letter-spacing:0;color:#6b7071">ZEC</small></div><div class="meta">Available now · visible only to this key</div><div class="actions"><button class="action">Send privately</button><button class="action secondary">Receive</button></div></div></div>
+      </div>
+    </section>
+
+    <section id="assets">
+      <div class="shell">
+        <div class="section-head"><span class="number">07 / USAGE</span><div><h2>Give the mole<br>room to breathe.</h2><p class="section-copy">Use one clean treatment at a time. The identity should feel protected by its surrounding space, never trapped by decoration.</p></div></div>
+        <div class="rules"><article class="rule"><div class="rule-art"><img src="assets/mark-color.svg" alt="Mole mark on ivory"></div><div class="rule-copy"><b>Do</b><p>Use the standard mark on light, quiet fields with generous clear space.</p></div></article><article class="rule"><div class="rule-art dark"><img src="assets/app-icon-dark.svg" alt="Outlined mole on dark background"></div><div class="rule-copy"><b>Do</b><p>Use the ivory keyline whenever charcoal meets a dark background.</p></div></article></div>
+        <div class="download-row" style="margin-top:30px"><a class="download" href="BRAND-GUIDE.md" download>Written guide ↓</a><a class="download" href="assets/brand-tokens.css" download>CSS tokens ↓</a></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="shell"><div class="footer-grid"><h2>Your money,<br>quietly yours.</h2><div><p>Nap Wallet is a private wallet for Zcash and Zyn. This kit keeps every expression warm, precise, and unmistakably under the surface.</p><img src="assets/mark-color.svg" alt="Nap Wallet" style="width:180px;margin-top:28px"></div></div><div class="footer-meta"><span>NAP WALLET · BRAND SYSTEM 1.0</span><span>SEPTEMBER 2026 · ZYN PROJECT</span></div></div></footer>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach((swatch) => {
+      swatch.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(swatch.dataset.copy);
+        swatch.classList.add('was-copied');
+        setTimeout(() => swatch.classList.remove('was-copied'), 900);
+      });
+    });
+  </script>
+</body>
+</html>

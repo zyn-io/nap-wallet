@@ -31,11 +31,18 @@ defaults point at the current Zyn testnet services.
 - Desktop, local web, and browser-extension interfaces from one wallet core.
 - Swap-only AI mandates enforced by committed Zyn authorization, with a
   restricted `nap-agent` CLI.
+- NFT custody from the Items tab: receive with the exact Zyn account QR,
+  inspect committed item details, and review/send one indivisible item.
 - Locally hosted fonts; opening the wallet does not fetch Google Fonts.
 
 Nap currently scans Orchard, Ironwood, and transparent funds. It does not scan
 Sapling, so importing a phrase from another Zcash wallet may show only the
 supported pools.
+
+The NFT custody flow and its trust boundaries are documented in
+[docs/NFT_CUSTODY.md](docs/NFT_CUSTODY.md). The reusable logo masters, raster
+exports, palette, typography, and usage rules live in
+[apps/nap/branding/brand-kit](apps/nap/branding/brand-kit).
 
 ## Run the local wallet
 

@@ -97,6 +97,15 @@ section h2 small { font-weight: 400; letter-spacing: 0; text-transform: none; co
 .nft .art img, .big-art img { width: 100%; height: 100%; object-fit: cover; }
 .nft .sym { font-weight: 600; margin-top: 8px; }
 .nft .back { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.nft-receive { position: relative; overflow: hidden; }
+.nft-receive::after { content: "Z"; position: absolute; right: -8px; bottom: -35px; color: color-mix(in srgb, var(--brand-gold) 9%, transparent); font: 700 150px/1 var(--display); pointer-events: none; }
+.nft-receive > * { position: relative; z-index: 1; }
+.nft-receive-box { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 18px; align-items: center; }
+.nft-account-qr { display: grid; place-items: center; width: 116px; height: 116px; padding: 8px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.nft-account-qr svg { width: 100px; height: 100px; }
+.nft-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.nft-send-panel { margin-top: 14px; padding: 15px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); border-radius: 13px; background: color-mix(in srgb, var(--private) 68%, var(--surface)); }
+.nft-send-panel label { display: block; margin-bottom: 8px; color: var(--ink-2); font-size: 12.5px; }
 .detail { display: grid; grid-template-columns: minmax(140px, 240px) 1fr; gap: 18px; align-items: start; }
 @media (max-width: 560px) { .detail { grid-template-columns: 1fr; } }
 .big-art { width: 100%; max-width: 240px; }
@@ -190,6 +199,9 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
   nav { padding: 7px 8px; }
   nav button { padding: 8px 12px; font-size: 13px; }
   .big { font-size: 40px; }
+  .nft-receive-box { grid-template-columns: 88px minmax(0, 1fr); gap: 13px; }
+  .nft-account-qr { width: 88px; height: 88px; padding: 6px; }
+  .nft-account-qr svg { width: 76px; height: 76px; }
 }
 </style>
 </head>
@@ -312,11 +324,22 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
 </main>
 
 <main data-tab="items" id="tab-items" hidden>
-  <section class="full lead">
+  <section class="lead">
     <h2>Items <small id="it-count"></small></h2>
     <div class="hint">Held on Zyn, privately: only this key can see them. Trading happens in the store — this is where you keep them.</div>
     <div id="it-grid" class="nft-grid"></div>
     <div class="empty" id="it-empty" hidden></div>
+  </section>
+  <section class="nft-receive">
+    <h2>Receive an NFT <small>Zyn account</small></h2>
+    <div class="nft-receive-box">
+      <div class="nft-account-qr" id="it-account-qr" aria-label="Zyn account QR code"></div>
+      <div>
+        <div class="hint">Give the sender this Zyn account ID. Your holdings stay private, and the NFT appears here after the transfer settles.</div>
+        <div class="addr" style="margin-top:10px"><code id="it-account"></code><button class="btn small" id="copy-it-account">Copy</button></div>
+      </div>
+    </div>
+    <div class="hint">Only accept a whole NFT. Nap rejects fractional transfers of indivisible items.</div>
   </section>
   <section class="full" id="it-detail" hidden>
     <h2 id="it-sym">—</h2>
@@ -331,7 +354,14 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
         <div class="kv"><span>Asset id</span><b id="it-asset" class="record">—</b></div>
         <div class="hint" style="margin-top:10px">Content hash — what the item <em>is</em>, fixed when it was minted. Check your artwork against it.</div>
         <div class="addr"><code id="it-content"></code><button class="btn small" id="copy-content">Copy</button></div>
-        <div class="row" style="margin-top:12px"><button class="btn" id="it-redeem">Redeem</button><span class="hint" id="it-redeem-hint"></span></div>
+        <div class="nft-actions">
+          <div class="row"><button class="btn primary" id="it-send">Send this NFT</button><button class="btn" id="it-redeem">Redeem</button><span class="hint" id="it-redeem-hint"></span></div>
+          <div class="nft-send-panel" id="it-send-panel" hidden>
+            <label for="it-send-to">Recipient Zyn account ID (64 hex characters)</label>
+            <div class="row"><input class="grow mono" id="it-send-to" placeholder="recipient account id" autocomplete="off" spellcheck="false"><button class="btn primary" id="it-send-review">Review transfer</button><button class="btn" id="it-send-cancel">Cancel</button></div>
+            <label class="hint" style="margin-top:10px"><input type="checkbox" id="it-send-force" style="width:auto"> Use the Zcash recovery path if the Zyn node is censoring this transfer.</label>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -601,9 +631,12 @@ function identicon(hex, cells) {
 }
 
 let selectedItem = null;
+let itemSendOpen = false;
 
 function renderItems(z) {
   const items = z.items || [];
+  $('it-account-qr').innerHTML = z.account_qr_svg || '';
+  setAddr('it-account', z.account || '', 16);
   // Settle the selection *before* drawing the grid. Choosing afterwards left
   // the first render showing a detail panel with nothing marked as chosen.
   if (selectedItem != null && !items.some((i) => i.asset === selectedItem)) selectedItem = null;
@@ -616,7 +649,7 @@ function renderItems(z) {
     d.innerHTML = `<div class="art">${identicon(it.content || '')}</div>` +
       `<div class="sym">${esc(it.symbol)}</div>` +
       `<div class="back">${it.redeem_price ? 'backed ' + esc(it.redeem_price) + ' ZEC' : 'no floor yet'}</div>`;
-    d.onclick = () => { selectedItem = it.asset; renderItems(z); };
+    d.onclick = () => { selectedItem = it.asset; itemSendOpen = false; renderItems(z); };
     grid.appendChild(d);
   }
   $('it-count').textContent = items.length ? String(items.length) : '';
@@ -625,7 +658,7 @@ function renderItems(z) {
 
   const it = items.find((i) => i.asset === selectedItem);
   $('it-detail').hidden = !it;
-  if (!it) return;
+  if (!it) { itemSendOpen = false; return; }
 
   const coll = (z.collections || []).find((c) => c.id === it.collection);
   $('it-sym').textContent = it.symbol;
@@ -637,6 +670,40 @@ function renderItems(z) {
   $('it-pool').textContent = coll ? `${coll.pool} ZEC behind ${coll.outstanding}` : '—';
   $('it-asset').textContent = String(it.asset);
   setAddr('it-content', it.content || '');
+
+  const sendPanel = $('it-send-panel');
+  sendPanel.hidden = !itemSendOpen;
+  $('it-send').onclick = () => {
+    itemSendOpen = true;
+    sendPanel.hidden = false;
+    $('it-send-to').focus();
+  };
+  $('it-send-cancel').onclick = () => {
+    itemSendOpen = false;
+    sendPanel.hidden = true;
+    $('it-send-to').value = '';
+    $('it-send-force').checked = false;
+  };
+  $('it-send-review').onclick = () => run($('it-send-review'), 'Sending…', async () => {
+    const to = $('it-send-to').value.trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(to)) throw new Error('recipient must be a 64-character Zyn account ID');
+    const force = $('it-send-force').checked;
+    const ok = await confirmDialog('Send this NFT?', [
+      ['Item', `${it.symbol} · asset ${it.asset}`],
+      ['To account', to],
+      ['Amount', '1 whole NFT'],
+      ['Settlement', force ? 'Zcash recovery path' : 'private on Zyn this epoch'],
+      ['After sending', 'it leaves this wallet'],
+    ]);
+    if (!ok) return;
+    const r = await api('/api/transfer', { to, asset: it.asset, amount: '1', force });
+    logLine(force ? `NFT forced via Zcash in tx ${r.txid.slice(0, 12)}…` : `NFT sent on Zyn at seq ${r.seq}`);
+    selectedItem = null;
+    itemSendOpen = false;
+    $('it-send-to').value = '';
+    $('it-send-force').checked = false;
+    toast('NFT sent');
+  });
 
   // Redeem burns the item for its share of the pool. It needs no counterparty
   // and it cannot be undone, so it asks twice and says what it costs — a
@@ -959,7 +1026,7 @@ $('t-shield').onclick = async () => {
   await run($('t-shield'), 'Moving in…', async () => { await api('/api/shield', {}); });
   await loadTransparent();
 };
-for (const [b, src] of [['copy-addr', 'address'], ['copy-acct', 'account'], ['copy-dep', 'dep-addr'], ['copy-content', 'it-content'], ['copy-taddr', 't-address']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
+for (const [b, src] of [['copy-addr', 'address'], ['copy-acct', 'account'], ['copy-dep', 'dep-addr'], ['copy-content', 'it-content'], ['copy-taddr', 't-address'], ['copy-it-account', 'it-account']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
 
 try { const t = localStorage.getItem('tab'); if (t) showTab(t); } catch {}
 load();

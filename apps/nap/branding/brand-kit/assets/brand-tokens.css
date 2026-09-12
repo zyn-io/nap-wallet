@@ -1,0 +1,47 @@
+:root {
+  /* Core identity */
+  --nap-charcoal: #202326;
+  --nap-black: #101214;
+  --nap-gold: #e0a51b;
+  --nap-gold-deep: #a87509;
+  --nap-ivory: #f7f4ea;
+  --nap-taupe: #bfa58e;
+
+  /* Product semantics: preserve the wallet's established teal */
+  --nap-teal: #0e6f6e;
+  --nap-teal-soft: #d6ebe9;
+  --nap-success: #2f7d3a;
+  --nap-warning: #b5651d;
+  --nap-danger: #b3261e;
+
+  /* Surfaces */
+  --nap-surface: #ffffff;
+  --nap-surface-muted: #efeee7;
+  --nap-line: #d8d5c9;
+  --nap-text-muted: #676c70;
+
+  /* Type */
+  --nap-display: "Bricolage Grotesque", "Arial Rounded MT Bold", sans-serif;
+  --nap-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --nap-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Shape and rhythm */
+  --nap-radius-sm: 8px;
+  --nap-radius-md: 16px;
+  --nap-radius-lg: 28px;
+  --nap-radius-pill: 999px;
+  --nap-space-1: 4px;
+  --nap-space-2: 8px;
+  --nap-space-3: 12px;
+  --nap-space-4: 16px;
+  --nap-space-6: 24px;
+  --nap-space-8: 32px;
+  --nap-space-12: 48px;
+}
+
+[data-theme="dark"] {
+  --nap-surface: #202326;
+  --nap-surface-muted: #292d30;
+  --nap-line: #414649;
+  --nap-text-muted: #afb3b4;
+}
