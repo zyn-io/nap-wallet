@@ -82,12 +82,35 @@ pub fn derive(program: &[u8], namespace: &[u8], seeds: &[&[u8]]) -> Address {
 /// ZynZap v1 is not the address ZynZap v2 derives from the same seeds — a
 /// version bump that changes what a record means should change where it lives.
 pub fn derive_for<V: crate::spec::MicrochainVm>(namespace: &[u8], seeds: &[&[u8]]) -> Address {
-    let mut program = [0u8; 34];
-    let name = V::VM_NAME.as_bytes();
+    derive(&program_scope::<V>(), namespace, seeds)
+}
+
+/// The program scope for a VM: its name followed by its version, big-endian.
+///
+/// Split out and made exact because it was wrong. The version used to be
+/// written at a fixed offset in a 34-byte buffer while only the first
+/// `name.len() + 2` bytes were hashed, so for any name shorter than 32 bytes
+/// the version bytes sat outside the preimage and every version derived the
+/// same addresses — the precise opposite of what §4 promises. A bug that
+/// silently collapses two namespaces into one cannot be caught by a test that
+/// only checks a derivation is deterministic, which is why there is now a test
+/// asserting two versions disagree.
+pub fn program_scope<V: crate::spec::MicrochainVm>() -> alloc::vec::Vec<u8> {
+    program_scope_of(V::VM_NAME, V::VM_VERSION)
+}
+
+/// The program scope from a name and version directly.
+///
+/// Non-generic so the scope can be built by a client that has no VM type to
+/// hand — and so the rule that the version is *in* the preimage can be tested
+/// without standing up a whole VM, which is why the original bug survived.
+pub fn program_scope_of(name: &str, version: u16) -> alloc::vec::Vec<u8> {
+    let name = name.as_bytes();
     let n = core::cmp::min(name.len(), 32);
-    program[..n].copy_from_slice(&name[..n]);
-    program[32..].copy_from_slice(&V::VM_VERSION.to_be_bytes());
-    derive(&program[..n + 2], namespace, seeds)
+    let mut program = alloc::vec::Vec::with_capacity(n + 2);
+    program.extend_from_slice(&name[..n]);
+    program.extend_from_slice(&version.to_be_bytes());
+    program
 }
 
 /// A canonically ordered pair of addresses.
@@ -127,6 +150,56 @@ pub fn vault_address(program: &[u8], owner: &Address) -> Address {
     derive(program, b"vault", &[owner])
 }
 
+/// Derive the address of a chain's **own** token.
+///
+/// The Zyn chain id is a seed because this asset represents value on one
+/// specific chain: without it, mainnet ZYN and testnet ZYN are the same 32
+/// bytes, and an address shown on its own could not tell a holder which one
+/// they have. Bridged assets do not need this — their origin network already
+/// distinguishes them — so the scoping goes exactly where the ambiguity is.
+pub fn native_address(program: &[u8], chain_id: u32, symbol: &[u8]) -> Address {
+    derive(program, b"native", &[&chain_id.to_be_bytes(), symbol])
+}
+
+/// Derive the address of a bridged asset.
+///
+/// `origin_network` names the network the asset actually comes from, not the
+/// chain family: `b"zcash"` and `b"zcash-test"` are different assets because
+/// ZEC and TAZ are different assets, and a testnet bridge that minted something
+/// addressed as mainnet ZEC would be claiming backing it does not have.
+///
+/// `origin_asset` is empty for a network's own coin and carries the origin
+/// contract or mint for a token issued on it, so the address can be recomputed
+/// from public facts about the other chain with nothing to look up here.
+pub fn bridged_address(program: &[u8], origin_network: &[u8], origin_asset: &[u8]) -> Address {
+    derive(program, b"bridged", &[origin_network, origin_asset])
+}
+
+/// Derive the address of a user-launched token.
+///
+/// Keyed by creator and symbol, so two creators may both issue `CAT` and get
+/// different addresses, while one creator cannot issue `CAT` twice.
+pub fn asset_address(program: &[u8], creator: &Address, symbol: &[u8]) -> Address {
+    derive(program, b"asset", &[creator, symbol])
+}
+
+/// Derive the address of an item collection.
+pub fn collection_address(program: &[u8], creator: &Address, symbol: &[u8]) -> Address {
+    derive(program, b"collection", &[creator, symbol])
+}
+
+/// Derive an item's id within its collection, from its serial number.
+///
+/// Derived rather than allocated so that every item's identity is computable
+/// before the collection mints — which is what a reveal schedule or an
+/// allowlist needs — and so that two nodes cannot disagree about which item is
+/// which. [`crate::collection::item_leaf`] binds the collection address into
+/// the leaf as well, so an item proved against one collection cannot be
+/// replayed against another.
+pub fn item_address(program: &[u8], collection: &Address, serial: u32) -> Address {
+    derive(program, b"item", &[collection, &serial.to_be_bytes()])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +207,132 @@ mod tests {
 
     fn addr(n: u8) -> Address {
         [n; 32]
+    }
+
+    fn hex(a: &Address) -> alloc::string::String {
+        use core::fmt::Write as _;
+        let mut o = alloc::string::String::new();
+        for b in a {
+            let _ = write!(o, "{:02x}", b);
+        }
+        o
+    }
+
+    /// The genesis address table, pinned.
+    ///
+    /// These are the addresses ZynZap v2 gives the first assets. They are
+    /// asserted rather than documented because a silent change to the
+    /// derivation would otherwise only be discovered by a wallet showing a
+    /// balance at an address nothing else recognises. If this test fails, the
+    /// derivation changed and every published address moved with it — that is
+    /// a fork, not a refactor.
+    #[test]
+    fn the_genesis_addresses_are_what_was_published() {
+        let p = program_scope_of("zynzap", 2);
+        for (label, got, want) in [
+            ("ZYN mainnet", native_address(&p, 26460, b"ZYN"),
+             "49eb9241e2a0b1163a1eed09bb91a575c93bbc6e76cd7afeb65263640fd169d5"),
+            ("ZYN testnet", native_address(&p, 11, b"ZYN"),
+             "893e745e33b40310003011a14651dc3cf173f71b92ee6e77ef62b7ba5a84e56e"),
+            ("ZEC.zy", bridged_address(&p, b"zcash", b""),
+             "0e212262cb35bf6e88bc7d0a52b60a5cc70c2859b65966a2557229d2ea469201"),
+            ("TAZ.zy", bridged_address(&p, b"zcash-test", b""),
+             "bf244a27ad73fea5128fead691c647fe1c5a5cddde0a847b24ca20041250da48"),
+            ("SOL.zy", bridged_address(&p, b"solana", b""),
+             "0f61f4340cd6a910ec8d7e73ef239569b83f16099e620786e71e7e7395c9f6df"),
+            ("BTC.zy", bridged_address(&p, b"bitcoin", b""),
+             "0e7faa55f3bdb12e80781da88fb5ac4eb7e24d1935494b9aabd84c4565bbffca"),
+        ] {
+            assert_eq!(hex(&got), want, "{} moved", label);
+        }
+
+        // And the pools over them, which follow from the assets alone.
+        let zyn = native_address(&p, 26460, b"ZYN");
+        let zec = bridged_address(&p, b"zcash", b"");
+        let sol = bridged_address(&p, b"solana", b"");
+        let btc = bridged_address(&p, b"bitcoin", b"");
+        assert_eq!(hex(&pool_address(&p, &zec, &zyn)),
+                   "4d9b08dbee9c82781b59dfa144730399c2b23ad320a2610601702ff305ddd999");
+        assert_eq!(hex(&pool_address(&p, &sol, &zec)),
+                   "142639c35adc1be4183c2268146f069d3b188988cb143b89be7ba1a67b2b68d7");
+        assert_eq!(hex(&pool_address(&p, &btc, &zec)),
+                   "ed3fef337e34a8c7b3343fc832f9ae4c289226cb51cebd5813b53746df18cab8");
+    }
+
+    /// The version used to land outside the hashed slice, so every version of a
+    /// VM derived the same addresses. §4 promises the opposite, and a bug that
+    /// collapses two scopes into one is invisible to any test that only checks
+    /// determinism.
+    #[test]
+    fn two_vm_versions_do_not_share_addresses() {
+        let v1 = program_scope_of("zynzap", 1);
+        let v2 = program_scope_of("zynzap", 2);
+        assert_ne!(v1, v2, "the version must be inside the scope, not beside it");
+        assert_eq!(v2, b"zynzap\x00\x02", "name then version, big-endian");
+        assert_ne!(
+            derive(&v1, b"native", &[b"ZYN"]),
+            derive(&v2, b"native", &[b"ZYN"]),
+            "a version bump must move every address it derives"
+        );
+    }
+
+    /// ZEC and TAZ are different assets. A testnet bridge minting something
+    /// addressed as mainnet ZEC would claim backing it does not hold.
+    #[test]
+    fn a_testnet_origin_is_a_different_asset_from_its_mainnet_one() {
+        let p = b"zynzap\x00\x02";
+        assert_ne!(
+            bridged_address(p, b"zcash", b""),
+            bridged_address(p, b"zcash-test", b""),
+        );
+    }
+
+    /// A network's own coin and a token issued on it must not collide, and two
+    /// tokens on one network must not either.
+    #[test]
+    fn a_bridged_coin_and_a_token_on_the_same_network_differ() {
+        let p = b"zynzap\x00\x02";
+        let mint_a = [7u8; 32];
+        let mint_b = [8u8; 32];
+        assert_ne!(bridged_address(p, b"solana", b""), bridged_address(p, b"solana", &mint_a));
+        assert_ne!(bridged_address(p, b"solana", &mint_a), bridged_address(p, b"solana", &mint_b));
+    }
+
+    /// Without the chain id, mainnet ZYN and testnet ZYN are one address and a
+    /// holder cannot tell from it which chain's token they hold.
+    #[test]
+    fn a_chains_own_token_is_scoped_to_that_chain() {
+        let p = b"zynzap\x00\x02";
+        assert_ne!(native_address(p, 26460, b"ZYN"), native_address(p, 11, b"ZYN"));
+    }
+
+    /// Two creators may both issue `CAT`; one creator may not issue it twice.
+    #[test]
+    fn a_symbol_is_unique_per_creator_not_globally() {
+        let p = b"zynzap\x00\x02";
+        assert_ne!(asset_address(p, &addr(1), b"CAT"), asset_address(p, &addr(2), b"CAT"));
+        assert_eq!(asset_address(p, &addr(1), b"CAT"), asset_address(p, &addr(1), b"CAT"));
+    }
+
+    /// Every kind of address stays in its own namespace, including the ones
+    /// that take the same seeds.
+    #[test]
+    fn a_collection_and_a_token_from_one_creator_and_symbol_differ() {
+        let p = b"zynzap\x00\x02";
+        assert_ne!(asset_address(p, &addr(3), b"CAVE"), collection_address(p, &addr(3), b"CAVE"));
+    }
+
+    /// Item ids are computable before a collection mints, and distinct.
+    #[test]
+    fn item_ids_are_derivable_in_advance_and_distinct() {
+        let p = b"zynzap\x00\x02";
+        let c = collection_address(p, &addr(4), b"CAVE");
+        let ids: Vec<Address> = (0..4444).map(|i| item_address(p, &c, i)).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len(), "4,444 serials must give 4,444 distinct ids");
+        assert_eq!(item_address(p, &c, 0), ids[0], "and recomputing one offline agrees");
     }
 
     #[test]

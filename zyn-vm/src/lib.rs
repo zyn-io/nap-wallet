@@ -34,6 +34,7 @@ pub mod derive;
 pub mod eip712;
 pub mod conformance;
 pub mod fixed;
+pub mod manifest;
 pub mod read;
 pub mod session;
 pub mod spec;
@@ -43,7 +44,8 @@ pub mod zvm;
 pub use auth::{signing_digest, signing_payload, AuthError, Authorization};
 pub use checkpoint::Checkpoint;
 pub use collection::{collection_root, item_leaf, item_proof, transfer_item, verify_item, Item, ItemId};
-pub use derive::{derive, derive_for, lp_address, pool_address, vault_address, Address};
+pub use manifest::{verify_manifest, verify_media, Attribute, Manifest, Media, MediaRole};
+pub use derive::{Address, asset_address, bridged_address, collection_address, derive, derive_for, item_address, lp_address, native_address, pool_address, program_scope, program_scope_of, vault_address};
 pub use commit::{
     fold_intent, hash_leaf, hash_node, merkle_proof, merkle_root, verify_proof, Encoder, Hash,
     ProofIndex, ProofStep,
