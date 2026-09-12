@@ -67,8 +67,23 @@ Nap reports whether an imported backup carried complete Zyn material.
 New mnemonic wallets write a non-secret derivation descriptor at `zyn.key`.
 Existing 32-byte `zyn.key` files are treated as legacy and are never silently
 replaced. `/api/zyn-key` inventories movable holdings and non-transferable
-creator authorities. `POST /api/zyn-key/migrate` requires explicit
-`{"confirm":true}`, cancels open offers, moves spendable balances/items, clears
-old agent sessions and account-local binding state, and preserves the old seed
-as `zyn.key.legacy`. That file remains necessary for collection creator
-authority until the protocol gains authority rotation.
+creator authorities. Automatic migration is **disabled**: its first draft
+switched identities without proving settlement and did not provide resumable
+checkpoints. The endpoint fails before any cancellation, transfer or key write.
+Issue #15 stays open until verified migration and end-to-end recovery drills
+are implemented. A phrase-only import into an existing legacy installation
+preserves that independent Zyn key; use a complete v2 backup to restore both
+identities explicitly. Do not assume the new phrase recovers a retained legacy key.
+
+Restore stages and validates the replacement before installation. A durable
+`nap-restore-pending.json` journal coordinates wallet key, wallet state, Zyn
+descriptor and account-local caches. Startup rolls back an interrupted install
+before opening either identity. Original files remain in a mode-0700
+`restore-backup-*` directory with mode-0600 recovery files and `index.json`.
+These copies contain secrets; protect them like the portable backup.
+
+`POST /api/export-file` with explicit confirmation writes the complete backup
+directly to a new mode-0600 file in the Nap data directory and returns its path.
+The UI never receives the independent Zyn seed for export. `/api/export` returns
+no portable backup when that would expose a legacy Zyn seed; its recovery phrase
+display is not a substitute for the complete file backup.

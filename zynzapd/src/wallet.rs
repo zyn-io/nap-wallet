@@ -184,10 +184,19 @@ pub struct WalletBackup {
 /// no duplicate secret: the BIP-39 seed in the same backup is authoritative.
 /// Legacy keys must remain in the backup because their random seed cannot be
 /// reconstructed from the recovery phrase.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ZynKeySource {
     Derived { version: u64, account: u32 },
     Legacy { seed: [u8; 32] },
+}
+
+impl std::fmt::Debug for ZynKeySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Derived { version, account } => f.debug_struct("Derived").field("version", version).field("account", account).finish(),
+            Self::Legacy { .. } => f.write_str("Legacy { seed: [REDACTED] }"),
+        }
+    }
 }
 
 impl ZynKeySource {
@@ -212,6 +221,9 @@ impl ZynKeySource {
             Some("bip39-hkdf") => {
                 let version = v.get("version").and_then(Value::as_u64).ok_or("Zyn derivation has no version")?;
                 if version != ZYN_DERIVATION_VERSION { return Err("unsupported Zyn derivation version".into()) }
+                if v.get("domain").and_then(Value::as_str) != Some("nap.zyn.ed25519.v1") || v.get("network_scoped").and_then(Value::as_bool) != Some(false) {
+                    return Err("unsupported Zyn derivation domain or network scope".into());
+                }
                 let account = u32::try_from(v.get("account").and_then(Value::as_u64).unwrap_or(0))
                     .map_err(|_| "Zyn account is too large")?;
                 Ok(Self::Derived { version, account })
@@ -542,6 +554,13 @@ impl Wallet {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Change only the backing path after a fully prepared restore commits.
+    /// No network request or fallible key derivation is allowed after commit.
+    pub(crate) fn installed_at(mut self, path: String) -> Self {
+        self.path = path;
+        self
     }
 
     /// The spending key, for a backup. Show it once, to the holder.

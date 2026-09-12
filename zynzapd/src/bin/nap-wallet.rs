@@ -223,6 +223,7 @@ mod agent_boundary_tests {
     fn the_agent_listener_has_no_wallet_or_mandate_creation_escape_hatch() {
         for (method, path) in [
             ("POST", "/api/export"),
+            ("POST", "/api/export-file"),
             ("POST", "/api/import"),
             ("POST", "/api/send"),
             ("POST", "/api/withdraw"),

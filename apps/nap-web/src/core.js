@@ -42,7 +42,7 @@ export function newMnemonic() { return generateMnemonic(wordlist, 256); }
 export function normalizeMnemonic(words) { return words.trim().toLowerCase().split(/\s+/).join(' '); }
 export function assertMnemonic(words) {
   const normalized = normalizeMnemonic(words);
-  if (!validateMnemonic(normalized, wordlist) || normalized.split(' ').length !== 24) throw new Error('Enter a valid 24-word English recovery phrase');
+  if (!validateMnemonic(normalized, wordlist)) throw new Error('Enter a valid English BIP-39 recovery phrase');
   return normalized;
 }
 
@@ -90,15 +90,27 @@ export function transferFrame(identity, chain, epoch, to, asset, rawAmount) {
 }
 
 export async function rpc(url, method, params = []) {
+  const id = crypto.randomUUID();
   const response = await fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: crypto.randomUUID(), method, params }),
+    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
     cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+    signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error(`RPC returned HTTP ${response.status}`);
   const body = await response.json();
+  if (body.jsonrpc !== '2.0' || body.id !== id) throw new Error('Mismatched RPC response');
   if (body.error) throw new Error(body.error.message || 'RPC rejected the request');
   return body.result;
+}
+
+export function checkedEpoch(status, chain) {
+  if (status.chain !== chain) throw new Error(`Wrong chain: expected ${chain}, received ${status.chain}`);
+  if (typeof status.epoch === 'number' && !Number.isSafeInteger(status.epoch)) throw new Error('Unsafe RPC epoch');
+  if (!/^(0|[1-9]\d*)$/.test(String(status.epoch))) throw new Error('Invalid RPC epoch');
+  const epoch = BigInt(status.epoch);
+  u64(epoch + 100n);
+  return epoch;
 }
 
 export function forgetIdentity(identity) {

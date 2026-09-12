@@ -402,7 +402,7 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
   <section>
     <h2>Backup</h2>
     <div class="hint">The recovery phrase or version-2 backup controls the wallet. Keep one offline. The backup includes Zcash recovery plus the Zyn derivation descriptor—or the independent legacy Zyn seed when one still exists.</div>
-    <div class="row"><button class="btn danger" id="export">Show recovery backup</button><button class="btn" id="download-backup">Download backup</button></div>
+    <div class="row"><button class="btn danger" id="export">Show recovery phrase</button><button class="btn" id="download-backup">Save complete backup</button></div>
     <div class="key" id="key" hidden></div>
   </section>
   <section>
@@ -1132,13 +1132,13 @@ document.addEventListener('click', async (ev) => {
 });
 $('export').onclick = () => run($('export'), '…', async () => {
   const r = await api('/api/export', {}); $('key').hidden = false;
-  $('key').textContent = r.mnemonic ? `Recovery phrase:\n${r.mnemonic}\n\nPortable backup:\n${r.backup}` : `Legacy wallet (no phrase exists for this key)\n\nPortable backup:\n${r.backup}`;
+  $('key').textContent = r.mnemonic ? `Recovery phrase:\n${r.mnemonic}\n\n${r.backup ? 'Portable backup:\n' + r.backup : 'Your independent Zyn key is NOT recovered by these words. Use Save complete backup; that secret is written directly to a private file.'}` : 'Legacy wallet: no phrase exists for this key. Use Save complete backup to save both identities directly to a private file.';
 });
 $('download-backup').onclick = () => run($('download-backup'), 'Preparing…', async () => {
-  const r = await api('/api/export', {});
-  const blob = new Blob([r.backup + '\n'], { type: 'application/json' });
-  const url = URL.createObjectURL(blob), a = document.createElement('a');
-  a.href = url; a.download = `nap-wallet-${r.network}-backup.json`; a.click(); URL.revokeObjectURL(url);
+  if (!await confirmDialog('Save complete recovery backup', [['Contains', 'Both Zcash and Zyn recovery secrets'], ['Location', 'A private file on the device running Nap'], ['Next step', 'Move a copy to secure offline storage; never upload it to a bug report']])) return;
+  const r = await api('/api/export-file', { confirm: true });
+  $('key').hidden = false;
+  $('key').textContent = `Complete backup saved on the device running Nap:\n${r.path}\n\nKeep this file secret. Copy it to secure offline storage. The page never received the independent Zyn seed.`;
 });
 async function loadZynKey() {
   const r = await api('/api/zyn-key');
@@ -1153,6 +1153,7 @@ async function loadZynKey() {
     `Transferable holdings: ${r.transferable.length}`,
     `Pending exit/release records: ${r.exiting + r.unreleased}`,
     `Creator authorities that cannot move: ${r.non_transferable_creator_authorities.length}`,
+    r.migration_blocked_reason || '',
   ];
   $('zyn-key-review').textContent = lines.join('\n');
   $('zyn-key-review').hidden = !legacy;

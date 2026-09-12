@@ -174,6 +174,7 @@ impl Binding {
 }
 
 pub struct App {
+    operation: Mutex<()>,
     cfg: Config,
     pub wallet: Mutex<Wallet>,
     pub settings: Mutex<Settings>,
@@ -208,6 +209,7 @@ impl App {
     /// key, reaching the block server once to confirm the network.
     pub fn open(cfg: &Config) -> Result<App, String> {
         std::fs::create_dir_all(&cfg.dir).map_err(|e| format!("app dir: {}", e))?;
+        crate::restore::recover(&cfg.dir)?;
         let settings = Settings::load(&cfg.dir);
         let wallet = App::open_wallet(cfg, &settings, settings.network, true)?;
         let key_path = cfg.key_path.clone().unwrap_or_else(|| cfg.dir.join("zyn.key"));
@@ -230,6 +232,7 @@ impl App {
         let agent_path = cfg.dir.join("agent.json");
         let agent = App::load_agent_store(&agent_path, account(&key));
         Ok(App {
+            operation: Mutex::new(()),
             cfg: cfg.clone(),
             wallet: Mutex::new(wallet),
             settings: Mutex::new(settings),
@@ -257,16 +260,6 @@ impl App {
 
     fn zyn_key_source(&self) -> Result<ZynKeySource, String> {
         self.zyn_key_source.lock().map_err(|_| "Zyn key lock".to_string()).map(|s| s.clone())
-    }
-
-    fn install_zyn_key_source(&self, source: ZynKeySource, key: SigningKey) -> Result<(), String> {
-        let tmp = PathBuf::from(format!("{}.restore", self.zyn_key_path.to_string_lossy()));
-        let _ = std::fs::remove_file(&tmp);
-        App::write_zyn_key_source(&tmp, &source, true)?;
-        std::fs::rename(&tmp, &self.zyn_key_path).map_err(|e| format!("cannot install Zyn key descriptor: {}", e))?;
-        *self.key.lock().map_err(|_| "Zyn key lock")? = key;
-        *self.zyn_key_source.lock().map_err(|_| "Zyn key lock")? = source;
-        Ok(())
     }
 
     fn read_zyn_key_source(path: &Path) -> Result<ZynKeySource, String> {
@@ -760,6 +753,11 @@ fn agent_policy(app: &App, mandate: &AgentMandate, intent: &Intent, epoch: u64) 
 }
 
 pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Value, String> {
+    // In-process identities cannot change halfway through another API request.
+    let _operation = app.operation.lock().map_err(|_| "wallet operation lock")?;
+    if crate::restore::pending(&app.cfg.dir) {
+        return Err("unfinished restore; restart Nap to recover before continuing".into());
+    }
     match (method, path) {
         ("GET", "/api/agent/status") => {
             zyn_only(app)?;
@@ -984,7 +982,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                     .and_then(|s| w.zyn_signing_key(&s).ok().map(|k| (s, account(&k))))
             };
             let record = app.node.account(&current_key)?.unwrap_or_default();
-            let authorities = app.node.collections().unwrap_or_default().into_iter()
+            let authorities = app.node.collections()?.into_iter()
                 .filter(|c| c.creator == current)
                 .map(|c| json!({ "collection": c.id, "symbol": c.symbol, "phase": c.phase_name() }))
                 .collect::<Vec<_>>();
@@ -992,72 +990,15 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 "account": hex(&current),
                 "source": match source { ZynKeySource::Derived { .. } => "bip39-hkdf", ZynKeySource::Legacy { .. } => "legacy-ed25519" },
                 "derived_account": derived.as_ref().map(|(_, id)| hex(id)),
-                "migration_available": matches!(source, ZynKeySource::Legacy { .. }) && derived.as_ref().is_some_and(|(_, id)| *id != current),
+                "migration_available": false,
+                "migration_blocked_reason": "Automatic migration is disabled pending verified settlement, resumable checkpoints and retained-authority recovery. Export a complete backup; the original account remains active.",
                 "transferable": record.spendable.iter().filter(|(_, amount)| amount.0 > 0).map(|(asset, amount)| json!({ "asset": asset, "amount": amount.to_string() })).collect::<Vec<_>>(),
                 "exiting": record.exiting.len(), "unreleased": record.unreleased.len(),
                 "non_transferable_creator_authorities": authorities,
             }))
         }
         ("POST", "/api/zyn-key/migrate") => {
-            zyn_only(app)?;
-            if input.get("confirm").and_then(Value::as_bool) != Some(true) {
-                return Err("migration requires confirm: true after reviewing /api/zyn-key".into());
-            }
-            let old_source = app.zyn_key_source()?;
-            let ZynKeySource::Legacy { seed } = old_source else {
-                return Err("this wallet already uses the phrase-derived Zyn account".into());
-            };
-            let old_key = app.key();
-            let old_account = account(&old_key);
-            let (derived_source, derived_key) = {
-                let w = app.wallet.lock().map_err(|_| "wallet busy")?;
-                let source = w.default_zyn_source().ok_or("this legacy Zcash wallet has no phrase from which to derive a Zyn account")?;
-                let key = w.zyn_signing_key(&source)?;
-                (source, key)
-            };
-            let derived_account = account(&derived_key);
-            if old_account == derived_account { return Err("the legacy and derived accounts are already identical".into()) }
-            let before = app.node.account(&old_key)?.unwrap_or_default();
-            if !before.exiting.is_empty() || !before.unreleased.is_empty() {
-                return Err("wait for exiting and unreleased balances to settle before migrating".into());
-            }
-            let mut cancelled = Vec::new();
-            for offer in app.node.offers()?.into_iter().filter(|o| o.maker == old_account) {
-                app.node.cancel_offer(&old_key, offer.id)?;
-                cancelled.push(offer.id);
-            }
-            let mut moved = Vec::new();
-            let transferable = app.node.account(&old_key)?.unwrap_or_default();
-            for (asset, amount) in transferable.spendable.into_iter().filter(|(_, amount)| amount.0 > 0) {
-                app.node.submit(&old_key, Intent::Transfer { from: old_account, to: derived_account, asset, amount })?;
-                moved.push(json!({ "asset": asset, "amount": amount.to_string() }));
-            }
-            let authorities = app.node.collections().unwrap_or_default().into_iter()
-                .filter(|c| c.creator == old_account)
-                .map(|c| json!({ "collection": c.id, "symbol": c.symbol }))
-                .collect::<Vec<_>>();
-            // Keep the independent seed even after a successful asset move:
-            // creator authority and old history cannot currently be rotated.
-            let legacy_path = PathBuf::from(format!("{}.legacy", app.zyn_key_path.to_string_lossy()));
-            if !legacy_path.exists() {
-                App::write_zyn_key_source(&legacy_path, &ZynKeySource::Legacy { seed }, true)?;
-            }
-            app.install_zyn_key_source(derived_source, derived_key)?;
-            let empty_agents = AgentStore::default();
-            *app.agent.lock().map_err(|_| "agent store busy")? = empty_agents.clone();
-            app.save_agent_store(&empty_agents)?;
-            *app.binding.lock().map_err(|_| "binding busy")? = None;
-            *app.deposit_address.lock().map_err(|_| "deposit address busy")? = None;
-            let _ = std::fs::remove_file(&app.binding_path);
-            let _ = std::fs::remove_file(app.cfg.dir.join("deposit-address"));
-            app.note(format!("migrated Zyn account {} to phrase-derived {}", hex(&old_account), hex(&derived_account)));
-            Ok(json!({
-                "migrated": true, "from": hex(&old_account), "to": hex(&derived_account),
-                "moved": moved, "cancelled_offers": cancelled,
-                "non_transferable_creator_authorities": authorities,
-                "legacy_key_file": legacy_path.to_string_lossy(),
-                "legacy_key_must_be_kept": true,
-            }))
+            Err("Automatic migration is disabled until settlement verification and resumable recovery are implemented; the original Zyn key has not been changed".into())
         }
         ("POST", "/api/deposit") => {
             zyn_only(app)?;
@@ -1074,6 +1015,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             })
         }
         ("POST", "/api/import") => {
+            if app.job().is_some() { return Err("wait for the current wallet job before restoring".into()); }
             let mut w = app.wallet.try_lock().map_err(|_| "wallet busy")?;
             let network = w.network();
             let backup_supplied = input.get("backup").is_some();
@@ -1122,8 +1064,9 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let path = w.path().to_string();
             let lightd = app.settings.lock().map_err(|_| "busy")?.lightd(network)?.to_string();
             let staged_path = format!("{}.restore", path);
-            let _ = std::fs::remove_file(&staged_path);
-            let _ = std::fs::remove_file(format!("{}.state", staged_path));
+            if Path::new(&staged_path).exists() || Path::new(&format!("{}.state", staged_path)).exists() {
+                return Err("a previous staged restore exists; preserve it and inspect before retrying".into());
+            }
             // Seed and open the replacement completely before touching the
             // current wallet. A bad phrase, wrong network, unavailable tree
             // frontier, or unwritable disk therefore leaves the old key live.
@@ -1142,31 +1085,51 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 let record = app.node.account(&app.key())?.unwrap_or_default();
                 let open_offer = app.node.offers()?.iter().any(|o| o.maker == current_zyn_account);
                 let creator = app.node.collections()?.iter().any(|c| c.creator == current_zyn_account);
+                let orders = !app.node.orders(&app.key())?.is_empty();
+                let launch = app.node.launch_me(&app.key())?;
+                let launch_claims = launch.contribution.0 > 0 || launch.epoch_fees.0 > 0 || launch.vest_total > launch.vest_released || !launch.markets.is_empty();
                 if record.spendable.iter().any(|(_, amount)| amount.0 > 0)
-                    || !record.exiting.is_empty() || !record.unreleased.is_empty() || open_offer || creator
+                    || !record.exiting.is_empty() || !record.unreleased.is_empty() || open_offer || creator || orders || launch_claims
                 {
                     let _ = std::fs::remove_file(&staged_path);
                     let _ = std::fs::remove_file(format!("{}.state", staged_path));
                     return Err("the current Zyn account still has holdings, pending balances, offers, or creator authority; export it and complete the Zyn migration before restoring a different account".into());
                 }
             }
-            drop(staged);
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::remove_file(format!("{}.state", path));
-            std::fs::rename(&staged_path, &path).map_err(|e| format!("cannot install restored wallet key: {}", e))?;
-            std::fs::rename(format!("{}.state", staged_path), format!("{}.state", path)).map_err(|e| format!("cannot install restored wallet state: {}", e))?;
-            let fresh = Wallet::open(&path, Client::new(&lightd))?;
+            // Acquire every mutable identity field before touching disk. Stage
+            // all replacement bytes, then commit them with a rollback journal.
+            let mut key = app.key.lock().map_err(|_| "Zyn key lock")?;
+            let mut source = app.zyn_key_source.lock().map_err(|_| "Zyn key lock")?;
+            let mut agents = app.agent.lock().map_err(|_| "agent store busy")?;
+            let mut binding = app.binding.lock().map_err(|_| "binding busy")?;
+            let mut deposit = app.deposit_address.lock().map_err(|_| "deposit address busy")?;
+            let zyn_bytes = match &restore_zyn {
+                ZynKeySource::Legacy { seed } => seed.to_vec(),
+                _ => serde_json::to_vec_pretty(&restore_zyn.json()).map_err(|e| e.to_string())?,
+            };
+            let files = vec![
+                (PathBuf::from(&path), Some(std::fs::read(&staged_path).map_err(|e| e.to_string())?)),
+                (PathBuf::from(format!("{}.state", path)), Some(std::fs::read(format!("{}.state", staged_path)).map_err(|e| e.to_string())?)),
+                (app.zyn_key_path.clone(), Some(zyn_bytes)),
+                (app.agent_path.clone(), None),
+                (app.binding_path.clone(), None),
+                (app.cfg.dir.join("deposit-address"), None),
+            ];
+            let recovery_copy = crate::restore::replace(&app.cfg.dir, &files)?;
+            let fresh = staged.installed_at(path);
             let birthday = fresh.state.birthday;
             let warning = fresh.mnemonic_word_count().filter(|n| *n < 24).map(|n| format!("this imported phrase has {} words and less than the 256 bits recommended for Zcash; move recovered funds to a new 24-word wallet", n));
             *w = fresh;
-            app.install_zyn_key_source(restore_zyn, restored_zyn_key)?;
-            *app.agent.lock().map_err(|_| "agent store busy")? = AgentStore::default();
-            app.save_agent_store(&AgentStore::default())?;
+            *key = restored_zyn_key; *source = restore_zyn;
+            *agents = AgentStore::default(); *binding = None; *deposit = None;
+            let _ = std::fs::remove_file(&staged_path);
+            let _ = std::fs::remove_file(format!("{}.state", staged_path));
             app.note(format!("restored a {} wallet born at {}; sync to find its notes", network_name(network), birthday));
             Ok(json!({
                 "address": w.address(), "birthday": birthday, "warning": warning,
                 "zyn_account": hex(&restored_zyn_account),
                 "zyn_backup_complete": restore_had_zyn,
+                "previous_recovery_copy": recovery_copy,
             }))
         }
         ("POST", "/api/quote") => {
@@ -1414,18 +1377,28 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let source = app.zyn_key_source()?;
             let source_summary = match &source {
                 ZynKeySource::Derived { version, account } => json!({ "source": "bip39-hkdf", "version": version, "account": account }),
-                ZynKeySource::Legacy { .. } => json!({ "source": "legacy-ed25519", "included_in_backup": true }),
+                ZynKeySource::Legacy { .. } => json!({ "source": "legacy-ed25519", "requires_file_export": true }),
             };
             app.note("wallet recovery material shown for backup".to_string());
             Ok(json!({
                 "key": w.legacy_backup_key().map(|key| hex(&key)),
                 "mnemonic": w.mnemonic(),
-                "backup": w.export_backup_with_zyn(source),
+                "backup": if matches!(source, ZynKeySource::Derived { .. }) { Some(w.export_backup_with_zyn(source)) } else { None },
                 "birthday": w.state.birthday,
                 "network": network_name(w.network()),
                 "zyn": source_summary,
                 "zyn_account": hex(&account(&app.key())),
             }))
+        }
+        ("POST", "/api/export-file") => {
+            if input.get("confirm").and_then(Value::as_bool) != Some(true) {
+                return Err("saving a complete secret backup requires confirm: true".into());
+            }
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let backup = w.export_backup_with_zyn(app.zyn_key_source()?);
+            let path = crate::restore::export_file(&app.cfg.dir, backup.as_bytes())?;
+            // Only the path crosses the page boundary, never legacy seed bytes.
+            Ok(json!({ "path": path, "network": network_name(w.network()), "complete": true }))
         }
         ("GET", "/api/settings") => Ok(app.settings.lock().map_err(|_| "busy")?.json()),
         ("POST", "/api/settings") => {
