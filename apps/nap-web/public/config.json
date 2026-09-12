@@ -1,0 +1,7 @@
+{
+  "network": "Zyn testnet",
+  "chain": 11,
+  "rpcUrl": "/rpc",
+  "claimUrl": "/claim",
+  "mediaGateway": "/media"
+}

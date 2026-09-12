@@ -10,6 +10,8 @@
 use std::sync::{Arc, Mutex};
 
 use bip39::{Language, Mnemonic};
+use ed25519_dalek::SigningKey;
+use hkdf::Hkdf;
 use orchard::keys::{FullViewingKey, PreparedIncomingViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 use orchard::ValuePool;
 use serde_json::{json, Value};
@@ -30,6 +32,10 @@ const STATE_MAGIC: &[u8; 8] = b"ZYNWAL01";
 const KEY_FORMAT: &str = "nap-wallet-key";
 const BACKUP_FORMAT: &str = "nap-wallet-backup";
 const KEY_VERSION: u64 = 1;
+const BACKUP_VERSION: u64 = 2;
+pub const ZYN_DERIVATION_VERSION: u64 = 1;
+const ZYN_DERIVATION_SALT: &[u8] = b"nap.zyn.ed25519.v1";
+const ZYN_DERIVATION_INFO: &[u8] = b"account";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -117,6 +123,19 @@ impl KeyMaterial {
         }
     }
 
+    fn zyn_signing_key(&self, account: u32) -> Result<SigningKey, String> {
+        let KeyMaterial::Bip39 { account: wallet_account, .. } = self else {
+            return Err("a derived Zyn key requires a BIP-39 wallet".into());
+        };
+        if account != *wallet_account { return Err("Zyn derivation account does not match the wallet account".into()) }
+        let hk = Hkdf::<sha2::Sha256>::new(Some(ZYN_DERIVATION_SALT), &self.seed()?);
+        let mut info = ZYN_DERIVATION_INFO.to_vec();
+        info.extend_from_slice(&account.to_be_bytes());
+        let mut seed = [0u8; 32];
+        hk.expand(&info, &mut seed).map_err(|_| "cannot derive Zyn key".to_string())?;
+        Ok(SigningKey::from_bytes(&seed))
+    }
+
     fn encode(&self) -> Vec<u8> {
         match self {
             KeyMaterial::Raw(key) => key.to_vec(),
@@ -158,6 +177,52 @@ pub struct WalletBackup {
     material: KeyMaterial,
     pub network: Network,
     pub birthday: u64,
+    zyn: Option<ZynKeySource>,
+}
+
+/// How the independent Zyn signing authority is recovered. Derived keys carry
+/// no duplicate secret: the BIP-39 seed in the same backup is authoritative.
+/// Legacy keys must remain in the backup because their random seed cannot be
+/// reconstructed from the recovery phrase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ZynKeySource {
+    Derived { version: u64, account: u32 },
+    Legacy { seed: [u8; 32] },
+}
+
+impl ZynKeySource {
+    pub fn derived(account: u32) -> Self {
+        Self::Derived { version: ZYN_DERIVATION_VERSION, account }
+    }
+
+    pub fn json(&self) -> Value {
+        match self {
+            Self::Derived { version, account } => json!({
+                "source": "bip39-hkdf", "version": version, "account": account,
+                "domain": "nap.zyn.ed25519.v1", "network_scoped": false,
+            }),
+            Self::Legacy { seed } => json!({
+                "source": "legacy-ed25519", "seed": hex(seed),
+            }),
+        }
+    }
+
+    pub fn parse(v: &Value) -> Result<Self, String> {
+        match v.get("source").and_then(Value::as_str) {
+            Some("bip39-hkdf") => {
+                let version = v.get("version").and_then(Value::as_u64).ok_or("Zyn derivation has no version")?;
+                if version != ZYN_DERIVATION_VERSION { return Err("unsupported Zyn derivation version".into()) }
+                let account = u32::try_from(v.get("account").and_then(Value::as_u64).unwrap_or(0))
+                    .map_err(|_| "Zyn account is too large")?;
+                Ok(Self::Derived { version, account })
+            }
+            Some("legacy-ed25519") => {
+                let bytes = unhex(v.get("seed").and_then(Value::as_str).ok_or("legacy Zyn backup has no seed")?)?;
+                Ok(Self::Legacy { seed: bytes.try_into().map_err(|_| "legacy Zyn seed must be 32 bytes")? })
+            }
+            _ => Err("unsupported Zyn key source".into()),
+        }
+    }
 }
 
 impl WalletBackup {
@@ -165,18 +230,19 @@ impl WalletBackup {
         let material = KeyMaterial::Raw(key);
         // Validate the Orchard scalar before a caller removes any old wallet.
         material.spending_key(network)?;
-        Ok(WalletBackup { material, network, birthday })
+        Ok(WalletBackup { material, network, birthday, zyn: None })
     }
 
     pub fn from_mnemonic(network: Network, birthday: u64, words: &str, passphrase: &str, account: u32) -> Result<WalletBackup, String> {
         let material = KeyMaterial::from_mnemonic(words, passphrase, account)?;
         material.spending_key(network)?;
-        Ok(WalletBackup { material, network, birthday })
+        Ok(WalletBackup { material, network, birthday, zyn: Some(ZynKeySource::derived(account)) })
     }
 
     pub fn parse(text: &str) -> Result<WalletBackup, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| format!("backup is not JSON: {}", e))?;
-        if v.get("format").and_then(Value::as_str) != Some(BACKUP_FORMAT) || v.get("version").and_then(Value::as_u64) != Some(KEY_VERSION) {
+        let version = v.get("version").and_then(Value::as_u64);
+        if v.get("format").and_then(Value::as_str) != Some(BACKUP_FORMAT) || !matches!(version, Some(KEY_VERSION | BACKUP_VERSION)) {
             return Err("unsupported wallet backup format or version".into());
         }
         let network = match v.get("network").and_then(Value::as_str) {
@@ -200,7 +266,17 @@ impl WalletBackup {
             _ => return Err("unsupported backup key source".into()),
         };
         material.spending_key(network)?;
-        Ok(WalletBackup { material, network, birthday })
+        let zyn = match v.get("zyn") {
+            Some(value) => Some(ZynKeySource::parse(value)?),
+            None if version == Some(KEY_VERSION) => None,
+            None => return Err("backup has no Zyn key descriptor".into()),
+        };
+        if let Some(ZynKeySource::Derived { account: zyn_account, .. }) = zyn {
+            if !matches!(&material, KeyMaterial::Bip39 { account, .. } if *account == zyn_account) {
+                return Err("Zyn derivation account does not match the BIP-39 account".into());
+            }
+        }
+        Ok(WalletBackup { material, network, birthday, zyn })
     }
 
     pub fn to_json(&self) -> String {
@@ -219,14 +295,31 @@ impl WalletBackup {
         };
         let mut out = json!({
             "format": BACKUP_FORMAT,
-            "version": KEY_VERSION,
+            "version": if self.zyn.is_some() { BACKUP_VERSION } else { KEY_VERSION },
             "network": network_name(self.network),
             "birthday": self.birthday,
         });
+        if let (Some(dst), Some(zyn)) = (out.as_object_mut(), self.zyn.as_ref()) {
+            dst.insert("zyn".into(), zyn.json());
+        }
         if let (Some(dst), Some(src)) = (out.as_object_mut(), source.as_object()) {
             dst.extend(src.clone());
         }
         serde_json::to_string_pretty(&out).expect("wallet backup JSON is serializable")
+    }
+
+    pub fn with_zyn(mut self, source: ZynKeySource) -> Self {
+        self.zyn = Some(source);
+        self
+    }
+
+    pub fn zyn(&self) -> Option<ZynKeySource> { self.zyn.clone() }
+
+    pub fn effective_zyn_source(&self) -> Option<ZynKeySource> {
+        self.zyn.clone().or_else(|| match &self.material {
+            KeyMaterial::Bip39 { account, .. } => Some(ZynKeySource::derived(*account)),
+            KeyMaterial::Raw(_) => None,
+        })
     }
 }
 
@@ -368,6 +461,13 @@ impl Wallet {
         Wallet::install(path, KeyMaterial::generate()?, None, None, client)
     }
 
+    /// Create the other Zcash network face from the same recovery material.
+    /// Nap has one phrase and one Zyn identity even though each Zcash network
+    /// keeps independent scan state and addresses.
+    pub fn create_network_sibling(&self, path: &str, client: Client) -> Result<Wallet, String> {
+        Wallet::install(path, self.material.clone(), None, None, client)
+    }
+
     /// An existing raw Orchard key, with a birthday (or the tip if none).
     /// This is the legacy Nap import path; mnemonic wallets use ZIP-32.
     pub fn import(path: &str, seed: [u8; 32], birthday: Option<u64>, client: Client) -> Result<Wallet, String> {
@@ -464,8 +564,39 @@ impl Wallet {
             material: self.material.clone(),
             network: self.state.network,
             birthday: self.state.birthday,
+            zyn: self.default_zyn_source(),
         }
         .to_json()
+    }
+
+    pub fn export_backup_with_zyn(&self, source: ZynKeySource) -> String {
+        WalletBackup {
+            material: self.material.clone(),
+            network: self.state.network,
+            birthday: self.state.birthday,
+            zyn: Some(source),
+        }
+        .to_json()
+    }
+
+    pub fn default_zyn_source(&self) -> Option<ZynKeySource> {
+        match &self.material {
+            KeyMaterial::Bip39 { account, .. } => Some(ZynKeySource::derived(*account)),
+            KeyMaterial::Raw(_) => None,
+        }
+    }
+
+    /// Derive the Zyn Ed25519 seed from the full BIP-39 seed. The derivation is
+    /// intentionally network-independent: a Nap recovery phrase has one Zyn
+    /// identity, while signed intents still bind themselves to a chain id.
+    pub fn zyn_signing_key(&self, source: &ZynKeySource) -> Result<SigningKey, String> {
+        match source {
+            ZynKeySource::Legacy { seed } => Ok(SigningKey::from_bytes(seed)),
+            ZynKeySource::Derived { version, account } => {
+                if *version != ZYN_DERIVATION_VERSION { return Err("unsupported Zyn derivation version".into()) }
+                self.material.zyn_signing_key(*account)
+            }
+        }
     }
 
     pub fn mnemonic(&self) -> Option<String> {
@@ -779,6 +910,7 @@ mod recovery_tests {
             backup.material.spending_key(backup.network).unwrap().to_bytes(),
             restored.material.spending_key(restored.network).unwrap().to_bytes()
         );
+        assert!(matches!(restored.zyn(), Some(ZynKeySource::Derived { version: 1, account: 3 })));
     }
 
     #[test]
@@ -789,15 +921,36 @@ mod recovery_tests {
         let backup = WalletBackup::from_raw(Network::MainNetwork, 2_000_000, raw).unwrap();
         let restored = WalletBackup::parse(&backup.to_json()).unwrap();
         assert!(matches!(restored.material, KeyMaterial::Raw(key) if key == raw));
+
+        let complete = backup.with_zyn(ZynKeySource::Legacy { seed: [9u8; 32] });
+        let restored = WalletBackup::parse(&complete.to_json()).unwrap();
+        assert!(matches!(restored.zyn(), Some(ZynKeySource::Legacy { seed }) if seed == [9u8; 32]));
     }
 
     #[test]
     fn backup_parser_refuses_unknown_versions_and_bad_mnemonics() {
         let unknown = json!({
-            "format": BACKUP_FORMAT, "version": 2, "network": "mainnet",
+            "format": BACKUP_FORMAT, "version": 99, "network": "mainnet",
             "birthday": 1, "source": "bip39", "mnemonic": WORDS,
         });
         assert!(WalletBackup::parse(&unknown.to_string()).err().unwrap().contains("unsupported"));
         assert!(WalletBackup::from_mnemonic(Network::MainNetwork, 1, "abandon abandon", "", 0).is_err());
+    }
+
+    #[test]
+    fn zyn_derivation_vectors_are_network_independent() {
+        let vectors = [
+            ("", 0, "57d47cefdba062bb9669a7a64e9072e49d2b5bc66892952429240e4c91b16183", "308ab8b209813f5912287682b50950d62782abc61507f0a80abafd0f7a33a7a6", "b85db260ec3a7c0a22c19c1f3380bfc75599c0ea4eeeeda69177ab12f9da56ea"),
+            ("nap passphrase", 7, "f4e1b20f8a0cd2e19ae9d85ce3057cbb13863be3630e87972afce0b14c513c2e", "276237e6804911ecd6d44c3d170ac67ff8dc8abf87cf423489a71dddf68857eb", "4c976ef0d248340b910e246439c3139911f1752e6ba1d3c198f41071e4503604"),
+        ];
+        for (passphrase, account, seed_hex, public_hex, account_hex) in vectors {
+            let material = KeyMaterial::from_mnemonic(WORDS, passphrase, account).unwrap();
+            let key = material.zyn_signing_key(account).unwrap();
+            let public = key.verifying_key().to_bytes();
+            let id = zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &public);
+            assert_eq!(hex(&key.to_bytes()), seed_hex);
+            assert_eq!(hex(&public), public_hex);
+            assert_eq!(hex(&id), account_hex);
+        }
     }
 }

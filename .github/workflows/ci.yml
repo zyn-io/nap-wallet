@@ -27,6 +27,12 @@ jobs:
           (cd apps/extension && node build.mjs)
           cmp -s zynzapd/ui/index.html apps/nap/dist/index.html
           node --check apps/extension/dist/popup.js
+      - name: Test and build browser wallet
+        working-directory: apps/nap-web
+        run: |
+          npm ci
+          npm test
+          npm run build
 
   desktop-macos:
     runs-on: macos-latest

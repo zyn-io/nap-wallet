@@ -1,0 +1,10 @@
+{
+  "name": "Nap Wallet",
+  "short_name": "Nap",
+  "description": "A browser-first, non-custodial Zyn wallet",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f0df",
+  "theme_color": "#1f2428",
+  "icons": [{ "src": "/nap-mark.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }]
+}
