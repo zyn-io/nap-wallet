@@ -1419,6 +1419,48 @@ mod recovery_tests {
         );
     }
 
+    /// The property a new user actually relies on: write down 24 words, lose
+    /// the machine, restore, and the **same Zyn account** comes back.
+    ///
+    /// The vectors above prove the derivation is stable against fixed inputs.
+    /// They do not prove that a freshly generated wallet uses that derivation
+    /// at all — before §71 a new wallet took a random Ed25519 seed that no
+    /// phrase could reproduce, and the difference between those two states is
+    /// invisible until someone has already lost their assets.
+    #[test]
+    fn a_generated_wallet_restores_the_same_zyn_account_from_its_phrase() {
+        let fresh = KeyMaterial::generate().expect("generate");
+        let words = fresh.mnemonic().expect("a generated wallet has a phrase").to_string();
+        let account = fresh.account();
+
+        // A generated wallet must derive, never fall back to a random seed.
+        let source = match &fresh {
+            KeyMaterial::Bip39 { account, .. } => ZynKeySource::derived(*account),
+            KeyMaterial::Raw(_) => panic!("a generated wallet must be mnemonic-backed"),
+        };
+        assert!(matches!(source, ZynKeySource::Derived { .. }), "must not be Legacy");
+
+        let before = fresh.zyn_signing_key(account).expect("derive");
+        let id_before =
+            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &before.verifying_key().to_bytes());
+
+        // Everything except the words is gone; restore from them alone.
+        let restored = KeyMaterial::from_mnemonic(&words, "", account).expect("restore");
+        let after = restored.zyn_signing_key(account).expect("derive after restore");
+        let id_after =
+            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &after.verifying_key().to_bytes());
+
+        assert_eq!(before.to_bytes(), after.to_bytes(), "the Zyn key must be reproducible");
+        assert_eq!(id_before, id_after, "and therefore the same Zyn account");
+
+        // A different phrase must not land on the same account.
+        let other = KeyMaterial::generate().expect("generate");
+        let other_key = other.zyn_signing_key(other.account()).expect("derive");
+        let other_id =
+            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &other_key.verifying_key().to_bytes());
+        assert_ne!(id_before, other_id, "distinct phrases must give distinct accounts");
+    }
+
     #[test]
     fn zyn_derivation_vectors_are_network_independent() {
         let vectors = [
