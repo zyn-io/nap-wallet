@@ -29,6 +29,7 @@ extern crate alloc;
 
 pub mod amm;
 pub mod bridge;
+pub mod cave;
 pub mod codec;
 pub mod fixed;
 pub mod guest;
@@ -44,9 +45,9 @@ pub mod vm;
 pub mod wire;
 
 pub use fixed::{Fixed, WAD};
-pub use types::{AccountId, AssetId, Params, PoolId, XZEC};
+pub use merkle::{merkle_root, Hash};
+pub use revenue::Revenue;
 pub use state::{Account, Pool, SwapState, TokenInfo};
 pub use tx::{Intent, Receipt, Reject, SequencedIntent};
-pub use revenue::Revenue;
+pub use types::{AccountId, AssetId, Params, PoolId, XZEC};
 pub use vm::{apply, apply_batch, checkpoint, transition};
-pub use merkle::{merkle_root, Hash};

@@ -151,7 +151,12 @@ pub struct Node<V: MicrochainVm> {
 }
 
 impl<V: MicrochainVm> Node<V> {
-    pub fn new(chain_id: u32, params: V::Params, policy: EpochPolicy, economics: Economics) -> Self {
+    pub fn new(
+        chain_id: u32,
+        params: V::Params,
+        policy: EpochPolicy,
+        economics: Economics,
+    ) -> Self {
         Node {
             state: V::genesis(chain_id, params),
             policy,
@@ -199,7 +204,8 @@ impl<V: MicrochainVm> Node<V> {
 
     /// Supply a certificate for an anchor the node is waiting to settle.
     pub fn submit_certificate(&mut self, cert: Certificate) {
-        self.pending_certificates.retain(|(id, _)| *id != cert.anchor);
+        self.pending_certificates
+            .retain(|(id, _)| *id != cert.anchor);
         self.pending_certificates.push((cert.anchor, cert));
     }
 
@@ -207,8 +213,15 @@ impl<V: MicrochainVm> Node<V> {
     /// certificate. Counted only if a set is configured, the signer is in it,
     /// and the signature opens the id — so a replica that reproduced a root
     /// contributes, and nobody else does. Returns whether it was counted.
-    pub fn add_endorsement(&mut self, anchor_id: AnchorId, signer: [u8; 32], signature: [u8; 64]) -> bool {
-        let Some(set) = &self.signers else { return false };
+    pub fn add_endorsement(
+        &mut self,
+        anchor_id: AnchorId,
+        signer: [u8; 32],
+        signature: [u8; 64],
+    ) -> bool {
+        let Some(set) = &self.signers else {
+            return false;
+        };
         if !set.contains(&signer) {
             return false;
         }
@@ -220,7 +233,11 @@ impl<V: MicrochainVm> Node<V> {
         if probe.weight(set) == 0 {
             return false; // the signature does not open this id under this key
         }
-        match self.pending_certificates.iter_mut().find(|(id, _)| *id == anchor_id) {
+        match self
+            .pending_certificates
+            .iter_mut()
+            .find(|(id, _)| *id == anchor_id)
+        {
             Some((_, cert)) => {
                 let _ = cert.add(signer, signature); // a repeat is refused and harmless
             }
@@ -231,7 +248,10 @@ impl<V: MicrochainVm> Node<V> {
 
     /// The certificate gathered for an anchor so far.
     pub fn certificate_for(&self, anchor_id: AnchorId) -> Option<&Certificate> {
-        self.pending_certificates.iter().find(|(id, _)| *id == anchor_id).map(|(_, c)| c)
+        self.pending_certificates
+            .iter()
+            .find(|(id, _)| *id == anchor_id)
+            .map(|(_, c)| c)
     }
 
     /// Whether the gathered endorsements clear the configured set. Always
@@ -261,7 +281,13 @@ impl<V: MicrochainVm> Node<V> {
 
     /// Resume with the persisted lineage, so the next anchor continues from
     /// the root Zcash last saw rather than from nothing.
-    pub fn resume_with_ledger(state: V, policy: EpochPolicy, economics: Economics, ledger: Ledger, now: u64) -> Self {
+    pub fn resume_with_ledger(
+        state: V,
+        policy: EpochPolicy,
+        economics: Economics,
+        ledger: Ledger,
+        now: u64,
+    ) -> Self {
         Node {
             state,
             policy,
@@ -394,7 +420,10 @@ impl<V: MicrochainVm> Node<V> {
 
     /// [`Self::submit_operator`] for a batch.
     pub fn submit_all_operator(&mut self, intents: Vec<V::Intent>, now: u64) -> Vec<Step<V>> {
-        intents.into_iter().map(|i| self.submit_operator(i, now)).collect()
+        intents
+            .into_iter()
+            .map(|i| self.submit_operator(i, now))
+            .collect()
     }
 
     /// Sequence and apply an authorised intent.
@@ -408,7 +437,13 @@ impl<V: MicrochainVm> Node<V> {
         let intent = authorized.into_intent();
         let seq = self.state.seq() + 1;
         if !self.record(self.state.epoch(), seq, &committed) {
-            return Step { seq, receipts: Vec::new(), sealed: None, anchor: None, unrecorded: true };
+            return Step {
+                seq,
+                receipts: Vec::new(),
+                sealed: None,
+                anchor: None,
+                unrecorded: true,
+            };
         }
         let receipts = self.state.apply_committed(seq, &intent, &committed);
 
@@ -416,7 +451,9 @@ impl<V: MicrochainVm> Node<V> {
         self.since_seal = self.since_seal.saturating_add(1);
         self.actions_since_anchor = self.actions_since_anchor.saturating_add(1);
 
-        let sealed = if self.policy.should_seal(self.since_seal, now.saturating_sub(self.sealed_at))
+        let sealed = if self
+            .policy
+            .should_seal(self.since_seal, now.saturating_sub(self.sealed_at))
         {
             self.seal(now)
         } else {
@@ -424,16 +461,22 @@ impl<V: MicrochainVm> Node<V> {
         };
         let anchor = if sealed.is_some()
             && !self.manual_anchoring
-            && self
-                .policy
-                .should_anchor(self.epochs_since_anchor, now.saturating_sub(self.anchored_at))
-        {
+            && self.policy.should_anchor(
+                self.epochs_since_anchor,
+                now.saturating_sub(self.anchored_at),
+            ) {
             self.make_anchor(now)
         } else {
             None
         };
 
-        Step { seq, receipts, sealed, anchor, unrecorded: false }
+        Step {
+            seq,
+            receipts,
+            sealed,
+            anchor,
+            unrecorded: false,
+        }
     }
 
     /// Submit several intents in order.
@@ -457,7 +500,10 @@ impl<V: MicrochainVm> Node<V> {
         if self.since_seal == 0 {
             return None;
         }
-        if !self.policy.should_seal(self.since_seal, now.saturating_sub(self.sealed_at)) {
+        if !self
+            .policy
+            .should_seal(self.since_seal, now.saturating_sub(self.sealed_at))
+        {
             return None;
         }
         self.seal(now)
@@ -493,7 +539,10 @@ impl<V: MicrochainVm> Node<V> {
         // The checkpoint intent is itself an action of the chain.
         self.compression.actions = self.compression.actions.saturating_add(1);
         self.compression.epochs = self.compression.epochs.saturating_add(1);
-        let covered = self.since_seal.saturating_add(1).saturating_add(self.unattributed);
+        let covered = self
+            .since_seal
+            .saturating_add(1)
+            .saturating_add(self.unattributed);
         self.unattributed = 0;
         self.actions_since_anchor = self.actions_since_anchor.saturating_add(1);
 
@@ -501,7 +550,11 @@ impl<V: MicrochainVm> Node<V> {
         // else can land on the state.
         let snapshot = Snapshot::at_checkpoint(&self.state, &cp)
             .expect("the sealed view is always recoverable immediately after sealing");
-        self.pending.push(Sealed { checkpoint: cp, actions: covered, snapshot });
+        self.pending.push(Sealed {
+            checkpoint: cp,
+            actions: covered,
+            snapshot,
+        });
         self.epochs_since_anchor = self.epochs_since_anchor.saturating_add(1);
         self.since_seal = 0;
         self.sealed_at = now;
@@ -527,7 +580,8 @@ impl<V: MicrochainVm> Node<V> {
     fn admissible(&self, a: &Anchor, cert: Option<&Certificate>) -> Result<(), LineageError> {
         self.ledger.check(a)?;
         if let Some(set) = &self.signers {
-            cert.ok_or(LineageError::InsufficientSignatures)?.verify(a, set)?;
+            cert.ok_or(LineageError::InsufficientSignatures)?
+                .verify(a, set)?;
         }
         Ok(())
     }
@@ -538,7 +592,13 @@ impl<V: MicrochainVm> Node<V> {
     /// `covered` is how many of `pending` the anchor stands for. The finality
     /// intent is journaled **before** anything mutates, so a refusal leaves
     /// the node exactly as it was.
-    fn commit_anchor(&mut self, a: Anchor, cert: Option<&Certificate>, covered: usize, now: u64) -> Result<(), ConfirmError> {
+    fn commit_anchor(
+        &mut self,
+        a: Anchor,
+        cert: Option<&Certificate>,
+        covered: usize,
+        now: u64,
+    ) -> Result<(), ConfirmError> {
         self.admissible(&a, cert)?;
         let finality = V::finality_intent(a.checkpoint.epoch).map(|intent| {
             let seq = self.state.seq() + 1;
@@ -553,7 +613,9 @@ impl<V: MicrochainVm> Node<V> {
         }
         match (&self.signers, cert) {
             (Some(set), Some(c)) => self.ledger.accept(a, c, set)?,
-            (Some(_), None) => return Err(ConfirmError::Lineage(LineageError::InsufficientSignatures)),
+            (Some(_), None) => {
+                return Err(ConfirmError::Lineage(LineageError::InsufficientSignatures))
+            }
             (None, _) => self.ledger.accept_trusted_operator(a)?,
         }
         self.pending_certificates.retain(|(id, _)| *id != a.id());
@@ -591,7 +653,11 @@ impl<V: MicrochainVm> Node<V> {
     /// unspendable. Failing closed is the whole point.
     fn make_anchor(&mut self, now: u64) -> Option<Anchor> {
         let a = self.build_anchor()?;
-        let cert = self.pending_certificates.iter().find(|(id, _)| *id == a.id()).map(|(_, c)| c.clone());
+        let cert = self
+            .pending_certificates
+            .iter()
+            .find(|(id, _)| *id == a.id())
+            .map(|(_, c)| c.clone());
         let covered = self.pending.len();
         self.commit_anchor(a, cert.as_ref(), covered, now).ok()?;
         Some(a)
@@ -615,7 +681,12 @@ impl<V: MicrochainVm> Node<V> {
     /// The chain has the proposed anchor: accept it, publish its snapshot, and
     /// release what it finalised. Epochs sealed while it was in flight stay
     /// pending for the next one.
-    pub fn confirm_anchor(&mut self, id: AnchorId, cert: Option<&Certificate>, now: u64) -> Result<Anchor, ConfirmError> {
+    pub fn confirm_anchor(
+        &mut self,
+        id: AnchorId,
+        cert: Option<&Certificate>,
+        now: u64,
+    ) -> Result<Anchor, ConfirmError> {
         let (a, covered) = match &self.proposed {
             Some((a, c)) if a.id() == id => (*a, *c),
             _ => return Err(ConfirmError::NotProposed),
@@ -664,8 +735,13 @@ mod tests {
         // observation directly rather than through an intent, so it does not
         // count as an action and skew the compression figures under test.
         let mut s = SwapState::new(1, Params::v1());
-        s.tokens.get_mut(&XZEC).unwrap().vault.as_mut().unwrap().observed =
-            Fixed::whole(1_000_000_000);
+        s.tokens
+            .get_mut(&XZEC)
+            .unwrap()
+            .vault
+            .as_mut()
+            .unwrap()
+            .observed = Fixed::whole(1_000_000_000);
         Node::resume(s, policy(), Economics::flat(1_000), 0)
     }
 
@@ -678,9 +754,21 @@ mod tests {
     fn a_node_seals_on_the_action_count() {
         let mut n = node();
         for i in 1..=9 {
-            assert!({ let d = deposit(&n, 1); n.submit_operator(d, 0) }.sealed.is_none(), "sealed early at {}", i);
+            assert!(
+                {
+                    let d = deposit(&n, 1);
+                    n.submit_operator(d, 0)
+                }
+                .sealed
+                .is_none(),
+                "sealed early at {}",
+                i
+            );
         }
-        let step = { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+        let step = {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 0)
+        };
         let cp = step.sealed.expect("the tenth action should have sealed");
         assert_eq!(cp.epoch, 0);
         assert_eq!(n.compression().epochs, 1);
@@ -694,11 +782,20 @@ mod tests {
         let mut n = node();
         let mut anchors = vec![];
         for _ in 0..30 {
-            if let Some(a) = { let d = deposit(&n, 1); n.submit_operator(d, 0) }.anchor {
+            if let Some(a) = {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            }
+            .anchor
+            {
                 anchors.push(a);
             }
         }
-        assert_eq!(anchors.len(), 1, "three epochs should be one Zcash transaction");
+        assert_eq!(
+            anchors.len(),
+            1,
+            "three epochs should be one Zcash transaction"
+        );
         assert_eq!(n.compression().anchors, 1);
         assert_eq!(n.compression().epochs, 3);
         assert_eq!(anchors[0].epochs, 3);
@@ -711,7 +808,10 @@ mod tests {
     fn many_actions_become_one_zcash_transaction() {
         let mut n = node();
         for _ in 0..300 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let c = n.compression();
         assert_eq!(c.anchors, 10);
@@ -728,8 +828,15 @@ mod tests {
         let (actions, epochs, anchored) = n.ledger().totals();
         assert_eq!(anchored, c.anchors);
         assert_eq!(epochs, c.epochs);
-        assert!(actions <= c.actions, "the ledger attested more than happened");
-        assert_eq!(c.actions - actions, 1, "only the trailing finality intent is unattested");
+        assert!(
+            actions <= c.actions,
+            "the ledger attested more than happened"
+        );
+        assert_eq!(
+            c.actions - actions,
+            1,
+            "only the trailing finality intent is unattested"
+        );
     }
 
     #[test]
@@ -745,13 +852,32 @@ mod tests {
             },
             Economics::flat(1_000),
         );
-        assert!({ let d = deposit(&n, 1); n.submit_operator(d, 10) }.sealed.is_none());
-        let step = { let d = deposit(&n, 1); n.submit_operator(d, 61) };
-        assert!(step.sealed.is_some(), "the failsafe did not seal a quiet market");
+        assert!({
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 10)
+        }
+        .sealed
+        .is_none());
+        let step = {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 61)
+        };
+        assert!(
+            step.sealed.is_some(),
+            "the failsafe did not seal a quiet market"
+        );
         // And the anchor failsafe eventually carries it to Zcash regardless of
         // volume, so an exit is never hostage to someone else trading.
-        assert!({ let d = deposit(&n, 1); n.submit_operator(d, 200) }.anchor.is_none());
-        let step = { let d = deposit(&n, 1); n.submit_operator(d, 1_000) };
+        assert!({
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 200)
+        }
+        .anchor
+        .is_none());
+        let step = {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 1_000)
+        };
         assert!(step.anchor.is_some(), "a quiet market never anchored");
     }
 
@@ -767,10 +893,15 @@ mod tests {
     fn a_clean_shutdown_seals_and_anchors_what_is_outstanding() {
         let mut n = node();
         for _ in 0..4 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         assert!(n.seal_now(5).is_some());
-        let a = n.anchor_now(5).expect("shutdown should carry the epoch to Zcash");
+        let a = n
+            .anchor_now(5)
+            .expect("shutdown should carry the epoch to Zcash");
         assert_eq!(a.epochs, 1);
         assert_eq!(a.actions, 5, "four actions plus the seal");
         assert!(n.pending().is_empty());
@@ -801,7 +932,12 @@ mod tests {
         let mut n = node();
         let mut previous: Option<Anchor> = None;
         for _ in 0..200 {
-            if let Some(a) = { let d = deposit(&n, 1); n.submit_operator(d, 0) }.anchor {
+            if let Some(a) = {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            }
+            .anchor
+            {
                 if let Some(p) = previous {
                     assert_eq!(
                         a.previous_root, p.checkpoint.state_root,
@@ -812,7 +948,9 @@ mod tests {
             }
         }
         assert!(n.ledger().len() > 1);
-        n.ledger().verify_lineage().expect("the run's lineage must verify");
+        n.ledger()
+            .verify_lineage()
+            .expect("the run's lineage must verify");
     }
 
     /// The report is what a dashboard and a pitch both read from, so the
@@ -821,7 +959,10 @@ mod tests {
     fn the_report_prices_the_compression() {
         let mut n = node();
         for _ in 0..300 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let rep = n.report();
         assert_eq!(rep.compression, n.compression());
@@ -851,7 +992,10 @@ mod tests {
             Economics::flat(1_000),
         );
         for _ in 0..300 {
-            { let d = deposit(&wide, 1); wide.submit_operator(d, 0) };
+            {
+                let d = deposit(&wide, 1);
+                wide.submit_operator(d, 0)
+            };
         }
         let wide_rep = wide.report();
         assert!(
@@ -874,7 +1018,9 @@ mod tests {
             n.anchor_now(0)
         });
         let a = a.expect("anchor");
-        let snap = n.publishable().expect("an anchored chain must publish its snapshot");
+        let snap = n
+            .publishable()
+            .expect("an anchored chain must publish its snapshot");
         snap.verifies_against(a.checkpoint.state_root)
             .expect("the published snapshot must open the anchored root");
         for id in snap.ids() {
@@ -894,16 +1040,24 @@ mod tests {
         use crate::anchor::{Certificate, SignerSet};
         use ed25519_dalek::{Signer, SigningKey};
 
-        let keys: Vec<SigningKey> = (1..=10u8).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
-        let set = SignerSet::new(keys.iter().map(|k| k.verifying_key().to_bytes()).collect(), 7)
-            .unwrap();
+        let keys: Vec<SigningKey> = (1..=10u8)
+            .map(|i| SigningKey::from_bytes(&[i; 32]))
+            .collect();
+        let set = SignerSet::new(
+            keys.iter().map(|k| k.verifying_key().to_bytes()).collect(),
+            7,
+        )
+        .unwrap();
 
         let mut n = node().with_signers(set);
         assert!(n.requires_signatures());
         for _ in 0..40 {
             let d = deposit(&n, 1);
             let step = n.submit_operator(d, 0);
-            assert!(step.anchor.is_none(), "an anchor settled with no certificate");
+            assert!(
+                step.anchor.is_none(),
+                "an anchor settled with no certificate"
+            );
         }
         assert_eq!(n.compression().anchors, 0);
         assert!(n.ledger().is_empty());
@@ -922,10 +1076,14 @@ mod tests {
         };
         let mut cert = Certificate::new(a.id());
         for k in keys.iter().take(7) {
-            cert.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).unwrap();
+            cert.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .unwrap();
         }
         n.submit_certificate(cert);
-        assert!(n.anchor_now(0).is_some(), "a certified anchor did not settle");
+        assert!(
+            n.anchor_now(0).is_some(),
+            "a certified anchor did not settle"
+        );
         assert_eq!(n.compression().anchors, 1);
         n.ledger().verify_lineage().unwrap();
     }
@@ -937,7 +1095,10 @@ mod tests {
     fn a_resumed_node_continues_the_same_chain() {
         let mut n = node();
         for _ in 0..25 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let root = n.state().state_root();
         let seq = n.state().seq;
@@ -947,7 +1108,10 @@ mod tests {
         assert_eq!(resumed.state().state_root(), root);
         assert_eq!(resumed.state().seq, seq);
 
-        let step = { let d = deposit(&resumed, 1); resumed.submit_operator(d, 100) };
+        let step = {
+            let d = deposit(&resumed, 1);
+            resumed.submit_operator(d, 100)
+        };
         assert_eq!(step.seq, seq + 1);
         assert!(!step.rejected(), "a resumed node could not apply an intent");
         resumed.state().check_invariants().unwrap();
@@ -980,13 +1144,19 @@ mod tests {
         let tape = alloc::sync::Arc::new(std::sync::Mutex::new(Tape(vec![], true)));
         let mut n = node().with_recorder(Box::new(Shared(tape.clone())));
         for _ in 0..10 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let t = tape.lock().unwrap();
         // 10 deposits, the checkpoint that sealed them, and — because the
         // policy anchors every 3 epochs — no finality intent yet.
         assert_eq!(t.0.len(), 11);
-        assert!(t.0.windows(2).all(|w| w[0].1 + 1 == w[1].1), "seqs are contiguous");
+        assert!(
+            t.0.windows(2).all(|w| w[0].1 + 1 == w[1].1),
+            "seqs are contiguous"
+        );
         assert!(t.0[..11].iter().all(|r| r.0 == 0), "all in epoch 0");
         assert_eq!(
             t.0[10].2,
@@ -1001,35 +1171,69 @@ mod tests {
     fn a_refused_record_means_nothing_was_applied() {
         let mut n = node().with_recorder(Box::new(Tape(vec![], false)));
         let before = n.state().seq();
-        let step = { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+        let step = {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 0)
+        };
         assert!(step.unrecorded);
         assert!(step.receipts.is_empty());
-        assert_eq!(n.state().seq(), before, "a refused intent consumed a sequence number");
-        assert_eq!(n.seal_now(0), None, "a seal the journal refused must not happen");
+        assert_eq!(
+            n.state().seq(),
+            before,
+            "a refused intent consumed a sequence number"
+        );
+        assert_eq!(
+            n.seal_now(0),
+            None,
+            "a seal the journal refused must not happen"
+        );
     }
 
     #[test]
     fn an_anchor_is_proposed_then_confirmed_and_only_then_published() {
         let mut n = node().with_manual_anchoring();
         for _ in 0..30 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
-        assert_eq!(n.pending().len(), 3, "manual anchoring must not anchor by itself");
+        assert_eq!(
+            n.pending().len(),
+            3,
+            "manual anchoring must not anchor by itself"
+        );
         assert!(n.publishable().is_none());
         let a = n.propose_anchor(0).expect("a proposal");
         assert_eq!(a.epochs, 3);
-        assert!(n.propose_anchor(0).is_none(), "one anchor in flight at a time");
-        assert!(n.publishable().is_none(), "nothing is published before confirmation");
+        assert!(
+            n.propose_anchor(0).is_none(),
+            "one anchor in flight at a time"
+        );
+        assert!(
+            n.publishable().is_none(),
+            "nothing is published before confirmation"
+        );
         // Another epoch seals while the anchor is in flight.
         for _ in 0..10 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         assert_eq!(n.pending().len(), 4);
-        assert_eq!(n.confirm_anchor([7u8; 32], None, 0), Err(ConfirmError::NotProposed));
+        assert_eq!(
+            n.confirm_anchor([7u8; 32], None, 0),
+            Err(ConfirmError::NotProposed)
+        );
         let confirmed = n.confirm_anchor(a.id(), None, 5).unwrap();
         assert_eq!(confirmed.checkpoint, a.checkpoint);
         assert_eq!(n.publishable().unwrap().root, a.checkpoint.state_root);
-        assert_eq!(n.pending().len(), 1, "the epoch sealed in flight stays pending");
+        assert_eq!(
+            n.pending().len(),
+            1,
+            "the epoch sealed in flight stays pending"
+        );
         assert_eq!(n.ledger().head_root(), a.checkpoint.state_root);
         assert!(n.proposed().is_none());
         // The finality intent was sequenced: the anchored epoch is final.
@@ -1044,51 +1248,89 @@ mod tests {
     fn a_withdrawn_proposal_can_be_proposed_again() {
         let mut n = node().with_manual_anchoring();
         for _ in 0..10 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let a = n.propose_anchor(0).unwrap();
         assert_eq!(n.withdraw_proposal(), Some(a));
-        assert_eq!(n.propose_anchor(0), Some(a), "same pending, same anchor, same id");
+        assert_eq!(
+            n.propose_anchor(0),
+            Some(a),
+            "same pending, same anchor, same id"
+        );
     }
 
     #[test]
     fn resume_with_a_ledger_continues_the_lineage() {
         let mut n = node();
         for _ in 0..30 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let head = n.ledger().head_root();
         assert_ne!(head, [0u8; 32]);
-        let entries: Vec<(Anchor, Certificate)> =
-            n.ledger().anchors().iter().cloned().zip(n.ledger().certificates().iter().cloned()).collect();
+        let entries: Vec<(Anchor, Certificate)> = n
+            .ledger()
+            .anchors()
+            .iter()
+            .cloned()
+            .zip(n.ledger().certificates().iter().cloned())
+            .collect();
         let ledger = Ledger::restore(1, entries).unwrap();
-        let mut back = Chain::resume_with_ledger(n.state().clone(), policy(), Economics::flat(1_000), ledger, 0)
-            .with_manual_anchoring();
+        let mut back = Chain::resume_with_ledger(
+            n.state().clone(),
+            policy(),
+            Economics::flat(1_000),
+            ledger,
+            0,
+        )
+        .with_manual_anchoring();
         for _ in 0..10 {
-            { let d = deposit(&back, 1); back.submit_operator(d, 0) };
+            {
+                let d = deposit(&back, 1);
+                back.submit_operator(d, 0)
+            };
         }
         let next = back.propose_anchor(0).unwrap();
-        assert_eq!(next.previous_root, head, "a resumed node must continue from the root Zcash saw");
+        assert_eq!(
+            next.previous_root, head,
+            "a resumed node must continue from the root Zcash saw"
+        );
         let plain = Chain::resume(n.state().clone(), policy(), Economics::flat(1_000), 0);
-        assert_eq!(plain.ledger().head_root(), [0u8; 32], "without the ledger the lineage is forgotten — the reason it is persisted");
+        assert_eq!(
+            plain.ledger().head_root(),
+            [0u8; 32],
+            "without the ledger the lineage is forgotten — the reason it is persisted"
+        );
     }
 
     #[test]
     fn pending_and_a_proposal_survive_being_restored() {
         let mut n = node().with_manual_anchoring();
         for _ in 0..20 {
-            { let d = deposit(&n, 1); n.submit_operator(d, 0) };
+            {
+                let d = deposit(&n, 1);
+                n.submit_operator(d, 0)
+            };
         }
         let a = n.propose_anchor(0).unwrap();
         let (pa, covered) = n.proposal().unwrap();
         assert_eq!((pa, covered), (a, 2));
         let pending: Vec<Sealed<SwapState>> = n.pending().to_vec();
-        let mut back = Chain::resume(n.state().clone(), policy(), Economics::flat(1_000), 0).with_manual_anchoring();
+        let mut back = Chain::resume(n.state().clone(), policy(), Economics::flat(1_000), 0)
+            .with_manual_anchoring();
         assert!(back.restore_proposal(a, 2).is_err(), "nothing pending yet");
         back.restore_pending(pending);
         back.restore_proposal(a, 2).unwrap();
         assert_eq!(back.proposed(), Some(&a));
-        assert!(back.restore_proposal(a, 1).is_err(), "a proposal over fewer epochs is a different anchor");
+        assert!(
+            back.restore_proposal(a, 1).is_err(),
+            "a proposal over fewer epochs is a different anchor"
+        );
         let c = back.confirm_anchor(a.id(), None, 1).unwrap();
         assert_eq!(c, a);
         assert_eq!(back.publishable().unwrap().root, a.checkpoint.state_root);
@@ -1098,28 +1340,63 @@ mod tests {
     fn endorsements_accumulate_and_clear_only_at_threshold() {
         use crate::anchor::SignerSet;
         use ed25519_dalek::{Signer as _, SigningKey};
-        let keys: Vec<SigningKey> = (1..=3u8).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
-        let set = SignerSet::new(keys.iter().map(|k| k.verifying_key().to_bytes()).collect(), 2).unwrap();
+        let keys: Vec<SigningKey> = (1..=3u8)
+            .map(|i| SigningKey::from_bytes(&[i; 32]))
+            .collect();
+        let set = SignerSet::new(
+            keys.iter().map(|k| k.verifying_key().to_bytes()).collect(),
+            2,
+        )
+        .unwrap();
         let mut n = node().with_manual_anchoring().with_signers(set);
-        for _ in 0..30 { let d = deposit(&n, 1); n.submit_operator(d, 0); }
+        for _ in 0..30 {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 0);
+        }
         let a = n.propose_anchor(0).unwrap();
         // No certificate: it will not settle.
-        assert_eq!(n.confirm_anchor(a.id(), None, 0), Err(ConfirmError::Lineage(LineageError::InsufficientSignatures)));
+        assert_eq!(
+            n.confirm_anchor(a.id(), None, 0),
+            Err(ConfirmError::Lineage(LineageError::InsufficientSignatures))
+        );
         // An outsider and a bad signature carry no weight.
         let outsider = SigningKey::from_bytes(&[9u8; 32]);
-        assert!(!n.add_endorsement(a.id(), outsider.verifying_key().to_bytes(), outsider.sign(&a.id()).to_bytes()));
+        assert!(!n.add_endorsement(
+            a.id(),
+            outsider.verifying_key().to_bytes(),
+            outsider.sign(&a.id()).to_bytes()
+        ));
         assert!(!n.add_endorsement(a.id(), keys[0].verifying_key().to_bytes(), [0u8; 64]));
         assert!(!n.certificate_clears(a.id()));
         // One real endorsement: still short.
-        assert!(n.add_endorsement(a.id(), keys[0].verifying_key().to_bytes(), keys[0].sign(&a.id()).to_bytes()));
+        assert!(n.add_endorsement(
+            a.id(),
+            keys[0].verifying_key().to_bytes(),
+            keys[0].sign(&a.id()).to_bytes()
+        ));
         assert!(!n.certificate_clears(a.id()));
         // The second clears it, and now it settles.
-        assert!(n.add_endorsement(a.id(), keys[1].verifying_key().to_bytes(), keys[1].sign(&a.id()).to_bytes()));
+        assert!(n.add_endorsement(
+            a.id(),
+            keys[1].verifying_key().to_bytes(),
+            keys[1].sign(&a.id()).to_bytes()
+        ));
         assert!(n.certificate_clears(a.id()));
         let cert = n.certificate_for(a.id()).cloned().unwrap();
         let confirmed = n.confirm_anchor(a.id(), Some(&cert), 0).unwrap();
         assert_eq!(confirmed, a);
         assert_eq!(n.publishable().unwrap().root, a.checkpoint.state_root);
-        assert_eq!(n.ledger().certificates().last().unwrap().weight(&SignerSet::new((1..=3u8).map(|i| SigningKey::from_bytes(&[i; 32]).verifying_key().to_bytes()).collect(), 2).unwrap()), 2);
+        assert_eq!(
+            n.ledger().certificates().last().unwrap().weight(
+                &SignerSet::new(
+                    (1..=3u8)
+                        .map(|i| SigningKey::from_bytes(&[i; 32]).verifying_key().to_bytes())
+                        .collect(),
+                    2
+                )
+                .unwrap()
+            ),
+            2
+        );
     }
 }

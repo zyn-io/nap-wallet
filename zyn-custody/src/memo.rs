@@ -58,6 +58,112 @@ pub const FORCED_HEADER: usize = 3 + 1 + 2;
 /// The most frame a memo can carry.
 pub const FORCED_MAX: usize = MEMO_FIELD - FORCED_HEADER;
 
+/// A Cave sale payment. This is deliberately not a normal `ZYN` deposit:
+/// accepting the same note through both paths would mint buyer credit while
+/// also treating the ZEC as NFT-sale proceeds.
+pub const CAVE_PAYMENT_TAG: &[u8; 3] = b"ZYC";
+/// Cave payment memo version.
+pub const CAVE_PAYMENT_VERSION: u8 = 1;
+/// tag + version + purpose + committed reference + recipient.
+pub const CAVE_PAYMENT_LEN: usize = 3 + 1 + 1 + 32 + 32;
+
+/// Why the Cave payment was made. The reference is a policy digest for an
+/// entry and an allocation ticket id for a claim.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CavePaymentPurpose {
+    Entry,
+    Claim,
+}
+
+impl CavePaymentPurpose {
+    fn code(self) -> u8 {
+        match self {
+            Self::Entry => 1,
+            Self::Claim => 2,
+        }
+    }
+
+    fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Entry),
+            2 => Some(Self::Claim),
+            _ => None,
+        }
+    }
+}
+
+/// The application binding carried by a Cave ZEC payment.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CavePaymentMemo {
+    pub purpose: CavePaymentPurpose,
+    pub reference: [u8; 32],
+    pub recipient: AccountId,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CavePaymentError {
+    NotCavePayment,
+    UnknownVersion(u8),
+    UnknownPurpose(u8),
+    Malformed,
+    TrailingBytes,
+}
+
+/// Whether these bytes claim the Cave namespace, valid or not. Callers use
+/// this to fail closed: a malformed `ZYC` instruction must never fall through
+/// and become an ordinary bridge credit by address attribution.
+pub fn has_cave_payment_tag(memo: &[u8]) -> bool {
+    memo.len() >= 3 && &memo[..3] == CAVE_PAYMENT_TAG
+}
+
+/// Build the memo for a purpose-bound Cave payment. Zero references and zero
+/// recipients are refused because neither can identify a sale obligation.
+pub fn encode_cave_payment(payment: CavePaymentMemo) -> Result<[u8; MEMO_FIELD], CavePaymentError> {
+    if payment.reference == [0; 32] || payment.recipient == [0; 32] {
+        return Err(CavePaymentError::Malformed);
+    }
+    let mut out = [0u8; MEMO_FIELD];
+    out[..3].copy_from_slice(CAVE_PAYMENT_TAG);
+    out[3] = CAVE_PAYMENT_VERSION;
+    out[4] = payment.purpose.code();
+    out[5..37].copy_from_slice(&payment.reference);
+    out[37..CAVE_PAYMENT_LEN].copy_from_slice(&payment.recipient);
+    Ok(out)
+}
+
+/// Parse a Cave payment without ever accepting it as an ordinary bridge
+/// deposit. Like the bridge memo, all bytes after the instruction must be zero.
+pub fn decode_cave_payment(memo: &[u8]) -> Result<CavePaymentMemo, CavePaymentError> {
+    if !has_cave_payment_tag(memo) {
+        return Err(CavePaymentError::NotCavePayment);
+    }
+    if memo.len() < CAVE_PAYMENT_LEN {
+        return Err(CavePaymentError::Malformed);
+    }
+    if memo[3] != CAVE_PAYMENT_VERSION {
+        return Err(CavePaymentError::UnknownVersion(memo[3]));
+    }
+    let purpose =
+        CavePaymentPurpose::from_code(memo[4]).ok_or(CavePaymentError::UnknownPurpose(memo[4]))?;
+    if memo[CAVE_PAYMENT_LEN..].iter().any(|byte| *byte != 0) {
+        return Err(CavePaymentError::TrailingBytes);
+    }
+    let reference = memo[5..37]
+        .try_into()
+        .map_err(|_| CavePaymentError::Malformed)?;
+    let recipient = memo[37..CAVE_PAYMENT_LEN]
+        .try_into()
+        .map_err(|_| CavePaymentError::Malformed)?;
+    if reference == [0; 32] || recipient == [0; 32] {
+        return Err(CavePaymentError::Malformed);
+    }
+    Ok(CavePaymentMemo {
+        purpose,
+        reference,
+        recipient,
+    })
+}
+
 /// Wrap a signed submission frame for the memo. `None` if it does not fit.
 pub fn encode_forced(frame: &[u8]) -> Option<[u8; MEMO_FIELD]> {
     if frame.is_empty() || frame.len() > FORCED_MAX {
@@ -99,7 +205,9 @@ pub fn forced_account(frame: &[u8]) -> Option<AccountId> {
     }
     let scheme = Scheme::from_tag(frame[40])?;
     match scheme {
-        Scheme::Ed25519 | Scheme::Ed25519Solana => Some(zyn_vm::auth::account_of(scheme, &frame[41..73])),
+        Scheme::Ed25519 | Scheme::Ed25519Solana => {
+            Some(zyn_vm::auth::account_of(scheme, &frame[41..73]))
+        }
         _ => None,
     }
 }
@@ -165,7 +273,9 @@ pub fn decode(memo: &[u8]) -> Result<AccountId, MemoError> {
     if memo[MEMO_LEN..].iter().any(|b| *b != 0) {
         return Err(MemoError::TrailingBytes);
     }
-    let account: AccountId = memo[4..MEMO_LEN].try_into().map_err(|_| MemoError::Malformed)?;
+    let account: AccountId = memo[4..MEMO_LEN]
+        .try_into()
+        .map_err(|_| MemoError::Malformed)?;
     Ok(account)
 }
 
@@ -251,7 +361,12 @@ mod tests {
             // Thirty-two bytes of something that is not an instruction.
             &[0xABu8; 32][..],
         ] {
-            assert_eq!(decode(memo), Err(MemoError::NotADeposit), "memo {:?} was read", memo);
+            assert_eq!(
+                decode(memo),
+                Err(MemoError::NotADeposit),
+                "memo {:?} was read",
+                memo
+            );
         }
     }
 
@@ -294,8 +409,10 @@ mod tests {
         }
         assert_eq!(encode_text(&acct(0)), format!("ZYN1:{}", "00".repeat(32)));
         // Whitespace and case survive a wallet's input box; nothing else does.
-        assert_eq!(decode_text("  ZYN1:AB{}  ".replace("{}", &"ab".repeat(31)).as_str()),
-                   decode_text(&format!("ZYN1:ab{}", "ab".repeat(31))));
+        assert_eq!(
+            decode_text("  ZYN1:AB{}  ".replace("{}", &"ab".repeat(31)).as_str()),
+            decode_text(&format!("ZYN1:ab{}", "ab".repeat(31)))
+        );
     }
 
     /// On Solana the memo is public and typed by whoever sends it, so the
@@ -307,10 +424,16 @@ mod tests {
         assert_eq!(decode_text("gm"), Err(MemoError::NotADeposit));
         assert_eq!(decode_text("ZYN"), Err(MemoError::NotADeposit));
         assert_eq!(decode_text("ZYNX:00"), Err(MemoError::NotADeposit));
-        assert_eq!(decode_text(&ok.replace("ZYN1", "ZYN2")), Err(MemoError::UnknownVersion(2)));
+        assert_eq!(
+            decode_text(&ok.replace("ZYN1", "ZYN2")),
+            Err(MemoError::UnknownVersion(2))
+        );
         assert_eq!(decode_text(&ok[..ok.len() - 1]), Err(MemoError::Malformed));
         assert_eq!(decode_text(&format!("{}0", ok)), Err(MemoError::Malformed));
-        assert_eq!(decode_text(&ok.replace(':', ";")), Err(MemoError::Malformed));
+        assert_eq!(
+            decode_text(&ok.replace(':', ";")),
+            Err(MemoError::Malformed)
+        );
         // A non-hex character in the right place must not decode as something.
         assert_eq!(
             decode_text(&format!("ZYN1:zz{}", "ab".repeat(31))),
@@ -326,7 +449,11 @@ mod tests {
         let mut field = [0u8; MEMO_FIELD];
         field[..text.len()].copy_from_slice(text.as_bytes());
         assert_eq!(decode(&field), Ok(acct(9)));
-        assert_eq!(decode(text.as_bytes()), Ok(acct(9)), "unpadded, as some wallets send");
+        assert_eq!(
+            decode(text.as_bytes()),
+            Ok(acct(9)),
+            "unpadded, as some wallets send"
+        );
         // Text after the instruction is not padding.
         let mut noisy = field;
         noisy[text.len()] = b' ';
@@ -347,7 +474,10 @@ mod tests {
         assert_eq!(decode(&deposit), Ok([9u8; 32]));
         let mut trailing = anchor;
         trailing[ANCHOR_LEN] = 1;
-        assert!(!is_anchor(&trailing), "an anchor with trailing bytes is not an anchor");
+        assert!(
+            !is_anchor(&trailing),
+            "an anchor with trailing bytes is not an anchor"
+        );
     }
 
     #[test]
@@ -359,12 +489,67 @@ mod tests {
         assert_eq!(forced_frame(&memo), Some(frame.as_slice()));
         assert_eq!(decode(&memo), Err(MemoError::NotADeposit));
         assert!(!is_anchor(&memo));
-        assert_eq!(forced_account(&frame), Some(zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &[0x33u8; 32])));
+        assert_eq!(
+            forced_account(&frame),
+            Some(zyn_vm::auth::account_of(
+                zyn_vm::auth::Scheme::Ed25519,
+                &[0x33u8; 32]
+            ))
+        );
         assert!(forced_frame(&encode(&[1u8; 32])).is_none());
         let mut bad = memo;
         bad[MEMO_FIELD - 1] = 1;
         assert!(forced_frame(&bad).is_none(), "trailing bytes");
         assert!(encode_forced(&[0u8; FORCED_MAX + 1]).is_none(), "too big");
         assert!(encode_forced(&[]).is_none());
+    }
+
+    #[test]
+    fn cave_payments_are_strict_and_never_decode_as_buyer_deposits() {
+        for purpose in [CavePaymentPurpose::Entry, CavePaymentPurpose::Claim] {
+            let payment = CavePaymentMemo {
+                purpose,
+                reference: [0x44; 32],
+                recipient: [0x55; 32],
+            };
+            let memo = encode_cave_payment(payment).unwrap();
+            assert_eq!(decode_cave_payment(&memo), Ok(payment));
+            assert_eq!(decode(&memo), Err(MemoError::NotADeposit));
+            assert!(!is_anchor(&memo));
+            assert!(forced_frame(&memo).is_none());
+        }
+
+        assert_eq!(
+            encode_cave_payment(CavePaymentMemo {
+                purpose: CavePaymentPurpose::Entry,
+                reference: [0; 32],
+                recipient: [1; 32],
+            }),
+            Err(CavePaymentError::Malformed)
+        );
+        let mut memo = encode_cave_payment(CavePaymentMemo {
+            purpose: CavePaymentPurpose::Entry,
+            reference: [1; 32],
+            recipient: [2; 32],
+        })
+        .unwrap();
+        memo[CAVE_PAYMENT_LEN] = 1;
+        assert_eq!(
+            decode_cave_payment(&memo),
+            Err(CavePaymentError::TrailingBytes)
+        );
+        assert!(decode_cave_payment(&memo[..CAVE_PAYMENT_LEN - 1]).is_err());
+        memo[CAVE_PAYMENT_LEN] = 0;
+        memo[3] = 2;
+        assert_eq!(
+            decode_cave_payment(&memo),
+            Err(CavePaymentError::UnknownVersion(2))
+        );
+        memo[3] = CAVE_PAYMENT_VERSION;
+        memo[4] = 9;
+        assert_eq!(
+            decode_cave_payment(&memo),
+            Err(CavePaymentError::UnknownPurpose(9))
+        );
     }
 }

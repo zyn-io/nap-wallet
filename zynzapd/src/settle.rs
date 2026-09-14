@@ -39,8 +39,8 @@ use swapvm::types::AssetId;
 use zyn::verify::Authorized;
 use zyn_bridge::solana::{chunk, resolve, Reveal, SolanaError as SettleError, VaultAccounts};
 use zyn_bridge::{group, ChainOrigin, Settlement, ORIGIN_SOLANA, ORIGIN_ZCASH};
-use zyn_custody::solana::custody::{self, Id, Keys};
 use zyn_custody::custody_net::SolanaPublicPackage;
+use zyn_custody::solana::custody::{self, Id, Keys};
 use zyn_custody::solana::{base58_encode, pubkey, Rpc, TxStatus};
 use zyn_vm::spec::AccountId;
 use zyn_vm::Fixed;
@@ -96,11 +96,11 @@ impl Ledger {
     }
 
     pub fn load(dir: &Path, chain_id: u32, asset: AssetId) -> Result<Ledger, String> {
-        Self::load_named(dir, chain_id, &asset.to_string())
+        Self::load_named(dir, chain_id, &hex(&asset))
     }
 
     pub fn save(&self, dir: &Path, chain_id: u32, asset: AssetId) -> Result<(), String> {
-        self.save_named(dir, chain_id, &asset.to_string())
+        self.save_named(dir, chain_id, &hex(&asset))
     }
 
     /// A ledger for something other than one asset's exits — the anchors.
@@ -108,7 +108,8 @@ impl Ledger {
         match std::fs::read_to_string(Self::path(dir, chain_id, name)) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Ledger::default()),
             Err(e) => Err(format!("cannot read settlement ledger: {}", e)),
-            Ok(s) => Ledger::decode(&s).ok_or_else(|| "settlement ledger is corrupt; refusing to guess".to_string()),
+            Ok(s) => Ledger::decode(&s)
+                .ok_or_else(|| "settlement ledger is corrupt; refusing to guess".to_string()),
         }
     }
 
@@ -119,7 +120,9 @@ impl Ledger {
     }
 
     pub fn in_flight(&self) -> impl Iterator<Item = &Entry> {
-        self.entries.iter().filter(|e| e.status == Status::Broadcast)
+        self.entries
+            .iter()
+            .filter(|e| e.status == Status::Broadcast)
     }
 
     /// One line per entry: `id status nonce tx account:amount,...`
@@ -131,17 +134,35 @@ impl Ledger {
                 Status::Confirmed => "confirmed",
                 Status::Abandoned => "abandoned",
             };
-            let covers: Vec<String> = e.covers.iter().enumerate().map(|(i, (a, v))| match e.cover_assets.get(i).copied().flatten() {
-                Some(asset) => format!("{}:{}@{}", hex(a), v.0, asset),
-                None => format!("{}:{}", hex(a), v.0),
-            }).collect();
+            let covers: Vec<String> = e
+                .covers
+                .iter()
+                .enumerate()
+                .map(
+                    |(i, (a, v))| match e.cover_assets.get(i).copied().flatten() {
+                        Some(asset) => format!("{}:{}@{}", hex(a), v.0, hex(&asset)),
+                        None => format!("{}:{}", hex(a), v.0),
+                    },
+                )
+                .collect();
             let spent: Vec<String> = e.spent.iter().map(|p| p.to_string()).collect();
             s.push_str(&format!(
                 "{} {} {} {} {} {} {} {}\n",
-                e.id, status, hex(&e.nonce), hex(&e.transaction), covers.join(","),
-                if spent.is_empty() { "-".to_string() } else { spent.join(",") },
+                e.id,
+                status,
+                hex(&e.nonce),
+                hex(&e.transaction),
+                covers.join(","),
+                if spent.is_empty() {
+                    "-".to_string()
+                } else {
+                    spent.join(",")
+                },
                 e.expiry,
-                match e.pool { ValuePool::Orchard => "orchard", ValuePool::Ironwood => "ironwood" }
+                match e.pool {
+                    ValuePool::Orchard => "orchard",
+                    ValuePool::Ironwood => "ironwood",
+                }
             ));
         }
         s
@@ -165,7 +186,7 @@ impl Ledger {
             for c in f.next()?.split(',').filter(|c| !c.is_empty()) {
                 let (a, v) = c.split_once(':')?;
                 let (v, asset) = match v.split_once('@') {
-                    Some((v, asset)) => (v, Some(asset.parse().ok()?)),
+                    Some((v, asset)) => (v, Some(unhex(asset)?.try_into().ok()?)),
                     None => (v, None),
                 };
                 let account: AccountId = unhex(a)?.try_into().ok()?;
@@ -175,7 +196,10 @@ impl Ledger {
             // Older ledgers stop here; Zcash entries carry two more fields.
             let spent = match f.next() {
                 None | Some("-") => Vec::new(),
-                Some(list) => list.split(',').map(|p| p.parse().ok()).collect::<Option<Vec<u64>>>()?,
+                Some(list) => list
+                    .split(',')
+                    .map(|p| p.parse().ok())
+                    .collect::<Option<Vec<u64>>>()?,
             };
             let expiry = match f.next() {
                 None => 0,
@@ -189,7 +213,17 @@ impl Ledger {
             if f.next().is_some() {
                 return None;
             }
-            entries.push(Entry { id, nonce, transaction, covers, cover_assets, status, spent, expiry, pool });
+            entries.push(Entry {
+                id,
+                nonce,
+                transaction,
+                covers,
+                cover_assets,
+                status,
+                spent,
+                expiry,
+                pool,
+            });
         }
         Some(Ledger { entries })
     }
@@ -202,7 +236,8 @@ impl Ledger {
 /// is what makes an exit payable and it says where the money goes, so it is
 /// handled like a key.
 pub fn load_reveals(path: &Path) -> Result<Vec<Reveal>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
     let mut out = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -212,12 +247,24 @@ pub fn load_reveals(path: &Path) -> Result<Vec<Reveal>, String> {
         let mut f = line.split_whitespace();
         let (a, addr, salt) = (f.next(), f.next(), f.next());
         let (Some(a), Some(addr), Some(salt), None) = (a, addr, salt, f.next()) else {
-            return Err(format!("line {}: expected `<account-hex> <address> <salt-hex>`", n + 1));
+            return Err(format!(
+                "line {}: expected `<account-hex> <address> <salt-hex>`",
+                n + 1
+            ));
         };
-        let account: AccountId = unhex(a).and_then(|v| v.try_into().ok()).ok_or_else(|| format!("line {}: account must be 64 hex characters", n + 1))?;
-        let address = pubkey(addr).ok_or_else(|| format!("line {}: address is not a Solana address", n + 1))?;
-        let salt: [u8; 32] = unhex(salt).and_then(|v| v.try_into().ok()).ok_or_else(|| format!("line {}: salt must be 64 hex characters", n + 1))?;
-        out.push(Reveal { account, address, salt });
+        let account: AccountId = unhex(a)
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| format!("line {}: account must be 64 hex characters", n + 1))?;
+        let address = pubkey(addr)
+            .ok_or_else(|| format!("line {}: address is not a Solana address", n + 1))?;
+        let salt: [u8; 32] = unhex(salt)
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| format!("line {}: salt must be 64 hex characters", n + 1))?;
+        out.push(Reveal {
+            account,
+            address,
+            salt,
+        });
     }
     Ok(out)
 }
@@ -228,7 +275,11 @@ pub fn settlement_of(state: &SwapState, asset: AssetId) -> Option<Settlement> {
     settlement_for(state, asset, ORIGIN_SOLANA)
 }
 
-pub fn settlement_for(state: &SwapState, asset: AssetId, origin: ChainOrigin) -> Option<Settlement> {
+pub fn settlement_for(
+    state: &SwapState,
+    asset: AssetId,
+    origin: ChainOrigin,
+) -> Option<Settlement> {
     let exits = state.accounts.iter().filter_map(|(id, a)| {
         let p = a.pending.get(&asset)?;
         Some((*id, asset, origin, p.amount, p.since))
@@ -272,14 +323,32 @@ impl SolanaSettler {
         chain_id: u32,
     ) -> Result<SolanaSettler, String> {
         if custodians.is_none() && shares.len() < usize::from(threshold) {
-            return Err(format!("{} share(s) loaded, {} needed to sign", shares.len(), threshold));
+            return Err(format!(
+                "{} share(s) loaded, {} needed to sign",
+                shares.len(),
+                threshold
+            ));
         }
         pubkey(nonce_account).ok_or("ZYN_SOLANA_NONCE is not a Solana address")?;
         let ledger = Ledger::load(&dir, chain_id, asset)?;
         if custodians.is_some() {
             eprintln!("zynzapd: Solana exits signed by custodians, threshold {} — this box holds no share", threshold);
         }
-        Ok(SolanaSettler { mirrored: Vec::new(), rpc, shares, public, custodians, threshold, nonce_account: nonce_account.to_string(), reveals, asset, ledger, dir, chain_id, warned: BTreeMap::new() })
+        Ok(SolanaSettler {
+            mirrored: Vec::new(),
+            rpc,
+            shares,
+            public,
+            custodians,
+            threshold,
+            nonce_account: nonce_account.to_string(),
+            reveals,
+            asset,
+            ledger,
+            dir,
+            chain_id,
+            warned: BTreeMap::new(),
+        })
     }
 
     /// Items this vault also pays out, as SPL transfers.
@@ -331,7 +400,14 @@ impl SolanaSettler {
                     let mut n = node.lock().map_err(|_| "node lock poisoned".to_string())?;
                     for (k, (account, amount)) in covers.into_iter().enumerate() {
                         let asset = cover_assets.get(k).copied().flatten().unwrap_or(self.asset);
-                        let step = n.submit(Authorized::operator(Intent::ConfirmWithdrawal { account, asset, amount }), now);
+                        let step = n.submit(
+                            Authorized::operator(Intent::ConfirmWithdrawal {
+                                account,
+                                asset,
+                                amount,
+                            }),
+                            now,
+                        );
                         if step.rejected() {
                             eprintln!("zynzapd: ConfirmWithdrawal for {} rejected at seq {} — chain and ledger disagree", hex(&account), step.seq);
                         } else {
@@ -342,13 +418,19 @@ impl SolanaSettler {
                     changed = true;
                 }
                 TxStatus::Failed => {
-                    eprintln!("zynzapd: settlement {} failed on chain; its exits stay pending", id);
+                    eprintln!(
+                        "zynzapd: settlement {} failed on chain; its exits stay pending",
+                        id
+                    );
                     self.ledger.entries[i].status = Status::Abandoned;
                     changed = true;
                 }
                 TxStatus::Confirmed => {}
                 TxStatus::Unknown => {
-                    let nonce_now = self.rpc.nonce_value(&self.nonce_account).map_err(|e| e.to_string())?;
+                    let nonce_now = self
+                        .rpc
+                        .nonce_value(&self.nonce_account)
+                        .map_err(|e| e.to_string())?;
                     if nonce_now != self.ledger.entries[i].nonce {
                         // Not ours, and not this one: the nonce was spent by a
                         // transaction this ledger never wrote. That is either a
@@ -357,7 +439,10 @@ impl SolanaSettler {
                         eprintln!("zynzapd: NONCE {} WAS SPENT BY A TRANSACTION NOT IN THE LEDGER — investigate before settling again", self.nonce_account);
                         self.ledger.entries[i].status = Status::Abandoned;
                         changed = true;
-                    } else if let Err(e) = self.rpc.send_transaction(&self.ledger.entries[i].transaction) {
+                    } else if let Err(e) = self
+                        .rpc
+                        .send_transaction(&self.ledger.entries[i].transaction)
+                    {
                         eprintln!("zynzapd: rebroadcast of {} refused: {}", id, e);
                     }
                 }
@@ -377,11 +462,26 @@ impl SolanaSettler {
             // the same transactions.
             let mut assets = vec![self.asset];
             assets.extend(self.mirrored.iter().map(|m| m.asset));
-            let exits = n.state().accounts.iter().flat_map(|(id, a)| {
-                assets.iter().filter_map(move |asset| a.pending.get(asset).map(|p| (*id, *asset, ORIGIN_SOLANA, p.amount, p.since)))
-            }).collect::<Vec<_>>();
-            let Some(s) = group(exits).into_iter().find(|s| s.origin == ORIGIN_SOLANA) else { return Ok(()) };
-            let b: BTreeMap<AccountId, zyn_bridge::Binding> = s.payouts.iter().filter_map(|p| Some((p.account, n.state().accounts.get(&p.account)?.binding?))).collect();
+            let exits = n
+                .state()
+                .accounts
+                .iter()
+                .flat_map(|(id, a)| {
+                    assets.iter().filter_map(move |asset| {
+                        a.pending
+                            .get(asset)
+                            .map(|p| (*id, *asset, ORIGIN_SOLANA, p.amount, p.since))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let Some(s) = group(exits).into_iter().find(|s| s.origin == ORIGIN_SOLANA) else {
+                return Ok(());
+            };
+            let b: BTreeMap<AccountId, zyn_bridge::Binding> = s
+                .payouts
+                .iter()
+                .filter_map(|p| Some((p.account, n.state().accounts.get(&p.account)?.binding?)))
+                .collect();
             (s, b)
         };
         // Only exits that can be paid: bound, and disclosed to us. The rest
@@ -390,9 +490,13 @@ impl SolanaSettler {
             .payouts
             .iter()
             .filter(|p| {
-                let ok = bindings.contains_key(&p.account) && self.reveals.iter().any(|r| r.account == p.account);
+                let ok = bindings.contains_key(&p.account)
+                    && self.reveals.iter().any(|r| r.account == p.account);
                 if !ok && self.warned.insert(p.account, ()).is_none() {
-                    eprintln!("zynzapd: exit for {} is not payable (no binding or no reveal); waiting", hex(&p.account));
+                    eprintln!(
+                        "zynzapd: exit for {} is not payable (no binding or no reveal); waiting",
+                        hex(&p.account)
+                    );
                 }
                 ok
             })
@@ -401,24 +505,36 @@ impl SolanaSettler {
         if payable.is_empty() {
             return Ok(());
         }
-        let resolved = resolve(&payable, |a| bindings.get(&a).copied(), &self.reveals).map_err(|e| match e {
-            SettleError::WrongDestination => "a reveal does not match its account's binding — REFUSING to pay".to_string(),
-            e => format!("cannot resolve settlement: {:?}", e),
-        })?;
-        // An item leaves as an SPL transfer of whole units; SOL as lamports.
-        let resolved: Vec<zyn_bridge::solana::SolPayout> = resolved.into_iter().zip(payable.iter()).map(|(sp, p)| {
-            match self.mirrored.iter().find(|m| m.asset == p.asset) {
-                Some(m) => {
-                    let mint = zyn_custody::solana::pubkey(&m.mint).unwrap_or([0u8; 32]);
-                    let units = (p.amount.0 / Fixed::ONE.0) as u64 * m.per_unit;
-                    zyn_bridge::solana::SolPayout::token(sp.to, mint, units)
+        let resolved = resolve(&payable, |a| bindings.get(&a).copied(), &self.reveals).map_err(
+            |e| match e {
+                SettleError::WrongDestination => {
+                    "a reveal does not match its account's binding — REFUSING to pay".to_string()
                 }
-                None => sp,
-            }
-        }).collect();
+                e => format!("cannot resolve settlement: {:?}", e),
+            },
+        )?;
+        // An item leaves as an SPL transfer of whole units; SOL as lamports.
+        let resolved: Vec<zyn_bridge::solana::SolPayout> = resolved
+            .into_iter()
+            .zip(payable.iter())
+            .map(
+                |(sp, p)| match self.mirrored.iter().find(|m| m.asset == p.asset) {
+                    Some(m) => {
+                        let mint = zyn_custody::solana::pubkey(&m.mint).unwrap_or([0u8; 32]);
+                        let units = (p.amount.0 / Fixed::ONE.0) as u64 * m.per_unit;
+                        zyn_bridge::solana::SolPayout::token(sp.to, mint, units)
+                    }
+                    None => sp,
+                },
+            )
+            .collect();
         let vault = custody::vault_address_of(&self.public);
-        let accounts = VaultAccounts { vault, nonce_account: pubkey(&self.nonce_account).ok_or("nonce account")? };
-        let groups = chunk(accounts, &resolved).map_err(|e| format!("cannot split settlement: {:?}", e))?;
+        let accounts = VaultAccounts {
+            vault,
+            nonce_account: pubkey(&self.nonce_account).ok_or("nonce account")?,
+        };
+        let groups =
+            chunk(accounts, &resolved).map_err(|e| format!("cannot split settlement: {:?}", e))?;
         // The exit pays the network fee, not the vault: units burned on Zyn
         // equal lamports leaving the vault, or the vault drifts below what it
         // has issued and the next attestation refuses. One fee per
@@ -435,30 +551,78 @@ impl SolanaSettler {
             n.lamports -= fee;
         }
         let first = &first;
-        let covers: Vec<(AccountId, Fixed)> = payable.iter().take(first.len()).map(|p| (p.account, p.amount)).collect();
-        let cover_assets: Vec<Option<AssetId>> = payable.iter().take(first.len()).map(|p| (p.asset != self.asset).then_some(p.asset)).collect();
+        let covers: Vec<(AccountId, Fixed)> = payable
+            .iter()
+            .take(first.len())
+            .map(|p| (p.account, p.amount))
+            .collect();
+        let cover_assets: Vec<Option<AssetId>> = payable
+            .iter()
+            .take(first.len())
+            .map(|p| (p.asset != self.asset).then_some(p.asset))
+            .collect();
 
         let payment = match &self.custodians {
             Some(addrs) => {
                 let mut q = zyn_custody::custody_net::RemoteSolanaQuorum::new(addrs.clone());
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                custody::prepare_with(&self.rpc, &mut q, self.threshold, &self.public, &self.nonce_account, first, now)
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                custody::prepare_with(
+                    &self.rpc,
+                    &mut q,
+                    self.threshold,
+                    &self.public,
+                    &self.nonce_account,
+                    first,
+                    now,
+                )
             }
             None => {
-                let quorum: Vec<(Id, &Keys)> = self.shares.iter().take(usize::from(self.threshold)).map(|(i, k)| (*i, k)).collect();
-                custody::prepare(&self.rpc, &quorum, self.threshold, &self.nonce_account, first, &mut rand::rngs::OsRng)
+                let quorum: Vec<(Id, &Keys)> = self
+                    .shares
+                    .iter()
+                    .take(usize::from(self.threshold))
+                    .map(|(i, k)| (*i, k))
+                    .collect();
+                custody::prepare(
+                    &self.rpc,
+                    &quorum,
+                    self.threshold,
+                    &self.nonce_account,
+                    first,
+                    &mut rand::rngs::OsRng,
+                )
             }
         }
         .map_err(|e| format!("cannot prepare settlement: {:?}", e))?;
-        let nonce = self.rpc.nonce_value(&self.nonce_account).map_err(|e| e.to_string())?;
+        let nonce = self
+            .rpc
+            .nonce_value(&self.nonce_account)
+            .map_err(|e| e.to_string())?;
 
         // Recorded before it is sent. A crash after this line and before the
         // broadcast loses nothing: the entry is Unknown next pass and is
         // rebroadcast, or abandoned if the nonce moved.
-        self.ledger.entries.push(Entry { id: payment.id(), nonce, transaction: payment.transaction.clone(), covers, cover_assets, status: Status::Broadcast, spent: Vec::new(), expiry: 0, pool: ValuePool::Orchard });
+        self.ledger.entries.push(Entry {
+            id: payment.id(),
+            nonce,
+            transaction: payment.transaction.clone(),
+            covers,
+            cover_assets,
+            status: Status::Broadcast,
+            spent: Vec::new(),
+            expiry: 0,
+            pool: ValuePool::Orchard,
+        });
         self.save()?;
         match custody::broadcast(&self.rpc, &payment) {
-            Ok(sig) => eprintln!("zynzapd: settlement {} broadcast, {} exit(s)", sig, first.len()),
+            Ok(sig) => eprintln!(
+                "zynzapd: settlement {} broadcast, {} exit(s)",
+                sig,
+                first.len()
+            ),
             Err(e) => eprintln!("zynzapd: broadcast deferred: {:?}", e),
         }
         Ok(())
@@ -469,8 +633,6 @@ impl SolanaSettler {
 // Zcash
 // ====================================================================
 
-
-
 use orchard::bundle::BundleVersion;
 use orchard::circuit::ProvingKey;
 use orchard::keys::{FullViewingKey, Scope};
@@ -478,8 +640,8 @@ use zcash_protocol::consensus::Network;
 use zcash_transparent::address::TransparentAddress;
 use zyn_custody::ceremony::{Identifier as ZcashId, VaultKeys as ZcashKeys};
 
-use zyn_custody::shielded::PoolStores;
 use zyn_custody::payout::{self, Envelope, Payment};
+use zyn_custody::shielded::PoolStores;
 use zyn_custody::zebra::Zebra;
 
 /// One zatoshi in `Fixed`'s scale.
@@ -499,9 +661,15 @@ pub struct ZcashReveal {
 /// P2PKH, `1` P2SH (20 bytes), `2` an Orchard/Ironwood receiver (43 bytes).
 pub fn zcash_commitment(address: &ZcashDestination, salt: &[u8; 32]) -> [u8; 32] {
     match address {
-        ZcashDestination::Transparent(TransparentAddress::PublicKeyHash(h)) => zyn_vm::eip712::keccak(&[&[0u8], &h[..], &salt[..]]),
-        ZcashDestination::Transparent(TransparentAddress::ScriptHash(h)) => zyn_vm::eip712::keccak(&[&[1u8], &h[..], &salt[..]]),
-        ZcashDestination::Shielded(a) => zyn_vm::eip712::keccak(&[&[2u8], &a.to_raw_address_bytes()[..], &salt[..]]),
+        ZcashDestination::Transparent(TransparentAddress::PublicKeyHash(h)) => {
+            zyn_vm::eip712::keccak(&[&[0u8], &h[..], &salt[..]])
+        }
+        ZcashDestination::Transparent(TransparentAddress::ScriptHash(h)) => {
+            zyn_vm::eip712::keccak(&[&[1u8], &h[..], &salt[..]])
+        }
+        ZcashDestination::Shielded(a) => {
+            zyn_vm::eip712::keccak(&[&[2u8], &a.to_raw_address_bytes()[..], &salt[..]])
+        }
     }
 }
 
@@ -530,7 +698,8 @@ pub fn parse_destination(s: &str, network: Network) -> Option<ZcashDestination> 
 
 /// `<account-hex> <transparent-address> <salt-hex>` per line.
 pub fn load_zcash_reveals(path: &Path, network: Network) -> Result<Vec<ZcashReveal>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
     let mut out = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -539,13 +708,28 @@ pub fn load_zcash_reveals(path: &Path, network: Network) -> Result<Vec<ZcashReve
         }
         let f: Vec<&str> = line.split_whitespace().collect();
         if f.len() != 3 {
-            return Err(format!("line {}: expected `<account-hex> <address> <salt-hex>`", n + 1));
+            return Err(format!(
+                "line {}: expected `<account-hex> <address> <salt-hex>`",
+                n + 1
+            ));
         }
-        let account: AccountId = unhex(f[0]).and_then(|v| v.try_into().ok()).ok_or_else(|| format!("line {}: account must be 64 hex characters", n + 1))?;
-        let address = parse_destination(f[1], network)
-            .ok_or_else(|| format!("line {}: not a transparent or unified address for this network", n + 1))?;
-        let salt: [u8; 32] = unhex(f[2]).and_then(|v| v.try_into().ok()).ok_or_else(|| format!("line {}: salt must be 64 hex characters", n + 1))?;
-        out.push(ZcashReveal { account, address, salt });
+        let account: AccountId = unhex(f[0])
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| format!("line {}: account must be 64 hex characters", n + 1))?;
+        let address = parse_destination(f[1], network).ok_or_else(|| {
+            format!(
+                "line {}: not a transparent or unified address for this network",
+                n + 1
+            )
+        })?;
+        let salt: [u8; 32] = unhex(f[2])
+            .and_then(|v| v.try_into().ok())
+            .ok_or_else(|| format!("line {}: salt must be 64 hex characters", n + 1))?;
+        out.push(ZcashReveal {
+            account,
+            address,
+            salt,
+        });
     }
     Ok(out)
 }
@@ -588,7 +772,11 @@ impl ZcashSettler {
         custodians: Option<Vec<String>>,
     ) -> Result<ZcashSettler, String> {
         if custodians.is_none() && shares.len() < usize::from(threshold) {
-            return Err(format!("{} share(s) loaded, {} needed to sign", shares.len(), threshold));
+            return Err(format!(
+                "{} share(s) loaded, {} needed to sign",
+                shares.len(),
+                threshold
+            ));
         }
         // The viewing key must be the threshold key's, or notes arrive at an
         // address the signers cannot authorise (`ceremony::orchard_viewing_key`).
@@ -601,16 +789,38 @@ impl ZcashSettler {
         }
         let ledger = Ledger::load(&dir, chain_id, asset)?;
         if custodians.is_some() {
-            eprintln!("zynzapd: Zcash exits signed by custodians, threshold {} — this box holds no share", threshold);
+            eprintln!(
+                "zynzapd: Zcash exits signed by custodians, threshold {} — this box holds no share",
+                threshold
+            );
         }
-        Ok(ZcashSettler { zebra, network, shares, public, custodians, threshold, fvk, notes, reveals, asset, confirmations, ledger, dir, chain_id, proving: None, warned: BTreeMap::new() })
+        Ok(ZcashSettler {
+            zebra,
+            network,
+            shares,
+            public,
+            custodians,
+            threshold,
+            fvk,
+            notes,
+            reveals,
+            asset,
+            confirmations,
+            ledger,
+            dir,
+            chain_id,
+            proving: None,
+            warned: BTreeMap::new(),
+        })
     }
 
     pub fn deposit_address(&self) -> String {
         // The network the settler was built for, so the address it prints is
         // one somebody on that chain can actually pay.
-        zyn_custody::shielded::VaultKeys::from_full_viewing_key(self.fvk.clone())
-            .address(0, <Network as zcash_protocol::consensus::Parameters>::network_type(&self.network))
+        zyn_custody::shielded::VaultKeys::from_full_viewing_key(self.fvk.clone()).address(
+            0,
+            <Network as zcash_protocol::consensus::Parameters>::network_type(&self.network),
+        )
     }
 
     pub fn add_reveal(&mut self, r: ZcashReveal) {
@@ -646,7 +856,14 @@ impl ZcashSettler {
                     let covers = self.ledger.entries[i].covers.clone();
                     let mut n = node.lock().map_err(|_| "node lock poisoned".to_string())?;
                     for (account, amount) in covers {
-                        let step = n.submit(Authorized::operator(Intent::ConfirmWithdrawal { account, asset: self.asset, amount }), now);
+                        let step = n.submit(
+                            Authorized::operator(Intent::ConfirmWithdrawal {
+                                account,
+                                asset: self.asset,
+                                amount,
+                            }),
+                            now,
+                        );
                         if step.rejected() {
                             eprintln!("zynzapd: ConfirmWithdrawal for {} rejected at seq {} — chain and ledger disagree", hex(&account), step.seq);
                         } else {
@@ -669,7 +886,11 @@ impl ZcashSettler {
                     changed = true;
                 }
                 None => {
-                    let hex_tx: String = self.ledger.entries[i].transaction.iter().map(|b| format!("{:02x}", b)).collect();
+                    let hex_tx: String = self.ledger.entries[i]
+                        .transaction
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
                     if let Err(e) = self.zebra.send_raw_transaction(&hex_tx) {
                         eprintln!("zynzapd: rebroadcast of {} refused: {}", id, e);
                     }
@@ -685,8 +906,14 @@ impl ZcashSettler {
     fn settle_next(&mut self, node: &Shared) -> Result<(), String> {
         let (settlement, bindings) = {
             let n = node.lock().map_err(|_| "node lock poisoned".to_string())?;
-            let Some(s) = settlement_for(n.state(), self.asset, ORIGIN_ZCASH) else { return Ok(()) };
-            let b: BTreeMap<AccountId, zyn_bridge::Binding> = s.payouts.iter().filter_map(|p| Some((p.account, n.state().accounts.get(&p.account)?.binding?))).collect();
+            let Some(s) = settlement_for(n.state(), self.asset, ORIGIN_ZCASH) else {
+                return Ok(());
+            };
+            let b: BTreeMap<AccountId, zyn_bridge::Binding> = s
+                .payouts
+                .iter()
+                .filter_map(|p| Some((p.account, n.state().accounts.get(&p.account)?.binding?)))
+                .collect();
             (s, b)
         };
         let mut payments = Vec::new();
@@ -695,18 +922,28 @@ impl ZcashSettler {
             let reveal = self.reveals.iter().find(|r| r.account == p.account);
             let payable = match (bindings.get(&p.account), reveal) {
                 (Some(b), Some(r)) if b.admits(zcash_commitment(&r.address, &r.salt)) => Some(r),
-                (Some(_), Some(_)) => return Err("a reveal does not match its account's binding — REFUSING to pay".into()),
+                (Some(_), Some(_)) => {
+                    return Err(
+                        "a reveal does not match its account's binding — REFUSING to pay".into(),
+                    )
+                }
                 _ => None,
             };
             let Some(r) = payable else {
                 if self.warned.insert(p.account, ()).is_none() {
-                    eprintln!("zynzapd: exit for {} is not payable (no binding or no reveal); waiting", hex(&p.account));
+                    eprintln!(
+                        "zynzapd: exit for {} is not payable (no binding or no reveal); waiting",
+                        hex(&p.account)
+                    );
                 }
                 continue;
             };
             if p.amount.0 <= 0 || p.amount.0 % ZAT != 0 {
                 if self.warned.insert(p.account, ()).is_none() {
-                    eprintln!("zynzapd: exit for {} is not a whole number of zatoshi; waiting", hex(&p.account));
+                    eprintln!(
+                        "zynzapd: exit for {} is not a whole number of zatoshi; waiting",
+                        hex(&p.account)
+                    );
                 }
                 continue;
             }
@@ -732,17 +969,37 @@ impl ZcashSettler {
         // reach a shielded one (§17), so those exits wait for Ironwood funds.
         let mut attempt = None;
         for pool in [ValuePool::Ironwood, ValuePool::Orchard] {
-            let Ok(version) = env.bundle_version_for(pool) else { continue };
-            let (pay, cov): (Vec<Payment>, Vec<(AccountId, Fixed)>) = if version.default_flags().cross_address_enabled() {
-                (payments.clone(), covers.clone())
-            } else {
-                payments.iter().zip(covers.iter()).filter(|(p, _)| matches!(p.to, ZcashDestination::Transparent(_))).map(|(p, c)| (*p, *c)).unzip()
+            let Ok(version) = env.bundle_version_for(pool) else {
+                continue;
             };
+            let (pay, cov): (Vec<Payment>, Vec<(AccountId, Fixed)>) =
+                if version.default_flags().cross_address_enabled() {
+                    (payments.clone(), covers.clone())
+                } else {
+                    payments
+                        .iter()
+                        .zip(covers.iter())
+                        .filter(|(p, _)| matches!(p.to, ZcashDestination::Transparent(_)))
+                        .map(|(p, c)| (*p, *c))
+                        .unzip()
+                };
             if pay.is_empty() {
                 continue;
             }
-            let store = self.notes.of(pool).lock().map_err(|_| "note store poisoned".to_string())?;
-            let probe = match payout::build(&store, &self.fvk, ovk.clone(), &pay, change_to, version, rand::rngs::OsRng) {
+            let store = self
+                .notes
+                .of(pool)
+                .lock()
+                .map_err(|_| "note store poisoned".to_string())?;
+            let probe = match payout::build(
+                &store,
+                &self.fvk,
+                ovk.clone(),
+                &pay,
+                change_to,
+                version,
+                rand::rngs::OsRng,
+            ) {
                 Ok(p) => p,
                 Err(payout::PayoutError::Notes(_)) => continue,
                 Err(e) => return Err(format!("cannot build payout: {}", e)),
@@ -753,7 +1010,15 @@ impl ZcashSettler {
                 return Err("the first exit cannot cover the network fee".into());
             }
             pay[0].zatoshi -= fee;
-            match payout::build(&store, &self.fvk, ovk.clone(), &pay, change_to, version, rand::rngs::OsRng) {
+            match payout::build(
+                &store,
+                &self.fvk,
+                ovk.clone(),
+                &pay,
+                change_to,
+                version,
+                rand::rngs::OsRng,
+            ) {
                 Ok(p) => {
                     attempt = Some((p, cov, version));
                     break;
@@ -767,31 +1032,72 @@ impl ZcashSettler {
             // Deposits still confirming, a change note not yet scanned, or a
             // shielded exit waiting for Ironwood funds. Wait, loudly once.
             if self.warned.insert([0u8; 32], ()).is_none() {
-                eprintln!("zynzapd: no pool can cover {} Zcash exit(s) yet; waiting", payments.len());
+                eprintln!(
+                    "zynzapd: no pool can cover {} Zcash exit(s) yet; waiting",
+                    payments.len()
+                );
             }
             return Ok(());
         };
         let sighash = payout.sighash(&env).map_err(|e| e.to_string())?;
-        payout.finalize_io(sighash, rand::rngs::OsRng).map_err(|e| e.to_string())?;
-        if self.proving.as_ref().map(|(v, _)| *v != version).unwrap_or(true) {
-            eprintln!("zynzapd: building the Orchard proving key ({:?})", version.circuit_version());
+        payout
+            .finalize_io(sighash, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
+        if self
+            .proving
+            .as_ref()
+            .map(|(v, _)| *v != version)
+            .unwrap_or(true)
+        {
+            eprintln!(
+                "zynzapd: building the Orchard proving key ({:?})",
+                version.circuit_version()
+            );
             self.proving = Some((version, payout::proving_key(version)));
         }
-        payout.prove(&self.proving.as_ref().unwrap().1, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+        payout
+            .prove(&self.proving.as_ref().unwrap().1, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
         let group = *self.public.verifying_key();
         match &self.custodians {
             Some(addrs) => {
                 let mut q = zyn_custody::custody_net::RemoteQuorum::new(addrs.clone());
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                payout::sign_all_with(&mut payout, sighash, &mut q, self.threshold, &group, &self.public, now).map_err(|e| e.to_string())?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                payout::sign_all_with(
+                    &mut payout,
+                    sighash,
+                    &mut q,
+                    self.threshold,
+                    &group,
+                    &self.public,
+                    now,
+                )
+                .map_err(|e| e.to_string())?;
             }
             None => {
-                let quorum: Vec<(ZcashId, &ZcashKeys)> = self.shares.iter().take(usize::from(self.threshold)).map(|(i, k)| (*i, k)).collect();
-                payout::sign_all(&mut payout, sighash, &quorum, self.threshold, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+                let quorum: Vec<(ZcashId, &ZcashKeys)> = self
+                    .shares
+                    .iter()
+                    .take(usize::from(self.threshold))
+                    .map(|(i, k)| (*i, k))
+                    .collect();
+                payout::sign_all(
+                    &mut payout,
+                    sighash,
+                    &quorum,
+                    self.threshold,
+                    rand::rngs::OsRng,
+                )
+                .map_err(|e| e.to_string())?;
             }
         }
         let fee = payout.fee;
-        let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+        let sealed = payout
+            .extract(sighash, &env, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
 
         // Recorded before it is sent. Unseen past `expiry`, it is abandoned
         // and rebuilt; the two cannot both land.
@@ -808,7 +1114,13 @@ impl ZcashSettler {
         });
         self.save()?;
         match self.zebra.send_raw_transaction(&sealed.hex()) {
-            Ok(txid) => eprintln!("zynzapd: Zcash settlement {} broadcast from {:?}, {} exit(s), fee {} zat", txid, version.value_pool(), payments.len(), fee),
+            Ok(txid) => eprintln!(
+                "zynzapd: Zcash settlement {} broadcast from {:?}, {} exit(s), fee {} zat",
+                txid,
+                version.value_pool(),
+                payments.len(),
+                fee
+            ),
             Err(e) => eprintln!("zynzapd: broadcast deferred: {}", e),
         }
         Ok(())
@@ -822,7 +1134,9 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -833,14 +1147,41 @@ mod tests {
     fn the_ledger_round_trips_and_refuses_junk() {
         let l = Ledger {
             entries: vec![
-                Entry { id: "5j7s".into(), nonce: [3; 32], transaction: vec![1, 2, 3], covers: vec![([1; 32], Fixed::whole(2)), ([2; 32], Fixed::raw(-5))], cover_assets: vec![None, Some(7)], status: Status::Broadcast, spent: Vec::new(), expiry: 0, pool: ValuePool::Orchard },
-                Entry { id: "ab".repeat(32), nonce: [0; 32], transaction: vec![9], covers: vec![([4; 32], Fixed::whole(1))], cover_assets: vec![None], status: Status::Confirmed, spent: vec![7, 12], expiry: 4_300_040, pool: ValuePool::Ironwood },
+                Entry {
+                    id: "5j7s".into(),
+                    nonce: [3; 32],
+                    transaction: vec![1, 2, 3],
+                    covers: vec![([1; 32], Fixed::whole(2)), ([2; 32], Fixed::raw(-5))],
+                    cover_assets: vec![None, Some([7; 32])],
+                    status: Status::Broadcast,
+                    spent: Vec::new(),
+                    expiry: 0,
+                    pool: ValuePool::Orchard,
+                },
+                Entry {
+                    id: "ab".repeat(32),
+                    nonce: [0; 32],
+                    transaction: vec![9],
+                    covers: vec![([4; 32], Fixed::whole(1))],
+                    cover_assets: vec![None],
+                    status: Status::Confirmed,
+                    spent: vec![7, 12],
+                    expiry: 4_300_040,
+                    pool: ValuePool::Ironwood,
+                },
             ],
         };
         assert_eq!(Ledger::decode(&l.encode()), Some(l.clone()));
         // A ledger written before the Zcash fields existed still loads.
-        let old = format!("x broadcast {} 0102 {}:5\n", "00".repeat(32), "01".repeat(32));
-        assert_eq!(Ledger::decode(&old).unwrap().entries[0].spent, Vec::<u64>::new());
+        let old = format!(
+            "x broadcast {} 0102 {}:5\n",
+            "00".repeat(32),
+            "01".repeat(32)
+        );
+        assert_eq!(
+            Ledger::decode(&old).unwrap().entries[0].spent,
+            Vec::<u64>::new()
+        );
         assert_eq!(Ledger::decode("x broadcast 00 00 \n"), None);
         assert_eq!(Ledger::decode("x lost 00 00 \n"), None);
         assert_eq!(Ledger::decode(""), Some(Ledger::default()));
@@ -851,7 +1192,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zyn-reveals-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("reveals");
-        std::fs::write(&f, format!("# who goes where\n{} 11111111111111111111111111111111 {}\n", "ab".repeat(32), "cd".repeat(32))).unwrap();
+        std::fs::write(
+            &f,
+            format!(
+                "# who goes where\n{} 11111111111111111111111111111111 {}\n",
+                "ab".repeat(32),
+                "cd".repeat(32)
+            ),
+        )
+        .unwrap();
         let r = load_reveals(&f).unwrap();
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].address, [0u8; 32]);
@@ -871,18 +1220,34 @@ mod tests {
             let chk = sha2::Sha256::digest(sha2::Sha256::digest(&body));
             [&body[..], &chk[..4]].concat()
         });
-        std::fs::write(&f, format!("{} {} {}\n", "ab".repeat(32), addr, "cd".repeat(32))).unwrap();
+        std::fs::write(
+            &f,
+            format!("{} {} {}\n", "ab".repeat(32), addr, "cd".repeat(32)),
+        )
+        .unwrap();
         let r = load_zcash_reveals(&f, Network::TestNetwork).unwrap();
-        assert_eq!(r[0].address, ZcashDestination::Transparent(TransparentAddress::PublicKeyHash([7u8; 20])));
+        assert_eq!(
+            r[0].address,
+            ZcashDestination::Transparent(TransparentAddress::PublicKeyHash([7u8; 20]))
+        );
         assert_ne!(
             zcash_commitment(&r[0].address, &r[0].salt),
-            zcash_commitment(&ZcashDestination::Transparent(TransparentAddress::ScriptHash([7u8; 20])), &r[0].salt),
+            zcash_commitment(
+                &ZcashDestination::Transparent(TransparentAddress::ScriptHash([7u8; 20])),
+                &r[0].salt
+            ),
             "P2PKH and P2SH of the same hash must not share a commitment"
         );
         // A unified address with an Orchard receiver parses to a shielded one.
         let ua = "utest1h6sfz7alnztp0vst6u0s8sxj9zhzrv5s7qjy5897qcdse75epp43x4uus90naxaea973q22nshuggyywujdj5zulckj2vppz85x2t407";
-        assert!(matches!(parse_destination(ua, Network::TestNetwork), Some(ZcashDestination::Shielded(_))));
+        assert!(matches!(
+            parse_destination(ua, Network::TestNetwork),
+            Some(ZcashDestination::Shielded(_))
+        ));
         assert_eq!(parse_destination(ua, Network::MainNetwork), None);
-        assert!(load_zcash_reveals(&f, Network::MainNetwork).is_err(), "a testnet address on mainnet");
+        assert!(
+            load_zcash_reveals(&f, Network::MainNetwork).is_err(),
+            "a testnet address on mainnet"
+        );
     }
 }

@@ -39,21 +39,21 @@
 pub use frost_core;
 
 pub mod ceremony;
-pub mod memo;
-pub mod signing;
-pub mod notes;
-pub mod payout;
-pub mod shielded;
-pub mod watcher;
-pub mod evm;
 pub mod compact;
 pub mod custodian;
 pub mod custody_net;
 pub mod dkg_net;
+pub mod evm;
 pub mod lightd;
+pub mod memo;
+pub mod notes;
+pub mod payout;
 pub mod shares;
+pub mod shielded;
+pub mod signing;
 pub mod solana;
 pub mod transparent;
+pub mod watcher;
 pub mod zebra;
 
 pub use ceremony::{Ceremony, CeremonyError, VaultKeys};

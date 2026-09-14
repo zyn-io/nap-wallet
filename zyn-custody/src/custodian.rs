@@ -19,8 +19,8 @@
 
 use std::collections::BTreeMap;
 
-use reddsa::frost::redpallas::PallasBlake2b512;
 use frost_rerandomized::Randomizer;
+use reddsa::frost::redpallas::PallasBlake2b512;
 
 use crate::ceremony::{Identifier, VaultKeys};
 use crate::signing::orchard::sign_share;
@@ -70,7 +70,10 @@ impl From<SigningError> for CustodyError {
 
 impl Participant {
     pub fn new(keys: VaultKeys) -> Participant {
-        Participant { keys, live: BTreeMap::new() }
+        Participant {
+            keys,
+            live: BTreeMap::new(),
+        }
     }
 
     pub fn id(&self) -> Identifier {
@@ -86,7 +89,8 @@ impl Participant {
         alphas: Vec<Randomizer<PallasBlake2b512>>,
         now: u64,
         rng: &mut R,
-    ) -> Result<Vec<frost_core::round1::SigningCommitments<crate::ceremony::Zcash>>, CustodyError> {
+    ) -> Result<Vec<frost_core::round1::SigningCommitments<crate::ceremony::Zcash>>, CustodyError>
+    {
         self.drop_expired(now);
         if self.live.contains_key(&request_id) {
             return Err(CustodyError::AlreadyOpen);
@@ -99,7 +103,15 @@ impl Participant {
             commitments.push(s.commitments());
             sessions.push(Some(s));
         }
-        self.live.insert(request_id, Live { sighash, alphas, sessions, opened_at: now });
+        self.live.insert(
+            request_id,
+            Live {
+                sighash,
+                alphas,
+                sessions,
+                opened_at: now,
+            },
+        );
         Ok(commitments)
     }
 
@@ -110,11 +122,17 @@ impl Participant {
         request_id: u64,
         packages: &[frost_core::SigningPackage<crate::ceremony::Zcash>],
     ) -> Result<Vec<frost_core::round2::SignatureShare<crate::ceremony::Zcash>>, CustodyError> {
-        let mut req = self.live.remove(&request_id).ok_or(CustodyError::NoSuchRequest)?;
+        let mut req = self
+            .live
+            .remove(&request_id)
+            .ok_or(CustodyError::NoSuchRequest)?;
         if packages.len() != req.sessions.len() {
             return Err(CustodyError::ShapeMismatch);
         }
-        if packages.iter().any(|p| p.message().as_slice() != req.sighash.as_slice()) {
+        if packages
+            .iter()
+            .any(|p| p.message().as_slice() != req.sighash.as_slice())
+        {
             return Err(CustodyError::WrongMessage);
         }
         let mut shares = Vec::with_capacity(packages.len());
@@ -128,7 +146,8 @@ impl Participant {
     /// Forget requests whose round two never came. Their nonces are released
     /// unused; the coordinator retries with fresh ones.
     pub fn drop_expired(&mut self, now: u64) {
-        self.live.retain(|_, r| now.saturating_sub(r.opened_at) < REQUEST_TTL_SECS);
+        self.live
+            .retain(|_, r| now.saturating_sub(r.opened_at) < REQUEST_TTL_SECS);
     }
 
     pub fn open_requests(&self) -> usize {
@@ -150,7 +169,13 @@ mod tests {
     }
 
     fn vault(t: u16, n: u16) -> Vec<VaultKeys> {
-        Ceremony::new(t, n).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().map(|(_, k)| k).collect()
+        Ceremony::new(t, n)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect()
     }
 
     /// Driving the two rounds across (in-process) participants produces, for
@@ -181,8 +206,16 @@ mod tests {
         for (i, a) in alphas.iter().enumerate() {
             let shares = chosen.iter().map(|id| (*id, r2[id][i].clone())).collect();
             let params = params_for(&group, *a);
-            let sig = crate::signing::orchard::aggregate(&packages[i], &shares, &public, &params).unwrap();
-            assert!(params.randomized_verifying_key().verify(&sighash, &sig).is_ok(), "action {} did not verify", i);
+            let sig = crate::signing::orchard::aggregate(&packages[i], &shares, &public, &params)
+                .unwrap();
+            assert!(
+                params
+                    .randomized_verifying_key()
+                    .verify(&sighash, &sig)
+                    .is_ok(),
+                "action {} did not verify",
+                i
+            );
         }
     }
 
@@ -191,9 +224,14 @@ mod tests {
         let mut p = Participant::new(vault(2, 2).remove(0));
         let sighash = [1u8; 32];
         let alphas = vec![alpha(5)];
-        p.round1(7, sighash, alphas.clone(), 0, &mut rand::rngs::OsRng).unwrap();
+        p.round1(7, sighash, alphas.clone(), 0, &mut rand::rngs::OsRng)
+            .unwrap();
         // A second round one for the same request would re-commit the nonce.
-        assert_eq!(p.round1(7, sighash, alphas, 0, &mut rand::rngs::OsRng).unwrap_err(), CustodyError::AlreadyOpen);
+        assert_eq!(
+            p.round1(7, sighash, alphas, 0, &mut rand::rngs::OsRng)
+                .unwrap_err(),
+            CustodyError::AlreadyOpen
+        );
         assert_eq!(p.open_requests(), 1);
         // Round two for a request that was never opened is refused.
         let pkg = {
@@ -201,16 +239,27 @@ mod tests {
             // is checked after lookup, so an unknown id fails at lookup.
             Vec::new()
         };
-        assert_eq!(p.round2(999, &pkg).unwrap_err(), CustodyError::NoSuchRequest);
+        assert_eq!(
+            p.round2(999, &pkg).unwrap_err(),
+            CustodyError::NoSuchRequest
+        );
     }
 
     #[test]
     fn an_abandoned_request_releases_its_nonces() {
         let mut p = Participant::new(vault(2, 2).remove(0));
-        p.round1(1, [0u8; 32], vec![alpha(1)], 0, &mut rand::rngs::OsRng).unwrap();
+        p.round1(1, [0u8; 32], vec![alpha(1)], 0, &mut rand::rngs::OsRng)
+            .unwrap();
         assert_eq!(p.open_requests(), 1);
         // A round one far past the TTL clears the stale one first.
-        p.round1(2, [0u8; 32], vec![alpha(2)], REQUEST_TTL_SECS + 1, &mut rand::rngs::OsRng).unwrap();
+        p.round1(
+            2,
+            [0u8; 32],
+            vec![alpha(2)],
+            REQUEST_TTL_SECS + 1,
+            &mut rand::rngs::OsRng,
+        )
+        .unwrap();
         assert_eq!(p.open_requests(), 1, "the abandoned request was dropped");
     }
 
@@ -252,7 +301,10 @@ pub mod solana {
 
     impl Participant {
         pub fn new(keys: Keys) -> Participant {
-            Participant { keys, live: BTreeMap::new() }
+            Participant {
+                keys,
+                live: BTreeMap::new(),
+            }
         }
 
         pub fn id(&self) -> Id {
@@ -273,7 +325,14 @@ pub mod solana {
             }
             let s = Session::begin(self.id(), &self.keys, rng);
             let commitments = s.commitments();
-            self.live.insert(request_id, Live { message, session: Some(s), opened_at: now });
+            self.live.insert(
+                request_id,
+                Live {
+                    message,
+                    session: Some(s),
+                    opened_at: now,
+                },
+            );
             Ok(commitments)
         }
 
@@ -283,7 +342,10 @@ pub mod solana {
             request_id: u64,
             package: &frost_core::SigningPackage<Solana>,
         ) -> Result<frost_core::round2::SignatureShare<Solana>, CustodyError> {
-            let mut req = self.live.remove(&request_id).ok_or(CustodyError::NoSuchRequest)?;
+            let mut req = self
+                .live
+                .remove(&request_id)
+                .ok_or(CustodyError::NoSuchRequest)?;
             if package.message().as_slice() != req.message.as_slice() {
                 return Err(CustodyError::WrongMessage);
             }
@@ -292,7 +354,8 @@ pub mod solana {
         }
 
         pub fn drop_expired(&mut self, now: u64) {
-            self.live.retain(|_, r| now.saturating_sub(r.opened_at) < REQUEST_TTL_SECS);
+            self.live
+                .retain(|_, r| now.saturating_sub(r.opened_at) < REQUEST_TTL_SECS);
         }
 
         pub fn open_requests(&self) -> usize {

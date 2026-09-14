@@ -253,20 +253,17 @@ mod tests {
     /// 10 CAT and 1000 xZEC, sell 1 CAT with a 0.30% fee.
     #[test]
     fn out_given_in_matches_the_hand_computation() {
-        let out = out_given_in(
-            Fixed::whole(1),
-            Fixed::whole(10),
-            Fixed::whole(1_000),
-            30,
-        )
-        .unwrap();
+        let out = out_given_in(Fixed::whole(1), Fixed::whole(10), Fixed::whole(1_000), 30).unwrap();
         // in_after_fee = 0.997; out = 1000 * 0.997 / (10 + 0.997)
         //              = 997000/10997 = 90.661089388014913158...
         let expected = Fixed::raw(90_661_089_388_014_913_158); // truncated toward zero
         assert_eq!(out, expected);
         // Sanity check on the scale itself: selling a tenth of the pool's CAT
         // must return something near a tenth of its xZEC, not the whole pool.
-        assert!(out < Fixed::whole(100), "fee scaling is off by orders of magnitude");
+        assert!(
+            out < Fixed::whole(100),
+            "fee scaling is off by orders of magnitude"
+        );
     }
 
     #[test]
@@ -278,7 +275,13 @@ mod tests {
             let need = in_given_out(wanted, r_in, r_out, fee).unwrap();
             assert!(need.is_positive());
             let got = out_given_in(need, r_in, r_out, fee).unwrap();
-            assert!(got >= wanted, "got {} wanted {} (need {})", got, wanted, need);
+            assert!(
+                got >= wanted,
+                "got {} wanted {} (need {})",
+                got,
+                wanted,
+                need
+            );
             // And the gross-up must be tight: one more raw unit of input
             // cannot still produce the request.
             let less = Fixed::raw(need.0 - 1);
@@ -309,18 +312,32 @@ mod tests {
     #[test]
     fn divergence_is_symmetric_and_floors_at_the_base_fee() {
         let (a, b) = (Fixed::whole(10), Fixed::whole(12));
-        assert_eq!(divergence_fee(a, b, 30), divergence_fee(b, a, 30), "direction changed the fee");
+        assert_eq!(
+            divergence_fee(a, b, 30),
+            divergence_fee(b, a, 30),
+            "direction changed the fee"
+        );
         // A pool already at the reference charges the ordinary fee.
         assert_eq!(divergence_fee(a, a, 30), Some(30));
         // And never less, however small the divergence.
-        assert_eq!(divergence_fee(a, a.add(Fixed::raw(1)).unwrap(), 30), Some(30));
+        assert_eq!(
+            divergence_fee(a, a.add(Fixed::raw(1)).unwrap(), 30),
+            Some(30)
+        );
     }
 
     #[test]
     fn an_extreme_divergence_is_capped_below_a_total_fee() {
         let fee = divergence_fee(Fixed::whole(1), Fixed::whole(1_000_000), 30).unwrap();
-        assert!(fee < BPS as u16, "a fee of 100% or more would be uncollectable");
-        assert!(fee > 5_000, "an extreme divergence should still price steeply: {}", fee);
+        assert!(
+            fee < BPS as u16,
+            "a fee of 100% or more would be uncollectable"
+        );
+        assert!(
+            fee > 5_000,
+            "an extreme divergence should still price steeply: {}",
+            fee
+        );
         assert_eq!(divergence_fee(Fixed::ZERO, Fixed::ONE, 30), None);
         assert_eq!(divergence_fee(Fixed::ONE, Fixed::ZERO, 30), None);
     }
@@ -351,7 +368,11 @@ mod tests {
             let amt = Fixed::raw(raw);
             let fee = fee_taken(amt, 30).unwrap();
             let after = amt.sub(fee).unwrap();
-            assert_eq!(after, amt.mul_div(Fixed::whole(9_970), Fixed::whole(10_000)).unwrap());
+            assert_eq!(
+                after,
+                amt.mul_div(Fixed::whole(9_970), Fixed::whole(10_000))
+                    .unwrap()
+            );
             assert!(!fee.is_negative(), "fee went negative at {}", amt);
             assert!(fee < amt, "fee consumed the whole input at {}", amt);
         }
@@ -404,18 +425,30 @@ mod tests {
     fn proportional_deposit_mints_proportionally() {
         // Doubling both reserves doubles the supply due.
         let supply = Fixed::whole(1_000);
-        let shares =
-            mint_shares(Fixed::whole(10), Fixed::whole(1_000), Fixed::whole(10), Fixed::whole(1_000), supply, Fixed::raw(1_000))
-                .unwrap();
+        let shares = mint_shares(
+            Fixed::whole(10),
+            Fixed::whole(1_000),
+            Fixed::whole(10),
+            Fixed::whole(1_000),
+            supply,
+            Fixed::raw(1_000),
+        )
+        .unwrap();
         assert_eq!(shares, Fixed::whole(1_000));
     }
 
     #[test]
     fn unbalanced_deposit_mints_for_the_cheaper_side() {
         // Twice the asset0, the exact asset1: shares follow the binding side.
-        let shares =
-            mint_shares(Fixed::whole(20), Fixed::whole(1_000), Fixed::whole(10), Fixed::whole(1_000), Fixed::whole(1_000), Fixed::raw(1_000))
-                .unwrap();
+        let shares = mint_shares(
+            Fixed::whole(20),
+            Fixed::whole(1_000),
+            Fixed::whole(10),
+            Fixed::whole(1_000),
+            Fixed::whole(1_000),
+            Fixed::raw(1_000),
+        )
+        .unwrap();
         assert_eq!(shares, Fixed::whole(1_000));
     }
 

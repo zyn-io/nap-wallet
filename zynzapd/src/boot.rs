@@ -42,7 +42,10 @@ impl Recorder for JournalRecorder {
             Ok(mut j) => match j.record(epoch, seq, encoded) {
                 Ok(()) => true,
                 Err(e) => {
-                    eprintln!("zynzapd: JOURNAL WRITE FAILED at seq {}: {} — refusing the intent", seq, e);
+                    eprintln!(
+                        "zynzapd: JOURNAL WRITE FAILED at seq {}: {} — refusing the intent",
+                        seq, e
+                    );
                     false
                 }
             },
@@ -70,11 +73,14 @@ pub fn open_at(
     da_dir: &Path,
 ) -> Result<Booted, String> {
     let store = FileStore::new(data_dir).map_err(|e| format!("{:?}", e))?;
-    let journal = Journal::open(data_dir, chain_id).map_err(|e| format!("cannot open the journal: {}", e))?;
+    let journal =
+        Journal::open(data_dir, chain_id).map_err(|e| format!("cannot open the journal: {}", e))?;
     let journal = Arc::new(Mutex::new(journal));
 
     let saved = store.load(chain_id).map_err(|e| format!("{:?}", e))?;
-    let ledger = store.load_ledger(chain_id).map_err(|e| format!("the anchor ledger on disk is unreadable: {:?}", e))?;
+    let ledger = store
+        .load_ledger(chain_id)
+        .map_err(|e| format!("the anchor ledger on disk is unreadable: {:?}", e))?;
 
     let (node, resumed) = match (saved, ledger) {
         (None, Some(l)) if !l.is_empty() => {
@@ -82,9 +88,12 @@ pub fn open_at(
         }
         (None, _) => (Node::new(chain_id, params, policy, economics), false),
         (Some(saved), ledger) => {
-            let state: SwapState = saved
-                .restore()
-                .map_err(|e| format!("refusing to resume from a state that does not match its root: {:?}", e))?;
+            let state: SwapState = saved.restore().map_err(|e| {
+                format!(
+                    "refusing to resume from a state that does not match its root: {:?}",
+                    e
+                )
+            })?;
             let ledger = ledger.unwrap_or_else(|| zyn::anchor::Ledger::new(chain_id));
             if let Some(last) = ledger.last() {
                 // A sealed epoch N leaves the state in epoch N+1.
@@ -96,7 +105,10 @@ pub fn open_at(
                     ));
                 }
             }
-            (Node::resume_with_ledger(state, policy, economics, ledger, now), true)
+            (
+                Node::resume_with_ledger(state, policy, economics, ledger, now),
+                true,
+            )
         }
     };
     let mut node = node.with_recorder(Box::new(JournalRecorder(Arc::clone(&journal))));
@@ -112,7 +124,8 @@ pub fn open_at(
         if !base_path.exists() {
             let saved = Saved::of(node.state());
             std::fs::create_dir_all(base_path.parent().unwrap()).map_err(|e| e.to_string())?;
-            std::fs::write(&base_path, saved.encode()).map_err(|e| format!("cannot write the DA base state: {}", e))?;
+            std::fs::write(&base_path, saved.encode())
+                .map_err(|e| format!("cannot write the DA base state: {}", e))?;
             eprintln!(
                 "zynzapd: DA base state written at epoch {} seq {} — BASE ROOT {} (announce this; replicas start from it)",
                 saved.epoch,
@@ -120,27 +133,53 @@ pub fn open_at(
                 saved.root.iter().map(|b| format!("{:02x}", b)).collect::<String>()
             );
         }
-        base_root = std::fs::read(&base_path).ok().and_then(|b| Saved::decode(&b).ok()).map(|s| s.root);
+        base_root = std::fs::read(&base_path)
+            .ok()
+            .and_then(|b| Saved::decode(&b).ok())
+            .map(|s| s.root);
         let pending = store
             .load_pending::<SwapState>(chain_id)
             .map_err(|e| format!("the pending epochs on disk are unreadable: {:?}", e))?;
         if !pending.is_empty() {
-            eprintln!("zynzapd: {} sealed epoch(s) waiting on an anchor, restored from disk", pending.len());
+            eprintln!(
+                "zynzapd: {} sealed epoch(s) waiting on an anchor, restored from disk",
+                pending.len()
+            );
         }
         node.restore_pending(pending);
-        if let Some((a, covered)) = store.load_proposal(chain_id).map_err(|e| format!("the proposal on disk is unreadable: {:?}", e))? {
+        if let Some((a, covered)) = store
+            .load_proposal(chain_id)
+            .map_err(|e| format!("the proposal on disk is unreadable: {:?}", e))?
+        {
             node.restore_proposal(a, covered).map_err(|e| {
                 format!("the anchor proposal on disk (epoch {}) cannot be reproduced: {} — remove proposal-{}.bin only if you are sure no transaction for it is in flight", a.checkpoint.epoch, e, chain_id)
             })?;
-            eprintln!("zynzapd: anchor proposal for epoch {} restored; waiting for Zcash to confirm it", a.checkpoint.epoch);
+            eprintln!(
+                "zynzapd: anchor proposal for epoch {} restored; waiting for Zcash to confirm it",
+                a.checkpoint.epoch
+            );
         }
     }
-    let replay = Arc::new(Mutex::new(zyn::replay::ReplayIndex::load(data_dir, chain_id)?));
-    Ok(Booted { node, store, journal, resumed, base_root, replay })
+    let replay = Arc::new(Mutex::new(zyn::replay::ReplayIndex::load(
+        data_dir, chain_id,
+    )?));
+    Ok(Booted {
+        node,
+        store,
+        journal,
+        resumed,
+        base_root,
+        replay,
+    })
 }
 
 /// Persist the replay index, pruned of what can no longer be replayed.
-pub fn save_replay(data_dir: &Path, chain_id: u32, replay: &Arc<Mutex<zyn::replay::ReplayIndex>>, epoch: u64) {
+pub fn save_replay(
+    data_dir: &Path,
+    chain_id: u32,
+    replay: &Arc<Mutex<zyn::replay::ReplayIndex>>,
+    epoch: u64,
+) {
     if let Ok(mut r) = replay.lock() {
         r.prune(epoch);
         if let Err(e) = r.save(data_dir, chain_id) {

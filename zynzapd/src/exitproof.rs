@@ -33,7 +33,9 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
 }
 
 impl ExitProof {
@@ -79,7 +81,11 @@ impl ExitProof {
     }
 
     pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
-        std::fs::write(path, serde_json::to_string_pretty(&self.to_json()).unwrap_or_default()).map_err(|e| e.to_string())
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&self.to_json()).unwrap_or_default(),
+        )
+        .map_err(|e| e.to_string())
     }
 
     pub fn load(path: &std::path::Path) -> Option<ExitProof> {
@@ -106,14 +112,28 @@ mod tests {
     fn a_proof_round_trips_through_json_and_still_verifies() {
         let mut s = SwapState::new(6, Params::v1());
         let observed = s.backing_of(XZEC).add(Fixed::whole(10)).unwrap();
-        s.apply(1, &Intent::AttestVaultBalance { asset: XZEC, observed });
+        s.apply(
+            1,
+            &Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         for i in 0..5u8 {
             let d = Intent::next_deposit(&s, [i + 1; 32], XZEC, Fixed::whole(1), [0u8; 32]);
             s.apply(2 + i as u64, &d);
         }
         let snap = Snapshot::of(&s);
         let (record, index, path) = snap.record_proof(&[3u8; 32]).unwrap();
-        let p = ExitProof { chain_id: 6, epoch: 0, root: snap.root, record, index, path, fetched_at: 7 };
+        let p = ExitProof {
+            chain_id: 6,
+            epoch: 0,
+            root: snap.root,
+            record,
+            index,
+            path,
+            fetched_at: 7,
+        };
         assert!(p.verify());
         let back = ExitProof::from_json(&p.to_json()).unwrap();
         assert_eq!(back, p);
@@ -128,7 +148,10 @@ mod tests {
 
     #[test]
     fn refresh_only_when_the_chain_anchored_past_what_is_kept() {
-        assert!(!should_refresh(None, 0, false), "nothing anchored yet: nothing to fetch");
+        assert!(
+            !should_refresh(None, 0, false),
+            "nothing anchored yet: nothing to fetch"
+        );
         assert!(should_refresh(None, 0, true));
         assert!(!should_refresh(Some(4), 4, true));
         assert!(should_refresh(Some(4), 5, true));

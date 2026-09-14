@@ -28,6 +28,8 @@ mod alloc_shim {
 use zyn_vm::spec::AccountId;
 use zyn_vm::Fixed;
 
+pub type AssetId = [u8; 32];
+
 /// A deposit seen on the custodying chain.
 ///
 /// Producing one requires the vault's viewing key: a shielded deposit is not
@@ -47,7 +49,7 @@ pub struct ObservedDeposit {
     /// The Zyn asset this credits, when the chain view knows more than one —
     /// a vault that holds SOL and mirrored NFTs. `None` means the bridge's
     /// own asset.
-    pub asset: Option<u32>,
+    pub asset: Option<AssetId>,
 }
 
 /// What the watcher needs from a chain.
@@ -80,7 +82,7 @@ pub trait ChainView {
 
     /// What the vault holds of `asset` — an asset other than the bridge's
     /// own, for a view over several (see [`ObservedDeposit::asset`]).
-    fn balance_of(&self, _asset: u32, _height: u64) -> Option<Fixed> {
+    fn balance_of(&self, _asset: AssetId, _height: u64) -> Option<Fixed> {
         None
     }
 }
@@ -103,7 +105,7 @@ impl<T: ChainView + ?Sized> ChainView for &T {
     fn failed(&self) -> bool {
         (**self).failed()
     }
-    fn balance_of(&self, asset: u32, height: u64) -> Option<Fixed> {
+    fn balance_of(&self, asset: AssetId, height: u64) -> Option<Fixed> {
         (**self).balance_of(asset, height)
     }
 }
@@ -124,12 +126,12 @@ pub enum WatcherAction {
         index: u64,
         external_ref: [u8; 32],
         /// See [`ObservedDeposit::asset`].
-        asset: Option<u32>,
+        asset: Option<AssetId>,
     },
     /// Report what the vault holds of one *other* asset it custodies — a
     /// mirrored NFT's mint — before crediting it. Always before the credits
     /// it covers.
-    AttestAsset { asset: u32, observed: Fixed },
+    AttestAsset { asset: AssetId, observed: Fixed },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -167,12 +169,22 @@ pub struct Watcher {
 
 impl Watcher {
     pub fn new(confirmations: u64, next_index: u64) -> Watcher {
-        Watcher { confirmations, scanned_to: 0, credited: BTreeSet::new(), next_index }
+        Watcher {
+            confirmations,
+            scanned_to: 0,
+            credited: BTreeSet::new(),
+            next_index,
+        }
     }
 
     /// Resume a watcher that has run before.
     pub fn resume(confirmations: u64, next_index: u64, scanned_to: u64) -> Watcher {
-        Watcher { confirmations, scanned_to, credited: BTreeSet::new(), next_index }
+        Watcher {
+            confirmations,
+            scanned_to,
+            credited: BTreeSet::new(),
+            next_index,
+        }
     }
 
     pub fn scanned_to(&self) -> u64 {
@@ -199,7 +211,9 @@ impl Watcher {
 
     /// The highest height that is safely confirmed at the current tip.
     fn safe_height(&self, tip: u64) -> Option<u64> {
-        tip.checked_sub(self.confirmations.saturating_sub(1))?.checked_sub(1).map(|h| h + 1)
+        tip.checked_sub(self.confirmations.saturating_sub(1))?
+            .checked_sub(1)
+            .map(|h| h + 1)
     }
 
     /// Scan forward and produce the intents for everything newly confirmed.
@@ -208,7 +222,10 @@ impl Watcher {
     /// case and must be cheap. Makes no progress at all if the chain cannot
     /// answer — a partial scan that advanced `scanned_to` would skip the
     /// heights it failed on, and those deposits would never be seen again.
-    pub fn poll<C: ChainView + ?Sized>(&mut self, chain: &C) -> Result<Vec<WatcherAction>, WatcherError> {
+    pub fn poll<C: ChainView + ?Sized>(
+        &mut self,
+        chain: &C,
+    ) -> Result<Vec<WatcherAction>, WatcherError> {
         let tip = chain.tip();
         let Some(safe) = self.safe_height(tip) else {
             return Ok(Vec::new()); // chain too short to confirm anything yet
@@ -252,7 +269,7 @@ impl Watcher {
         let mut actions = Vec::with_capacity(fresh.len() + 1);
         actions.push(WatcherAction::Attest { observed });
         // Each other asset being credited gets its own attestation first.
-        let mut others: Vec<u32> = fresh.iter().filter_map(|d| d.asset).collect();
+        let mut others: Vec<AssetId> = fresh.iter().filter_map(|d| d.asset).collect();
         others.sort_unstable();
         others.dedup();
         for a in others {
@@ -317,7 +334,16 @@ mod tests {
         fn mine(&mut self, deposits: Vec<ObservedDeposit>) -> u64 {
             self.tip += 1;
             let h = self.tip;
-            self.blocks.insert(h, deposits.into_iter().map(|mut d| { d.height = h; d }).collect());
+            self.blocks.insert(
+                h,
+                deposits
+                    .into_iter()
+                    .map(|mut d| {
+                        d.height = h;
+                        d
+                    })
+                    .collect(),
+            );
             h
         }
         fn mine_empty(&mut self, n: u64) {
@@ -358,14 +384,20 @@ mod tests {
             txid: [tag; 32],
             account: [who; 32],
             amount: Fixed::whole(amount),
-            height: 0, asset: None }
+            height: 0,
+            asset: None,
+        }
     }
 
     fn credits(actions: &[WatcherAction]) -> Vec<(u64, [u8; 32])> {
         actions
             .iter()
             .filter_map(|a| match a {
-                WatcherAction::Credit { index, external_ref, .. } => Some((*index, *external_ref)),
+                WatcherAction::Credit {
+                    index,
+                    external_ref,
+                    ..
+                } => Some((*index, *external_ref)),
                 _ => None,
             })
             .collect()
@@ -380,7 +412,10 @@ mod tests {
 
         // One block deep, five to go.
         for _ in 0..5 {
-            assert!(w.poll(&chain).unwrap().is_empty(), "reported before it was buried");
+            assert!(
+                w.poll(&chain).unwrap().is_empty(),
+                "reported before it was buried"
+            );
             chain.mine_empty(1);
         }
         let actions = w.poll(&chain).unwrap();
@@ -388,7 +423,10 @@ mod tests {
 
         // And not again, however long the chain runs on.
         chain.mine_empty(20);
-        assert!(w.poll(&chain).unwrap().is_empty(), "a deposit was reported twice");
+        assert!(
+            w.poll(&chain).unwrap().is_empty(),
+            "a deposit was reported twice"
+        );
     }
 
     /// The observation always precedes the credits it covers, because the VM
@@ -413,7 +451,10 @@ mod tests {
             })
             .fold(Fixed::ZERO, |acc, x| acc.add(x).unwrap());
         assert_eq!(credited, Fixed::whole(15));
-        assert!(observed >= credited, "the observation did not cover the credits");
+        assert!(
+            observed >= credited,
+            "the observation did not cover the credits"
+        );
     }
 
     /// A deposit that is reorganised away before it is buried is never
@@ -430,8 +471,15 @@ mod tests {
         chain.reorg_to(h - 1);
         chain.mine_empty(10);
         let actions = w.poll(&chain).unwrap();
-        assert!(credits(&actions).is_empty(), "a vanished deposit was credited");
-        assert_eq!(w.next_index(), 1, "an index was consumed by a deposit that never existed");
+        assert!(
+            credits(&actions).is_empty(),
+            "a vanished deposit was credited"
+        );
+        assert_eq!(
+            w.next_index(),
+            1,
+            "an index was consumed by a deposit that never existed"
+        );
     }
 
     /// A reorg that merely *moves* a deposit to a different block does not
@@ -448,7 +496,10 @@ mod tests {
         chain.reorg_to(1);
         chain.mine(vec![deposit(1, 9, 10)]);
         chain.mine_empty(5);
-        assert!(credits(&w.poll(&chain).unwrap()).is_empty(), "a moved deposit was re-credited");
+        assert!(
+            credits(&w.poll(&chain).unwrap()).is_empty(),
+            "a moved deposit was re-credited"
+        );
         assert_eq!(w.next_index(), 2);
     }
 
@@ -480,7 +531,10 @@ mod tests {
 
         let mut a = Watcher::new(2, 1);
         let mut b = Watcher::new(2, 1);
-        assert_eq!(credits(&a.poll(&chain).unwrap()), credits(&b.poll(&chain).unwrap()));
+        assert_eq!(
+            credits(&a.poll(&chain).unwrap()),
+            credits(&b.poll(&chain).unwrap())
+        );
     }
 
     /// A chain that cannot answer makes the watcher stand still rather than
@@ -581,7 +635,11 @@ mod finality_model_tests {
             self.tip
         }
         fn deposits_at(&self, height: u64) -> Vec<ObservedDeposit> {
-            self.deposits.iter().filter(|d| d.height == height).cloned().collect()
+            self.deposits
+                .iter()
+                .filter(|d| d.height == height)
+                .cloned()
+                .collect()
         }
         fn balance_at(&self, height: u64) -> Option<Fixed> {
             Some(
@@ -598,13 +656,18 @@ mod finality_model_tests {
             txid: [n; 32],
             account: [n; 32],
             amount: Fixed::whole(n as i64),
-            height, asset: None }
+            height,
+            asset: None,
+        }
     }
 
     /// A chain whose tip is already final credits it immediately.
     #[test]
     fn zero_confirmations_credits_a_finalized_tip() {
-        let chain = Chain { tip: 100, deposits: vec![deposit(100, 1)] };
+        let chain = Chain {
+            tip: 100,
+            deposits: vec![deposit(100, 1)],
+        };
         let mut w = Watcher::new(0, 1);
         let actions = w.poll(&chain).expect("poll");
         assert_eq!(actions.len(), 2, "an attestation and one credit");
@@ -615,11 +678,20 @@ mod finality_model_tests {
     /// one trait serves both without a flag deciding which chain it is.
     #[test]
     fn depth_still_holds_back_a_shallow_deposit() {
-        let chain = Chain { tip: 102, deposits: vec![deposit(100, 1)] };
+        let chain = Chain {
+            tip: 102,
+            deposits: vec![deposit(100, 1)],
+        };
         let mut w = Watcher::new(6, 1);
-        assert!(w.poll(&chain).expect("poll").is_empty(), "credited at two deep");
+        assert!(
+            w.poll(&chain).expect("poll").is_empty(),
+            "credited at two deep"
+        );
 
-        let deeper = Chain { tip: 106, deposits: vec![deposit(100, 1)] };
+        let deeper = Chain {
+            tip: 106,
+            deposits: vec![deposit(100, 1)],
+        };
         assert_eq!(w.poll(&deeper).expect("poll").len(), 2);
     }
 }

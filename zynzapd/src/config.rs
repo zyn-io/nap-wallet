@@ -74,8 +74,8 @@ pub struct Config {
     /// `ZYN_FEEDS=1`: run the reference-price feed for bridged pairs
     /// (DECISIONS §5.7, `feeds.rs`). `ZYN_FEED_INTERVAL` seconds between
     /// cycles, `ZYN_FEED_MAP` per-symbol source overrides.
-    /// `ZYN_LAUNCH=1`: set the ZYN launch (DECISIONS §30) if the chain has
-    /// none. `ZYN_LAUNCH_THRESHOLD` overrides the graduation pot (testnet).
+    /// Retired §30 switches retained only so startup can reject stale operator
+    /// configuration explicitly instead of silently restoring old tokenomics.
     pub launch: bool,
     pub launch_threshold: Option<String>,
     pub feeds: bool,
@@ -139,7 +139,7 @@ pub struct EvmConfig {
     pub chain_id: u64,
     pub vault: [u8; 20],
     /// The Zyn asset id this vault's deposits credit.
-    pub asset: u32,
+    pub asset: [u8; 32],
     /// `None` watches the chain's native asset.
     pub token: Option<[u8; 20]>,
     pub decimals: u8,
@@ -169,7 +169,7 @@ pub struct SolanaConfig {
     /// and re-encoded into something subtly different.
     pub vault: String,
     /// The Zyn asset id these deposits credit.
-    pub asset: u32,
+    pub asset: [u8; 32],
     /// Never scan below the slot the vault was funded at. Solana's history is
     /// long and most nodes will not serve its start anyway.
     pub from_slot: u64,
@@ -214,6 +214,16 @@ fn address(key: &'static str, v: &str) -> Result<[u8; 20], ConfigError> {
     Ok(out)
 }
 
+fn asset_id(key: &'static str, default: [u8; 32]) -> Result<[u8; 32], ConfigError> {
+    let Ok(value) = env::var(key) else {
+        return Ok(default);
+    };
+    parse_hex(&value, 32, key)
+        .map_err(|_| ConfigError::Bad(key, value))?
+        .try_into()
+        .map_err(|_| ConfigError::Bad(key, "expected 64 hex characters".into()))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Profile {
     /// Production floors.
@@ -256,8 +266,15 @@ impl std::fmt::Display for ConfigError {
 }
 
 fn parse_hex(s: &str, n: usize, key: &'static str) -> Result<Vec<u8>, ConfigError> {
-    if s.len() != n * 2 { return Err(ConfigError::Bad(key, s.into())); }
-    (0..n).map(|i| u8::from_str_radix(&s[i*2..i*2+2], 16).map_err(|_| ConfigError::Bad(key, s.into()))).collect()
+    if s.len() != n * 2 {
+        return Err(ConfigError::Bad(key, s.into()));
+    }
+    (0..n)
+        .map(|i| {
+            u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .map_err(|_| ConfigError::Bad(key, s.into()))
+        })
+        .collect()
 }
 
 fn var<T: std::str::FromStr>(key: &'static str, fallback: T) -> Result<T, ConfigError> {
@@ -295,29 +312,58 @@ impl Config {
                 Err(_) => PathBuf::from(var("ZYN_DATA_DIR", "./zyn-data".to_string())?).join("da"),
             },
             da_mirrors: env::var("ZYN_DA_MIRRORS").unwrap_or_default(),
-            forced_rescan_from: env::var("ZYN_FORCED_RESCAN_FROM").ok().and_then(|v| v.parse().ok()),
+            forced_rescan_from: env::var("ZYN_FORCED_RESCAN_FROM")
+                .ok()
+                .and_then(|v| v.parse().ok()),
             signer_set: match env::var("ZYN_SIGNER_SET").ok().filter(|s| !s.is_empty()) {
                 None => None,
                 Some(list) => {
                     let mut keys = Vec::new();
                     for h in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        keys.push(parse_hex(h, 32, "ZYN_SIGNER_SET").map_err(|_| ConfigError::Bad("ZYN_SIGNER_SET", h.into()))?.try_into().expect("32 bytes"));
+                        keys.push(
+                            parse_hex(h, 32, "ZYN_SIGNER_SET")
+                                .map_err(|_| ConfigError::Bad("ZYN_SIGNER_SET", h.into()))?
+                                .try_into()
+                                .expect("32 bytes"),
+                        );
                     }
                     let threshold = var("ZYN_SIGNER_THRESHOLD", 0usize)?;
-                    let threshold = if threshold == 0 { keys.len() / 2 + 1 } else { threshold };
+                    let threshold = if threshold == 0 {
+                        keys.len() / 2 + 1
+                    } else {
+                        threshold
+                    };
                     Some((keys, threshold))
                 }
             },
-            exit_timeout_epochs: env::var("ZYN_EXIT_TIMEOUT_EPOCHS").ok().map(|v| v.parse().map_err(|_| ConfigError::Bad("ZYN_EXIT_TIMEOUT_EPOCHS", v))).transpose()?,
-            batch_clearing: env::var("ZYN_BATCH_CLEARING").ok().map(|v| v == "1" || v.eq_ignore_ascii_case("true")),
-            launch: env::var("ZYN_LAUNCH").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false),
+            exit_timeout_epochs: env::var("ZYN_EXIT_TIMEOUT_EPOCHS")
+                .ok()
+                .map(|v| {
+                    v.parse()
+                        .map_err(|_| ConfigError::Bad("ZYN_EXIT_TIMEOUT_EPOCHS", v))
+                })
+                .transpose()?,
+            batch_clearing: env::var("ZYN_BATCH_CLEARING")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+            launch: env::var("ZYN_LAUNCH")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
             launch_threshold: env::var("ZYN_LAUNCH_THRESHOLD").ok(),
-            feeds: env::var("ZYN_FEEDS").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false),
-            feed_interval: env::var("ZYN_FEED_INTERVAL").ok().and_then(|v| v.parse().ok()).unwrap_or(60),
+            feeds: env::var("ZYN_FEEDS")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            feed_interval: env::var("ZYN_FEED_INTERVAL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
             feed_map: env::var("ZYN_FEED_MAP").ok(),
             confirmations: var("ZYN_CONFIRMATIONS", 10u64)?,
             bridge_poll_secs: var("ZYN_BRIDGE_POLL_SECS", 30u64)?,
-            network: match env::var("ZYN_NETWORK").unwrap_or_else(|_| "testnet".into()).as_str() {
+            network: match env::var("ZYN_NETWORK")
+                .unwrap_or_else(|_| "testnet".into())
+                .as_str()
+            {
                 "mainnet" | "main" => zyn_custody::zebra::Network::Mainnet,
                 "regtest" => zyn_custody::zebra::Network::Regtest,
                 "testnet" | "test" => zyn_custody::zebra::Network::Testnet,
@@ -329,21 +375,41 @@ impl Config {
                 let vault_fvk = env::var("ZYN_VAULT_FVK").ok();
                 let vault_seed = env::var("ZYN_VAULT_SEED").ok();
                 if vault_seed.is_some() && vault_fvk.is_some() {
-                    return Err(ConfigError::Bad("ZYN_VAULT_FVK", "set a seed or a viewing key, not both".into()));
+                    return Err(ConfigError::Bad(
+                        "ZYN_VAULT_FVK",
+                        "set a seed or a viewing key, not both".into(),
+                    ));
                 }
                 let settle = match env::var("ZYN_ZEBRA_SHARES").ok() {
                     None => None,
                     Some(shares) => {
                         if vault_fvk.is_none() {
-                            return Err(ConfigError::Bad("ZYN_ZEBRA_SHARES", "exits need ZYN_VAULT_FVK, the threshold key's viewing key".into()));
+                            return Err(ConfigError::Bad(
+                                "ZYN_ZEBRA_SHARES",
+                                "exits need ZYN_VAULT_FVK, the threshold key's viewing key".into(),
+                            ));
                         }
                         Some(ZebraSettleConfig {
                             shares: shares.into(),
                             threshold: var("ZYN_ZEBRA_THRESHOLD", 2u16)?,
                             reveals: env::var("ZYN_ZEBRA_REVEALS")
-                                .map_err(|_| ConfigError::Bad("ZYN_ZEBRA_REVEALS", "required when ZYN_ZEBRA_SHARES is set".into()))?
+                                .map_err(|_| {
+                                    ConfigError::Bad(
+                                        "ZYN_ZEBRA_REVEALS",
+                                        "required when ZYN_ZEBRA_SHARES is set".into(),
+                                    )
+                                })?
                                 .into(),
-                            custodians: env::var("ZYN_CUSTODIANS").ok().filter(|v| !v.is_empty()).map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()),
+                            custodians: env::var("ZYN_CUSTODIANS")
+                                .ok()
+                                .filter(|v| !v.is_empty())
+                                .map(|v| {
+                                    v.split(',')
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .map(String::from)
+                                        .collect()
+                                }),
                         })
                     }
                 };
@@ -369,7 +435,13 @@ impl Config {
                         attributions: env::var("ZYN_ZEBRA_ATTRIBUTIONS").ok().map(Into::into),
                         from_height: var("ZYN_BRIDGE_FROM_HEIGHT", 0u64)?,
                         max_blocks: var("ZYN_BRIDGE_MAX_BLOCKS", 200u64)?,
-                        rescan_from: env::var("ZYN_BRIDGE_RESCAN_FROM").ok().map(|v| v.parse().map_err(|_| ConfigError::Bad("ZYN_BRIDGE_RESCAN_FROM", v))).transpose()?,
+                        rescan_from: env::var("ZYN_BRIDGE_RESCAN_FROM")
+                            .ok()
+                            .map(|v| {
+                                v.parse()
+                                    .map_err(|_| ConfigError::Bad("ZYN_BRIDGE_RESCAN_FROM", v))
+                            })
+                            .transpose()?,
                     }),
                 }
             },
@@ -385,17 +457,41 @@ impl Config {
                                 "a Solana RPC URL was set without a vault account".into(),
                             )
                         })?,
-                        asset: var("ZYN_SOLANA_ASSET", 0u32)?,
+                        asset: asset_id("ZYN_SOLANA_ASSET", swapvm::types::SOL_ZY)?,
                         from_slot: var("ZYN_SOLANA_FROM_SLOT", 0u64)?,
-                        mints: env::var("ZYN_SOLANA_MINTS").ok().map(|v| v.split(',').filter(|x| !x.trim().is_empty()).map(|x| {
-                            let (m, sym) = x.trim().split_once(':').unwrap_or((x.trim(), "ITEM.zy"));
-                            (m.to_string(), sym.to_string())
-                        }).collect()).unwrap_or_default(),
-                        rescan_from: env::var("ZYN_SOLANA_RESCAN_FROM").ok().map(|v| v.parse().map_err(|_| ConfigError::Bad("ZYN_SOLANA_RESCAN_FROM", v))).transpose()?,
+                        mints: env::var("ZYN_SOLANA_MINTS")
+                            .ok()
+                            .map(|v| {
+                                v.split(',')
+                                    .filter(|x| !x.trim().is_empty())
+                                    .map(|x| {
+                                        let (m, sym) = x
+                                            .trim()
+                                            .split_once(':')
+                                            .unwrap_or((x.trim(), "ITEM.zy"));
+                                        (m.to_string(), sym.to_string())
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        rescan_from: env::var("ZYN_SOLANA_RESCAN_FROM")
+                            .ok()
+                            .map(|v| {
+                                v.parse()
+                                    .map_err(|_| ConfigError::Bad("ZYN_SOLANA_RESCAN_FROM", v))
+                            })
+                            .transpose()?,
                         settle: match env::var("ZYN_SOLANA_SHARES").ok() {
                             None => None,
                             Some(shares) => {
-                                let need = |k: &'static str| env::var(k).map_err(|_| ConfigError::Bad(k, "required when ZYN_SOLANA_SHARES is set".into()));
+                                let need = |k: &'static str| {
+                                    env::var(k).map_err(|_| {
+                                        ConfigError::Bad(
+                                            k,
+                                            "required when ZYN_SOLANA_SHARES is set".into(),
+                                        )
+                                    })
+                                };
                                 Some(SolanaSettleConfig {
                                     shares: shares.into(),
                                     threshold: var("ZYN_SOLANA_THRESHOLD", 2u16)?,
@@ -404,7 +500,13 @@ impl Config {
                                     custodians: env::var("ZYN_SOLANA_CUSTODIANS")
                                         .ok()
                                         .filter(|v| !v.is_empty())
-                                        .map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()),
+                                        .map(|v| {
+                                            v.split(',')
+                                                .map(str::trim)
+                                                .filter(|s| !s.is_empty())
+                                                .map(String::from)
+                                                .collect()
+                                        }),
                                 })
                             }
                         },
@@ -417,11 +519,12 @@ impl Config {
                 match env::var("ZYN_EVM_RPC_URL").ok() {
                     None => None,
                     Some(url) => {
-                        let vault = env::var("ZYN_EVM_VAULT")
-                            .map_err(|_| ConfigError::Bad(
+                        let vault = env::var("ZYN_EVM_VAULT").map_err(|_| {
+                            ConfigError::Bad(
                                 "ZYN_EVM_VAULT",
                                 "an EVM RPC URL was set without a vault address".into(),
-                            ))?;
+                            )
+                        })?;
                         let token = match env::var("ZYN_EVM_TOKEN").ok() {
                             None => None,
                             Some(t) => Some(address("ZYN_EVM_TOKEN", &t)?),
@@ -430,7 +533,7 @@ impl Config {
                             url,
                             chain_id: var("ZYN_EVM_CHAIN_ID", 84_532u64)?,
                             vault: address("ZYN_EVM_VAULT", &vault)?,
-                            asset: var("ZYN_EVM_ASSET", 0u32)?,
+                            asset: asset_id("ZYN_EVM_ASSET", [0; 32])?,
                             token,
                             decimals: var("ZYN_EVM_DECIMALS", 18u8)?,
                             from_height: var("ZYN_EVM_FROM_HEIGHT", 0u64)?,
@@ -460,14 +563,23 @@ mod tests {
     #[test]
     fn the_defaults_are_a_working_devnet() {
         let c = Config::from_env().expect("defaults must parse");
-        assert!(c.listen.ip().is_loopback(), "the default bind must not be public");
+        assert!(
+            c.listen.ip().is_loopback(),
+            "the default bind must not be public"
+        );
         assert!(c.seal_every > 0);
-        assert!(c.seal_after_secs > 0, "a quiet chain must still advance its epochs");
+        assert!(
+            c.seal_after_secs > 0,
+            "a quiet chain must still advance its epochs"
+        );
         // A default of production floors on a devnet would wall off the
         // faucet path before anyone reached it.
         assert_eq!(c.profile, Profile::Testnet);
         // A bridge is opted into, never inherited.
         assert!(c.zebra.is_none(), "the bridge must not start by default");
-        assert!(c.confirmations > 0, "crediting at zero confirmations credits reorgs");
+        assert!(
+            c.confirmations > 0,
+            "crediting at zero confirmations credits reorgs"
+        );
     }
 }

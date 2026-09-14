@@ -88,7 +88,11 @@ impl<'a> Reader<'a> {
 // ---- request/reply encoders (public types only) ----
 
 /// `OP_ROUND1 ‖ request_id ‖ sighash[32] ‖ n ‖ (alpha serialize)*`
-pub fn encode_round1(request_id: u64, sighash: [u8; 32], alphas: &[Randomizer<PallasBlake2b512>]) -> Vec<u8> {
+pub fn encode_round1(
+    request_id: u64,
+    sighash: [u8; 32],
+    alphas: &[Randomizer<PallasBlake2b512>],
+) -> Vec<u8> {
     let mut out = vec![OP_ROUND1];
     out.extend_from_slice(&request_id.to_be_bytes());
     put_bytes(&mut out, &sighash);
@@ -105,7 +109,10 @@ pub fn encode_round2(request_id: u64, packages: &[Package]) -> Result<Vec<u8>, S
     out.extend_from_slice(&request_id.to_be_bytes());
     put_u32(&mut out, packages.len());
     for pkg in packages {
-        put_bytes(&mut out, &pkg.serialize().map_err(|_| "package".to_string())?);
+        put_bytes(
+            &mut out,
+            &pkg.serialize().map_err(|_| "package".to_string())?,
+        );
     }
     Ok(out)
 }
@@ -116,7 +123,10 @@ fn encode_commitments(id: Identifier, commitments: &[Commitments]) -> Result<Vec
     put_bytes(&mut out, id.serialize().as_ref());
     put_u32(&mut out, commitments.len());
     for c in commitments {
-        put_bytes(&mut out, &c.serialize().map_err(|_| "commitments".to_string())?);
+        put_bytes(
+            &mut out,
+            &c.serialize().map_err(|_| "commitments".to_string())?,
+        );
     }
     Ok(out)
 }
@@ -164,7 +174,12 @@ pub fn handle(participant: &mut Participant, frame: &[u8], now: u64) -> Result<V
     zcash_op(participant, op, &mut r, now)
 }
 
-fn zcash_op(participant: &mut Participant, op: u8, r: &mut Reader, now: u64) -> Result<Vec<u8>, String> {
+fn zcash_op(
+    participant: &mut Participant,
+    op: u8,
+    r: &mut Reader,
+    now: u64,
+) -> Result<Vec<u8>, String> {
     match op {
         OP_ROUND1 => {
             let request_id = r.u64().ok_or("request id")?;
@@ -175,7 +190,9 @@ fn zcash_op(participant: &mut Participant, op: u8, r: &mut Reader, now: u64) -> 
                 let a: [u8; 32] = r.bytes().and_then(|b| b.try_into().ok()).ok_or("alpha")?;
                 alphas.push(Randomizer::deserialize(&a).map_err(|_| "alpha".to_string())?);
             }
-            let commitments = participant.round1(request_id, sighash, alphas, now, &mut rand::rngs::OsRng).map_err(|e| format!("{:?}", e))?;
+            let commitments = participant
+                .round1(request_id, sighash, alphas, now, &mut rand::rngs::OsRng)
+                .map_err(|e| format!("{:?}", e))?;
             encode_commitments(participant.id(), &commitments)
         }
         OP_ROUND2 => {
@@ -183,16 +200,26 @@ fn zcash_op(participant: &mut Participant, op: u8, r: &mut Reader, now: u64) -> 
             let n = r.u32().ok_or("count")?;
             let mut packages = Vec::with_capacity(n);
             for _ in 0..n {
-                packages.push(Package::deserialize(r.bytes().ok_or("package")?).map_err(|_| "package".to_string())?);
+                packages.push(
+                    Package::deserialize(r.bytes().ok_or("package")?)
+                        .map_err(|_| "package".to_string())?,
+                );
             }
-            let shares = participant.round2(request_id, &packages).map_err(|e| format!("{:?}", e))?;
+            let shares = participant
+                .round2(request_id, &packages)
+                .map_err(|e| format!("{:?}", e))?;
             encode_shares(participant.id(), &shares)
         }
         _ => Err("unknown op".into()),
     }
 }
 
-fn solana_op(participant: &mut SolParticipant, op: u8, r: &mut Reader, now: u64) -> Result<Vec<u8>, String> {
+fn solana_op(
+    participant: &mut SolParticipant,
+    op: u8,
+    r: &mut Reader,
+    now: u64,
+) -> Result<Vec<u8>, String> {
     match op {
         OP_SOL_ROUND1 => {
             let request_id = r.u64().ok_or("request id")?;
@@ -202,13 +229,19 @@ fn solana_op(participant: &mut SolParticipant, op: u8, r: &mut Reader, now: u64)
                 .map_err(|e| format!("{:?}", e))?;
             let mut out = Vec::new();
             put_bytes(&mut out, sol_id_bytes(participant.id()).as_slice());
-            put_bytes(&mut out, &c.serialize().map_err(|_| "commitments".to_string())?);
+            put_bytes(
+                &mut out,
+                &c.serialize().map_err(|_| "commitments".to_string())?,
+            );
             Ok(out)
         }
         OP_SOL_ROUND2 => {
             let request_id = r.u64().ok_or("request id")?;
-            let package = SolPackage::deserialize(r.bytes().ok_or("package")?).map_err(|_| "package".to_string())?;
-            let share = participant.round2(request_id, &package).map_err(|e| format!("{:?}", e))?;
+            let package = SolPackage::deserialize(r.bytes().ok_or("package")?)
+                .map_err(|_| "package".to_string())?;
+            let share = participant
+                .round2(request_id, &package)
+                .map_err(|e| format!("{:?}", e))?;
             let mut out = Vec::new();
             put_bytes(&mut out, sol_id_bytes(participant.id()).as_slice());
             put_bytes(&mut out, &share.serialize());
@@ -270,7 +303,10 @@ pub fn encode_sol_round1(request_id: u64, message: &[u8]) -> Vec<u8> {
 pub fn encode_sol_round2(request_id: u64, package: &SolPackage) -> Result<Vec<u8>, String> {
     let mut out = vec![OP_SOL_ROUND2];
     out.extend_from_slice(&request_id.to_be_bytes());
-    put_bytes(&mut out, &package.serialize().map_err(|_| "package".to_string())?);
+    put_bytes(
+        &mut out,
+        &package.serialize().map_err(|_| "package".to_string())?,
+    );
     Ok(out)
 }
 
@@ -288,7 +324,11 @@ fn decode_sol_share(b: &[u8]) -> Option<(SolId, SolShare)> {
 
 /// Serve a share on a socket until killed. One thread per connection; a
 /// connection may carry many requests (round one then round two).
-pub fn serve(participant: std::sync::Arc<std::sync::Mutex<Custodian>>, listener: std::net::TcpListener, now: fn() -> u64) {
+pub fn serve(
+    participant: std::sync::Arc<std::sync::Mutex<Custodian>>,
+    listener: std::net::TcpListener,
+    now: fn() -> u64,
+) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let p = std::sync::Arc::clone(&participant);
@@ -321,11 +361,17 @@ fn write_frame(s: &mut TcpStream, status: u8, body: &[u8]) -> std::io::Result<()
     s.flush()
 }
 
-fn serve_conn(participant: &std::sync::Mutex<Custodian>, mut s: TcpStream, now: fn() -> u64) -> std::io::Result<()> {
+fn serve_conn(
+    participant: &std::sync::Mutex<Custodian>,
+    mut s: TcpStream,
+    now: fn() -> u64,
+) -> std::io::Result<()> {
     s.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
     while let Some(frame) = read_frame(&mut s)? {
         let reply = {
-            let mut p = participant.lock().map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "poisoned"))?;
+            let mut p = participant
+                .lock()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "poisoned"))?;
             p.handle(&frame, now())
         };
         match reply {
@@ -348,21 +394,36 @@ pub struct RemoteQuorum {
 
 impl RemoteQuorum {
     pub fn new(custodians: Vec<String>) -> RemoteQuorum {
-        RemoteQuorum { custodians, timeout: std::time::Duration::from_secs(30) }
+        RemoteQuorum {
+            custodians,
+            timeout: std::time::Duration::from_secs(30),
+        }
     }
 
     fn call(&self, addr: &str, frame: &[u8]) -> Result<Vec<u8>, String> {
-        let mut s = TcpStream::connect_timeout(&addr.parse().map_err(|_| format!("bad address {}", addr))?, self.timeout).map_err(|e| format!("{}: {}", addr, e))?;
+        let mut s = TcpStream::connect_timeout(
+            &addr.parse().map_err(|_| format!("bad address {}", addr))?,
+            self.timeout,
+        )
+        .map_err(|e| format!("{}: {}", addr, e))?;
         s.set_read_timeout(Some(self.timeout)).ok();
         s.set_write_timeout(Some(self.timeout)).ok();
-        s.write_all(&(frame.len() as u32).to_be_bytes()).and_then(|_| s.write_all(frame)).map_err(|e| format!("{}: {}", addr, e))?;
+        s.write_all(&(frame.len() as u32).to_be_bytes())
+            .and_then(|_| s.write_all(frame))
+            .map_err(|e| format!("{}: {}", addr, e))?;
         let mut len = [0u8; 4];
-        s.read_exact(&mut len).map_err(|_| format!("{}: no reply", addr))?;
+        s.read_exact(&mut len)
+            .map_err(|_| format!("{}: no reply", addr))?;
         let mut body = vec![0u8; u32::from_be_bytes(len) as usize];
-        s.read_exact(&mut body).map_err(|_| format!("{}: truncated", addr))?;
+        s.read_exact(&mut body)
+            .map_err(|_| format!("{}: truncated", addr))?;
         match body.first() {
             Some(&STATUS_OK) => Ok(body[1..].to_vec()),
-            _ => Err(format!("{}: {}", addr, String::from_utf8_lossy(body.get(1..).unwrap_or_default()))),
+            _ => Err(format!(
+                "{}: {}",
+                addr,
+                String::from_utf8_lossy(body.get(1..).unwrap_or_default())
+            )),
         }
     }
 }
@@ -378,11 +439,18 @@ impl Quorum for RemoteQuorum {
         let frame = encode_round1(request_id, sighash, alphas);
         let mut out = BTreeMap::new();
         for addr in self.custodians.clone() {
-            match self.call(&addr, &frame).ok().and_then(|b| decode_commitments(&b)) {
+            match self
+                .call(&addr, &frame)
+                .ok()
+                .and_then(|b| decode_commitments(&b))
+            {
                 Some((id, commitments)) if commitments.len() == alphas.len() => {
                     out.insert(id, commitments);
                 }
-                Some(_) => eprintln!("zyn-custody: {} answered round one with the wrong shape", addr),
+                Some(_) => eprintln!(
+                    "zyn-custody: {} answered round one with the wrong shape",
+                    addr
+                ),
                 None => eprintln!("zyn-custody: {} did not answer round one", addr),
             }
         }
@@ -395,12 +463,18 @@ impl Quorum for RemoteQuorum {
         chosen: &[Identifier],
         packages: &[Package],
     ) -> BTreeMap<Identifier, Vec<Share>> {
-        let Ok(frame) = encode_round2(request_id, packages) else { return BTreeMap::new() };
+        let Ok(frame) = encode_round2(request_id, packages) else {
+            return BTreeMap::new();
+        };
         let mut out = BTreeMap::new();
         // Only the chosen answered round one, but we do not track which address
         // is which id, so we ask all and keep the chosen ones' shares.
         for addr in self.custodians.clone() {
-            if let Some((id, shares)) = self.call(&addr, &frame).ok().and_then(|b| decode_shares(&b)) {
+            if let Some((id, shares)) = self
+                .call(&addr, &frame)
+                .ok()
+                .and_then(|b| decode_shares(&b))
+            {
                 if chosen.contains(&id) && shares.len() == packages.len() {
                     out.insert(id, shares);
                 }
@@ -420,16 +494,29 @@ pub struct RemoteSolanaQuorum {
 
 impl RemoteSolanaQuorum {
     pub fn new(custodians: Vec<String>) -> RemoteSolanaQuorum {
-        RemoteSolanaQuorum { custodians: custodians.clone(), inner: RemoteQuorum::new(custodians) }
+        RemoteSolanaQuorum {
+            custodians: custodians.clone(),
+            inner: RemoteQuorum::new(custodians),
+        }
     }
 }
 
 impl SolanaQuorum for RemoteSolanaQuorum {
-    fn round1(&mut self, request_id: u64, message: &[u8], _now: u64) -> BTreeMap<SolId, SolCommitments> {
+    fn round1(
+        &mut self,
+        request_id: u64,
+        message: &[u8],
+        _now: u64,
+    ) -> BTreeMap<SolId, SolCommitments> {
         let frame = encode_sol_round1(request_id, message);
         let mut out = BTreeMap::new();
         for addr in self.custodians.clone() {
-            match self.inner.call(&addr, &frame).ok().and_then(|b| decode_sol_commitments(&b)) {
+            match self
+                .inner
+                .call(&addr, &frame)
+                .ok()
+                .and_then(|b| decode_sol_commitments(&b))
+            {
                 Some((id, c)) => {
                     out.insert(id, c);
                 }
@@ -439,11 +526,23 @@ impl SolanaQuorum for RemoteSolanaQuorum {
         out
     }
 
-    fn round2(&mut self, request_id: u64, chosen: &[SolId], package: &SolPackage) -> BTreeMap<SolId, SolShare> {
-        let Ok(frame) = encode_sol_round2(request_id, package) else { return BTreeMap::new() };
+    fn round2(
+        &mut self,
+        request_id: u64,
+        chosen: &[SolId],
+        package: &SolPackage,
+    ) -> BTreeMap<SolId, SolShare> {
+        let Ok(frame) = encode_sol_round2(request_id, package) else {
+            return BTreeMap::new();
+        };
         let mut out = BTreeMap::new();
         for addr in self.custodians.clone() {
-            if let Some((id, share)) = self.inner.call(&addr, &frame).ok().and_then(|b| decode_sol_share(&b)) {
+            if let Some((id, share)) = self
+                .inner
+                .call(&addr, &frame)
+                .ok()
+                .and_then(|b| decode_sol_share(&b))
+            {
                 if chosen.contains(&id) {
                     out.insert(id, share);
                 }
@@ -470,7 +569,13 @@ mod tests {
     /// verify — same result as the in-process path, having crossed the codec.
     #[test]
     fn the_protocol_round_trips_a_signature_over_the_wire() {
-        let keys: Vec<_> = Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().map(|(_, k)| k).collect();
+        let keys: Vec<_> = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect();
         let public = keys[0].public_package.clone();
         let group = *public.verifying_key();
         let mut daemons: Vec<Participant> = keys.into_iter().map(Participant::new).collect();
@@ -504,7 +609,10 @@ mod tests {
             let shares = chosen.iter().map(|id| (*id, r2[id][i].clone())).collect();
             let params = params_for(&group, *a);
             let sig = aggregate(&packages[i], &shares, &public, &params).unwrap();
-            assert!(params.randomized_verifying_key().verify(&sighash, &sig).is_ok());
+            assert!(params
+                .randomized_verifying_key()
+                .verify(&sighash, &sig)
+                .is_ok());
         }
     }
 
@@ -514,11 +622,19 @@ mod tests {
     #[test]
     fn the_solana_protocol_round_trips_a_signature_over_the_wire() {
         use crate::solana::custody;
-        let keys: Vec<_> = custody::ceremony(2, 3, &mut rand::rngs::OsRng).unwrap().into_values().collect();
+        let keys: Vec<_> = custody::ceremony(2, 3, &mut rand::rngs::OsRng)
+            .unwrap()
+            .into_values()
+            .collect();
         let public = keys[0].public_package.clone();
         let vault = custody::vault_address_of(&public);
-        let mut daemons: Vec<Custodian> =
-            keys.into_iter().map(|k| Custodian { zcash: None, solana: Some(SolParticipant::new(k)) }).collect();
+        let mut daemons: Vec<Custodian> = keys
+            .into_iter()
+            .map(|k| Custodian {
+                zcash: None,
+                solana: Some(SolParticipant::new(k)),
+            })
+            .collect();
         let message = b"a solana settlement message".to_vec();
 
         let req = encode_sol_round1(9, &message);
@@ -550,26 +666,53 @@ mod tests {
     #[test]
     fn a_custodian_will_not_sign_a_message_it_did_not_commit_to() {
         use crate::solana::custody;
-        let keys: Vec<_> = custody::ceremony(2, 2, &mut rand::rngs::OsRng).unwrap().into_values().collect();
-        let mut d = Custodian { zcash: None, solana: Some(SolParticipant::new(keys[0].clone())) };
+        let keys: Vec<_> = custody::ceremony(2, 2, &mut rand::rngs::OsRng)
+            .unwrap()
+            .into_values()
+            .collect();
+        let mut d = Custodian {
+            zcash: None,
+            solana: Some(SolParticipant::new(keys[0].clone())),
+        };
         let mut other = SolParticipant::new(keys[1].clone());
 
-        let (id, c) = decode_sol_commitments(&d.handle(&encode_sol_round1(1, b"pay alice"), 0).unwrap()).unwrap();
-        let c2 = other.round1(1, b"pay mallory".to_vec(), 0, &mut rand::rngs::OsRng).unwrap();
-        let swapped = SolPackage::new([(id, c), (other.id(), c2)].into_iter().collect(), b"pay mallory");
-        let err = d.handle(&encode_sol_round2(1, &swapped).unwrap(), 0).unwrap_err();
+        let (id, c) =
+            decode_sol_commitments(&d.handle(&encode_sol_round1(1, b"pay alice"), 0).unwrap())
+                .unwrap();
+        let c2 = other
+            .round1(1, b"pay mallory".to_vec(), 0, &mut rand::rngs::OsRng)
+            .unwrap();
+        let swapped = SolPackage::new(
+            [(id, c), (other.id(), c2)].into_iter().collect(),
+            b"pay mallory",
+        );
+        let err = d
+            .handle(&encode_sol_round2(1, &swapped).unwrap(), 0)
+            .unwrap_err();
         assert!(err.contains("WrongMessage"), "{}", err);
     }
 
     /// A daemon holding one vault's share does not answer for the other's.
     #[test]
     fn a_daemon_refuses_ops_for_a_share_it_does_not_hold() {
-        let keys = Ceremony::new(2, 2).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().map(|(_, k)| k).next().unwrap();
-        let mut d = Custodian { zcash: Some(Participant::new(keys)), solana: None };
+        let keys = Ceremony::new(2, 2)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .map(|(_, k)| k)
+            .next()
+            .unwrap();
+        let mut d = Custodian {
+            zcash: Some(Participant::new(keys)),
+            solana: None,
+        };
         let err = d.handle(&encode_sol_round1(1, b"anything"), 0).unwrap_err();
         assert_eq!(err, "no solana share here");
         // And it still answers for the one it does hold.
-        assert!(d.handle(&encode_round1(1, [7u8; 32], &[alpha(1)]), 0).is_ok());
+        assert!(d
+            .handle(&encode_round1(1, [7u8; 32], &[alpha(1)]), 0)
+            .is_ok());
     }
 
     /// The coordinator side, on real sockets: three daemons on loopback, a
@@ -580,13 +723,19 @@ mod tests {
         use crate::solana::custody;
         use std::sync::{Arc, Mutex};
 
-        let keys: Vec<_> = custody::ceremony(2, 3, &mut rand::rngs::OsRng).unwrap().into_values().collect();
+        let keys: Vec<_> = custody::ceremony(2, 3, &mut rand::rngs::OsRng)
+            .unwrap()
+            .into_values()
+            .collect();
         let public = keys[0].public_package.clone();
         let mut addrs = Vec::new();
         for k in keys {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             addrs.push(listener.local_addr().unwrap().to_string());
-            let c = Arc::new(Mutex::new(Custodian { zcash: None, solana: Some(SolParticipant::new(k)) }));
+            let c = Arc::new(Mutex::new(Custodian {
+                zcash: None,
+                solana: Some(SolParticipant::new(k)),
+            }));
             std::thread::spawn(move || serve(c, listener, || 0));
         }
 
@@ -598,7 +747,16 @@ mod tests {
 
     #[test]
     fn a_malformed_frame_is_an_error_not_a_panic() {
-        let mut d = Participant::new(Ceremony::new(2, 2).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().map(|(_, k)| k).next().unwrap());
+        let mut d = Participant::new(
+            Ceremony::new(2, 2)
+                .unwrap()
+                .run(&mut rand::rngs::OsRng)
+                .unwrap()
+                .into_iter()
+                .map(|(_, k)| k)
+                .next()
+                .unwrap(),
+        );
         assert!(handle(&mut d, &[], 0).is_err());
         assert!(handle(&mut d, &[OP_ROUND1], 0).is_err());
         assert!(handle(&mut d, &[99], 0).is_err());

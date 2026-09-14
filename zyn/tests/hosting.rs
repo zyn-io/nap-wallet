@@ -48,14 +48,25 @@ fn registry() -> Registry {
     let who = wallet_account();
     let amount = Fixed::whole(1_000);
     let observed = zap.state().backing_of(XZEC).add(amount).unwrap();
-    zap.submit_operator(Intent::AttestVaultBalance { asset: XZEC, observed }, 0);
+    zap.submit_operator(
+        Intent::AttestVaultBalance {
+            asset: XZEC,
+            observed,
+        },
+        0,
+    );
     let d = Intent::next_deposit(zap.state(), who, XZEC, amount, [0u8; 32]);
     zap.submit_operator(d, 0);
     let e = zap.state().epoch();
     zap.submit_operator(Intent::Checkpoint, 0);
     zap.submit_operator(Intent::ConfirmAnchor { epoch: e }, 0);
 
-    let tally: Node<TallyVm> = Node::new(TALLY, Limits { max_step: 1_000 }, policy(), Economics::flat(10_000));
+    let tally: Node<TallyVm> = Node::new(
+        TALLY,
+        Limits { max_step: 1_000 },
+        policy(),
+        Economics::flat(10_000),
+    );
 
     let mut r = Registry::new();
     r.register(Box::new(zap)).expect("register zap");
@@ -65,8 +76,12 @@ fn registry() -> Registry {
 
 /// Sign a ZynZap intent the way a wallet would, and frame it for the host.
 fn signed_swap(to: [u8; 32], amount: i64) -> Vec<u8> {
-    let intent =
-        Intent::Transfer { from: wallet_account(), to, asset: XZEC, amount: Fixed::whole(amount) };
+    let intent = Intent::Transfer {
+        from: wallet_account(),
+        to,
+        asset: XZEC,
+        amount: Fixed::whole(amount),
+    };
     let auth = Authorization {
         chain_id: ZAP,
         vm_id: zyn_vm::zvm::vm_id::<SwapState>(),
@@ -93,7 +108,10 @@ fn one_registry_holds_two_unrelated_applications() {
     assert_eq!(r.get(TALLY).unwrap().vm_name(), "tally");
     // Two machines with unrelated intent types, held together — the thing a
     // `dyn MicrochainVm` could never have done.
-    assert_ne!(r.get(ZAP).unwrap().state_root(), r.get(TALLY).unwrap().state_root());
+    assert_ne!(
+        r.get(ZAP).unwrap().state_root(),
+        r.get(TALLY).unwrap().state_root()
+    );
 }
 
 /// The host routes by chain id and applies without knowing what it applied.
@@ -102,12 +120,22 @@ fn a_signed_intent_reaches_the_right_application() {
     let mut r = registry();
     let before = r.get(TALLY).unwrap().state_root();
 
-    let applied = r.submit_signed(ZAP, &signed_swap([9u8; 32], 10), 0).expect("submit");
+    let applied = r
+        .submit_signed(ZAP, &signed_swap([9u8; 32], 10), 0)
+        .expect("submit");
     assert!(!applied.rejected, "the transfer was rejected");
-    assert_eq!(applied.account, wallet_account(), "the host resolved the wrong signer");
+    assert_eq!(
+        applied.account,
+        wallet_account(),
+        "the host resolved the wrong signer"
+    );
 
     // The other application did not move.
-    assert_eq!(r.get(TALLY).unwrap().state_root(), before, "an intent crossed applications");
+    assert_eq!(
+        r.get(TALLY).unwrap().state_root(),
+        before,
+        "an intent crossed applications"
+    );
 }
 
 /// A submission for a chain nobody runs is refused by name.
@@ -129,8 +157,7 @@ fn an_intent_signed_for_one_chain_does_not_execute_on_another() {
     let _ = &mut zap_on_other_id;
 
     let mut r = Registry::new();
-    let zap: Node<SwapState> =
-        Node::new(ZAP, Params::testnet(), policy(), Economics::flat(10_000));
+    let zap: Node<SwapState> = Node::new(ZAP, Params::testnet(), policy(), Economics::flat(10_000));
     let decoy: Node<SwapState> =
         Node::new(TALLY, Params::testnet(), policy(), Economics::flat(10_000));
     r.register(Box::new(zap)).unwrap();
@@ -172,7 +199,10 @@ fn malformed_frames_are_refused_rather_than_fatal() {
 fn a_hosted_application_still_proves_its_accounts() {
     let r = registry();
     let zap = r.get(ZAP).unwrap();
-    assert!(zap.account_record(&wallet_account()).is_some(), "no record for a funded account");
+    assert!(
+        zap.account_record(&wallet_account()).is_some(),
+        "no record for a funded account"
+    );
     assert!(zap.account_record(&[0xEE; 32]).is_none());
     assert!(!zap.encode_state().is_empty());
 }
@@ -188,7 +218,11 @@ fn a_batch_matches_one_at_a_time() {
     let mut serial = registry();
     let mut expected = Vec::new();
     for f in &refs {
-        expected.push(serial.submit_signed(ZAP, f, 0).map(|a| (a.seq, a.account, a.rejected)));
+        expected.push(
+            serial
+                .submit_signed(ZAP, f, 0)
+                .map(|a| (a.seq, a.account, a.rejected)),
+        );
     }
 
     let mut batched = registry();
@@ -224,12 +258,24 @@ fn a_bad_frame_does_not_spoil_the_batch() {
     assert!(out[5].is_err(), "a truncated frame was accepted");
     for (i, o) in out.iter().enumerate() {
         if i != 3 && i != 5 {
-            assert!(o.is_ok(), "frame {} failed alongside the bad ones: {:?}", i, o);
+            assert!(
+                o.is_ok(),
+                "frame {} failed alongside the bad ones: {:?}",
+                i,
+                o
+            );
         }
     }
     // Sequence numbers are still strictly increasing across the survivors.
-    let seqs: Vec<u64> = out.iter().filter_map(|o| o.as_ref().ok().map(|a| a.seq)).collect();
-    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "sequencing was not monotonic: {:?}", seqs);
+    let seqs: Vec<u64> = out
+        .iter()
+        .filter_map(|o| o.as_ref().ok().map(|a| a.seq))
+        .collect();
+    assert!(
+        seqs.windows(2).all(|w| w[0] < w[1]),
+        "sequencing was not monotonic: {:?}",
+        seqs
+    );
 }
 
 /// **S14** survives the fast path: a valid signature over someone else's
@@ -261,5 +307,8 @@ fn entitlement_is_checked_in_the_batch_path_too() {
 
     let mut r = registry();
     let out = r.get_mut(ZAP).unwrap().submit_signed_batch(&[&frame], 0);
-    assert!(out[0].is_err(), "a signature over another account was accepted in a batch");
+    assert!(
+        out[0].is_err(),
+        "a signature over another account was accepted in a batch"
+    );
 }

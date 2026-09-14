@@ -63,13 +63,16 @@ impl Bot {
     }
 
     fn say(&self, chat: i64, text: &str) {
-        self.call("sendMessage", serde_json::json!({
-            "chat_id": chat,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": true,
-            "reply_markup": Self::keyboard(),
-        }));
+        self.call(
+            "sendMessage",
+            serde_json::json!({
+                "chat_id": chat,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": true,
+                "reply_markup": Self::keyboard(),
+            }),
+        );
     }
 
     /// Height, epoch, and — the number that mattered on 9 Sep — how far the
@@ -87,9 +90,17 @@ impl Bot {
             self.node.chain, s.epoch, s.seq, s.anchored_epoch, lag, mark, s.backing, s.pools, s.accounts
         );
         if s.forced_pending > 0 || s.censored > 0 {
-            out.push_str(&format!("\nforced pending {}  censored {}", s.forced_pending, s.censored));
+            out.push_str(&format!(
+                "\nforced pending {}  censored {}",
+                s.forced_pending, s.censored
+            ));
         }
-        let down: Vec<&str> = s.health.iter().filter(|h| h.down).map(|h| h.name.as_str()).collect();
+        let down: Vec<&str> = s
+            .health
+            .iter()
+            .filter(|h| h.down)
+            .map(|h| h.name.as_str())
+            .collect();
         out.push_str(&if down.is_empty() {
             format!("\n\u{2713} {} source(s) healthy", s.health.len())
         } else {
@@ -110,7 +121,10 @@ impl Bot {
         let mut out = String::from("<b>sources</b>\n");
         for h in &s.health {
             let mark = if h.down { "\u{26a0}" } else { "\u{2713}" };
-            out.push_str(&format!("{} <b>{}</b> — scanned to {}", mark, h.name, h.scanned_to));
+            out.push_str(&format!(
+                "{} <b>{}</b> — scanned to {}",
+                mark, h.name, h.scanned_to
+            ));
             if !h.error.is_empty() {
                 let msg: String = h.error.chars().take(90).collect();
                 out.push_str(&format!("\n    {}", msg));
@@ -152,16 +166,28 @@ impl Bot {
             let body = serde_json::json!({
                 "jsonrpc": "1.0", "id": 1, "method": "getblockchaininfo", "params": []
             });
-            match self.agent.post(&url).timeout(Duration::from_secs(8)).send_json(body) {
+            match self
+                .agent
+                .post(&url)
+                .timeout(Duration::from_secs(8))
+                .send_json(body)
+            {
                 Err(e) => {
                     let msg = e.to_string();
-                    out.push_str(&format!("\u{26a0} <b>{}</b> unreachable\n    {}\n", label, msg.chars().take(70).collect::<String>()));
+                    out.push_str(&format!(
+                        "\u{26a0} <b>{}</b> unreachable\n    {}\n",
+                        label,
+                        msg.chars().take(70).collect::<String>()
+                    ));
                 }
                 Ok(r) => {
                     let v: serde_json::Value = r.into_json().unwrap_or(serde_json::Value::Null);
                     let res = v.get("result").unwrap_or(&serde_json::Value::Null);
                     let blocks = res.get("blocks").and_then(|x| x.as_u64()).unwrap_or(0);
-                    let tip = res.get("estimatedheight").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let tip = res
+                        .get("estimatedheight")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
                     let chain = res.get("chain").and_then(|x| x.as_str()).unwrap_or("?");
                     let lag = tip.saturating_sub(blocks);
                     // Two blocks of slack: mainnet produces one every ~75s, so
@@ -186,7 +212,10 @@ impl Bot {
                 for x in o.iter().take(10) {
                     out.push_str(&format!(
                         "#{} asset {} \u{2192} {} of asset {}\n",
-                        x.id, x.offer_asset, x.want_amount, x.want_asset
+                        x.id,
+                        zynzapd::client::hex(&x.offer_asset),
+                        x.want_amount,
+                        zynzapd::client::hex(&x.want_asset)
                     ));
                 }
                 out
@@ -208,14 +237,20 @@ impl Bot {
 
     fn run(&self) {
         let mut offset: i64 = 0;
-        eprintln!("zyn-tgbot: polling; answering {} chat(s); node {}", self.allowed.len(), self.node.addr);
+        eprintln!(
+            "zyn-tgbot: polling; answering {} chat(s); node {}",
+            self.allowed.len(),
+            self.node.addr
+        );
         loop {
             let body = serde_json::json!({ "timeout": 50, "offset": offset });
             let Some(v) = self.call("getUpdates", body) else {
                 std::thread::sleep(Duration::from_secs(5));
                 continue;
             };
-            let Some(items) = v.get("result").and_then(|r| r.as_array()) else { continue };
+            let Some(items) = v.get("result").and_then(|r| r.as_array()) else {
+                continue;
+            };
             for u in items {
                 if let Some(id) = u.get("update_id").and_then(|x| x.as_i64()) {
                     offset = id + 1;
@@ -231,14 +266,21 @@ impl Bot {
                 } else {
                     (
                         u.pointer("/message/chat/id").and_then(|x| x.as_i64()),
-                        u.pointer("/message/text").and_then(|x| x.as_str()).map(str::to_string),
+                        u.pointer("/message/text")
+                            .and_then(|x| x.as_str())
+                            .map(str::to_string),
                         None,
                     )
                 };
                 if let Some(cb) = callback {
-                    self.call("answerCallbackQuery", serde_json::json!({ "callback_query_id": cb }));
+                    self.call(
+                        "answerCallbackQuery",
+                        serde_json::json!({ "callback_query_id": cb }),
+                    );
                 }
-                let (Some(chat), Some(text)) = (chat, text) else { continue };
+                let (Some(chat), Some(text)) = (chat, text) else {
+                    continue;
+                };
                 if !self.allowed.contains(&chat) {
                     eprintln!("zyn-tgbot: ignoring chat {}", chat);
                     continue;
@@ -258,21 +300,34 @@ fn main() -> Result<(), String> {
         .filter_map(|s| s.trim().parse().ok())
         .collect();
     if allowed.is_empty() {
-        return Err("ZYN_TG_CHATS is required: a comma-separated list of chat ids allowed to ask".into());
+        return Err(
+            "ZYN_TG_CHATS is required: a comma-separated list of chat ids allowed to ask".into(),
+        );
     }
     let addr = env("ZYN_NODE").unwrap_or_else(|| "127.0.0.1:8099".into());
     // Two Zcash nodes, and neither is optional to the story: testnet is what
     // chain 11 anchors into, mainnet is what the vault will custody against.
     let zebras: Vec<(String, String)> = vec![
-        ("testnet".into(), env("ZYN_ZEBRA_TESTNET").unwrap_or_else(|| "127.0.0.1:18232".into())),
-        ("mainnet".into(), env("ZYN_ZEBRA_MAINNET").unwrap_or_else(|| "127.0.0.1:8232".into())),
+        (
+            "testnet".into(),
+            env("ZYN_ZEBRA_TESTNET").unwrap_or_else(|| "127.0.0.1:18232".into()),
+        ),
+        (
+            "mainnet".into(),
+            env("ZYN_ZEBRA_MAINNET").unwrap_or_else(|| "127.0.0.1:8232".into()),
+        ),
     ];
-    let chain: u32 = env("ZYN_CHAIN_ID").unwrap_or_else(|| "11".into()).parse().map_err(|_| "ZYN_CHAIN_ID")?;
+    let chain: u32 = env("ZYN_CHAIN_ID")
+        .unwrap_or_else(|| "11".into())
+        .parse()
+        .map_err(|_| "ZYN_CHAIN_ID")?;
 
     let bot = Bot {
         token,
         allowed,
-        agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build(),
+        agent: ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(60))
+            .build(),
         node: Node::new(&addr, chain),
         zebras,
     };

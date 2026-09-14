@@ -175,7 +175,11 @@ impl Vault {
         // A new epoch restores the allowance. Checked against the *incoming*
         // epoch rather than a stored flag, so a vault that sat idle for a
         // hundred epochs is not owed a hundred allowances.
-        let used = if epoch == self.epoch { self.epoch_credited } else { Fixed::ZERO };
+        let used = if epoch == self.epoch {
+            self.epoch_credited
+        } else {
+            Fixed::ZERO
+        };
         let used = used.add(amount).ok_or(BridgeError::Overflow)?;
         if self.epoch_cap.is_positive() && used > self.epoch_cap {
             return Err(BridgeError::AboveEpochCap);
@@ -230,7 +234,11 @@ impl Vault {
         if epoch != self.epoch {
             return Some(self.epoch_cap);
         }
-        Some(self.epoch_cap.sub(self.epoch_credited).unwrap_or(Fixed::ZERO))
+        Some(
+            self.epoch_cap
+                .sub(self.epoch_credited)
+                .unwrap_or(Fixed::ZERO),
+        )
     }
 
     /// Whether an exit of `amount` is one this chain could broadcast.
@@ -358,7 +366,10 @@ pub struct Binding {
 
 impl Binding {
     pub fn new(destination: [u8; 32]) -> Binding {
-        Binding { destination, pending: None }
+        Binding {
+            destination,
+            pending: None,
+        }
     }
 
     /// Ask to redirect. Re-asking with a different address restarts the clock,
@@ -371,7 +382,10 @@ impl Binding {
             Some((d, since)) if d == destination => since,
             _ => now,
         };
-        Binding { destination: self.destination, pending: Some((destination, since)) }
+        Binding {
+            destination: self.destination,
+            pending: Some((destination, since)),
+        }
     }
 
     /// Whether a pending redirect to `destination` may now take effect.
@@ -384,7 +398,10 @@ impl Binding {
 
     /// Apply it.
     pub fn apply(&self, destination: [u8; 32]) -> Binding {
-        Binding { destination, pending: None }
+        Binding {
+            destination,
+            pending: None,
+        }
     }
 
     /// Whether a payout to `destination` is allowed.
@@ -465,9 +482,19 @@ mod tests {
         assert_eq!(v.confirmed, Fixed::whole(5));
 
         // The same credit again, and any gap, are both refused.
-        assert_eq!(v.credit(Fixed::whole(5), 1, 0), Err(BridgeError::DepositOutOfOrder));
-        assert_eq!(v.credit(Fixed::whole(5), 3, 0), Err(BridgeError::DepositOutOfOrder));
-        assert_eq!(v.confirmed, Fixed::whole(5), "a refused credit moved the vault");
+        assert_eq!(
+            v.credit(Fixed::whole(5), 1, 0),
+            Err(BridgeError::DepositOutOfOrder)
+        );
+        assert_eq!(
+            v.credit(Fixed::whole(5), 3, 0),
+            Err(BridgeError::DepositOutOfOrder)
+        );
+        assert_eq!(
+            v.confirmed,
+            Fixed::whole(5),
+            "a refused credit moved the vault"
+        );
         v.credit(Fixed::whole(2), 2, 0).unwrap();
         assert_eq!(v.confirmed, Fixed::whole(7));
     }
@@ -519,7 +546,11 @@ mod tests {
         v.cap = Fixed::whole(100);
         v.credit(Fixed::whole(90), 1, 0).unwrap();
         assert_eq!(v.credit(Fixed::whole(11), 2, 0), Err(BridgeError::AboveCap));
-        assert_eq!(v.confirmed, Fixed::whole(90), "a refused credit moved the vault");
+        assert_eq!(
+            v.confirmed,
+            Fixed::whole(90),
+            "a refused credit moved the vault"
+        );
         assert_eq!(v.deposits, 1, "a refused credit consumed an index");
         v.credit(Fixed::whole(10), 2, 0).unwrap();
         assert_eq!(v.confirmed, Fixed::whole(100));
@@ -537,10 +568,16 @@ mod tests {
 
         v.credit(Fixed::whole(30), 1, 0).unwrap();
         assert_eq!(v.epoch_headroom(0), Some(Fixed::whole(20)));
-        assert_eq!(v.credit(Fixed::whole(21), 2, 0), Err(BridgeError::AboveEpochCap));
+        assert_eq!(
+            v.credit(Fixed::whole(21), 2, 0),
+            Err(BridgeError::AboveEpochCap)
+        );
         v.credit(Fixed::whole(20), 2, 0).unwrap();
         assert_eq!(v.epoch_headroom(0), Some(Fixed::ZERO));
-        assert_eq!(v.credit(Fixed::raw(1), 3, 0), Err(BridgeError::AboveEpochCap));
+        assert_eq!(
+            v.credit(Fixed::raw(1), 3, 0),
+            Err(BridgeError::AboveEpochCap)
+        );
 
         // The next epoch restores the allowance — and only one allowance,
         // however long the vault sat idle.
@@ -568,7 +605,10 @@ mod tests {
     fn a_vault_cannot_issue_more_than_it_was_observed_to_hold() {
         let mut v = Vault::new(ORIGIN_ZCASH);
         // Nothing observed yet, so nothing may be issued.
-        assert_eq!(v.credit(Fixed::whole(1), 1, 0), Err(BridgeError::AboveObserved));
+        assert_eq!(
+            v.credit(Fixed::whole(1), 1, 0),
+            Err(BridgeError::AboveObserved)
+        );
 
         v.attest(Fixed::whole(100), 0).unwrap();
         assert_eq!(v.observed_headroom(), Fixed::whole(100));
@@ -576,9 +616,15 @@ mod tests {
         assert_eq!(v.observed_headroom(), Fixed::whole(40));
 
         // Past the observation, however much room the other ceilings leave.
-        assert_eq!(v.credit(Fixed::whole(41), 2, 0), Err(BridgeError::AboveObserved));
+        assert_eq!(
+            v.credit(Fixed::whole(41), 2, 0),
+            Err(BridgeError::AboveObserved)
+        );
         v.credit(Fixed::whole(40), 2, 0).unwrap();
-        assert_eq!(v.credit(Fixed::raw(1), 3, 0), Err(BridgeError::AboveObserved));
+        assert_eq!(
+            v.credit(Fixed::raw(1), 3, 0),
+            Err(BridgeError::AboveObserved)
+        );
 
         // More arrives on the far chain, is observed, and may then be issued.
         v.attest(Fixed::whole(150), 1).unwrap();
@@ -600,7 +646,11 @@ mod tests {
             Err(BridgeError::AttestedShortfall),
             "a vault short of what it issued was recorded silently"
         );
-        assert_eq!(v.observed, Fixed::whole(100), "a refused report moved the record");
+        assert_eq!(
+            v.observed,
+            Fixed::whole(100),
+            "a refused report moved the record"
+        );
         v.check(Fixed::whole(100)).unwrap();
 
         // A payout legitimately lowers both, and that reports fine.
@@ -613,7 +663,10 @@ mod tests {
     fn a_stale_observation_cannot_overwrite_a_fresher_one() {
         let mut v = Vault::new(ORIGIN_ZCASH);
         v.attest(Fixed::whole(100), 5).unwrap();
-        assert_eq!(v.attest(Fixed::whole(200), 4), Err(BridgeError::StaleObservation));
+        assert_eq!(
+            v.attest(Fixed::whole(200), 4),
+            Err(BridgeError::StaleObservation)
+        );
         assert_eq!(v.observed, Fixed::whole(100));
         v.attest(Fixed::whole(200), 5).unwrap();
     }
@@ -628,13 +681,19 @@ mod tests {
         assert!(!b.admits([2u8; 32]));
 
         let asked = b.request([2u8; 32], 100);
-        assert!(asked.admits([1u8; 32]), "a request should not take effect on its own");
+        assert!(
+            asked.admits([1u8; 32]),
+            "a request should not take effect on its own"
+        );
         assert!(!asked.may_apply([2u8; 32], 109, 10));
         assert!(asked.may_apply([2u8; 32], 110, 10));
         // A different address is a different request, from now.
         let again = asked.request([3u8; 32], 105);
         assert!(!again.may_apply([3u8; 32], 110, 10));
-        assert!(!again.may_apply([2u8; 32], 200, 10), "the abandoned request stayed live");
+        assert!(
+            !again.may_apply([2u8; 32], 200, 10),
+            "the abandoned request stayed live"
+        );
 
         let applied = again.apply([3u8; 32]);
         assert!(applied.admits([3u8; 32]));
@@ -680,7 +739,10 @@ mod tests {
         let settled = topped.settle(Fixed::whole(4)).unwrap();
         assert_eq!(settled.amount, Fixed::whole(6));
         assert_eq!(settled.since, 200);
-        assert_eq!(settled.settle(Fixed::whole(7)), Err(BridgeError::NothingPending));
+        assert_eq!(
+            settled.settle(Fixed::whole(7)),
+            Err(BridgeError::NothingPending)
+        );
     }
 
     /// The owner asking again about the same redirect must not reset it — or
@@ -690,9 +752,17 @@ mod tests {
     fn re_asking_the_same_redirect_keeps_its_clock() {
         let b = Binding::new([1u8; 32]).request([2u8; 32], 100);
         let again = b.request([2u8; 32], 105);
-        assert_eq!(again.pending, Some(([2u8; 32], 100)), "the same request restarted the clock");
+        assert_eq!(
+            again.pending,
+            Some(([2u8; 32], 100)),
+            "the same request restarted the clock"
+        );
         assert!(again.may_apply([2u8; 32], 110, 10));
         let other = again.request([3u8; 32], 106);
-        assert_eq!(other.pending, Some(([3u8; 32], 106)), "a different address must restart it");
+        assert_eq!(
+            other.pending,
+            Some(([3u8; 32], 106)),
+            "a different address must restart it"
+        );
     }
 }

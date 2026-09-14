@@ -73,11 +73,19 @@ impl Fixed {
     }
 
     pub fn min(self, o: Fixed) -> Fixed {
-        if self.0 <= o.0 { self } else { o }
+        if self.0 <= o.0 {
+            self
+        } else {
+            o
+        }
     }
 
     pub fn max(self, o: Fixed) -> Fixed {
-        if self.0 >= o.0 { self } else { o }
+        if self.0 >= o.0 {
+            self
+        } else {
+            o
+        }
     }
 
     /// `self * o`, rounding the magnitude toward zero.
@@ -318,7 +326,7 @@ mod tests {
     #[test]
     fn memecoin_notional_does_not_overflow() {
         let price = Fixed::raw(12_310_000_000_000); // 0.00001231
-        let qty = Fixed::whole(300_000_000);        // 300M tokens
+        let qty = Fixed::whole(300_000_000); // 300M tokens
         let notional = price.mul(qty).unwrap();
         assert_eq!(notional, Fixed::raw(3_693_000_000_000_000_000_000)); // 3693.0
     }
@@ -347,11 +355,16 @@ mod tests {
     #[test]
     fn mul_div_keeps_precision_that_chaining_loses() {
         // (1/3) * 3 chained loses a unit; mul_div keeps it.
-        let one_third_chained = Fixed::ONE.div(Fixed::whole(3)).unwrap()
-            .mul(Fixed::whole(3)).unwrap();
+        let one_third_chained = Fixed::ONE
+            .div(Fixed::whole(3))
+            .unwrap()
+            .mul(Fixed::whole(3))
+            .unwrap();
         assert_eq!(one_third_chained, Fixed::raw(999_999_999_999_999_999));
 
-        let exact = Fixed::ONE.mul_div(Fixed::whole(3), Fixed::whole(3)).unwrap();
+        let exact = Fixed::ONE
+            .mul_div(Fixed::whole(3), Fixed::whole(3))
+            .unwrap();
         assert_eq!(exact, Fixed::ONE);
     }
 
@@ -397,11 +410,17 @@ mod tests {
     #[test]
     fn ceiling_rounds_away_from_zero_only_when_inexact() {
         // Exact divisions must not be bumped.
-        assert_eq!(Fixed::whole(6).mul_div_ceil(Fixed::whole(2), Fixed::whole(3)).unwrap(),
-                   Fixed::whole(4));
+        assert_eq!(
+            Fixed::whole(6)
+                .mul_div_ceil(Fixed::whole(2), Fixed::whole(3))
+                .unwrap(),
+            Fixed::whole(4)
+        );
         // 1/3 rounds up by exactly one raw unit against mul_div's truncation.
         let down = Fixed::ONE.mul_div(Fixed::ONE, Fixed::whole(3)).unwrap();
-        let up = Fixed::ONE.mul_div_ceil(Fixed::ONE, Fixed::whole(3)).unwrap();
+        let up = Fixed::ONE
+            .mul_div_ceil(Fixed::ONE, Fixed::whole(3))
+            .unwrap();
         assert_eq!(down.0, 333_333_333_333_333_333);
         assert_eq!(up.0, 333_333_333_333_333_334);
     }
@@ -410,8 +429,12 @@ mod tests {
     fn ceiling_is_sign_symmetric_too() {
         // Away from zero on both sides, so a rounding rule cannot leak value to
         // one direction of a trade.
-        let pos = Fixed::ONE.mul_div_ceil(Fixed::ONE, Fixed::whole(3)).unwrap();
-        let neg = Fixed::whole(-1).mul_div_ceil(Fixed::ONE, Fixed::whole(3)).unwrap();
+        let pos = Fixed::ONE
+            .mul_div_ceil(Fixed::ONE, Fixed::whole(3))
+            .unwrap();
+        let neg = Fixed::whole(-1)
+            .mul_div_ceil(Fixed::ONE, Fixed::whole(3))
+            .unwrap();
         assert_eq!(neg, pos.neg().unwrap());
     }
 
@@ -425,7 +448,10 @@ mod tests {
     #[test]
     fn debug_rendering_is_readable() {
         assert_eq!(format!("{:?}", Fixed::whole(42)), "42.0");
-        assert_eq!(format!("{:?}", Fixed::raw(12_310_000_000_000)), "0.00001231");
+        assert_eq!(
+            format!("{:?}", Fixed::raw(12_310_000_000_000)),
+            "0.00001231"
+        );
         assert_eq!(format!("{:?}", Fixed::whole(-7)), "-7.0");
     }
 }

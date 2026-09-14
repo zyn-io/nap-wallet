@@ -9,9 +9,9 @@
 //! Each test is one line of the pitch, made checkable.
 
 use swapvm::state::symbol;
-use swapvm::tx::{Intent, Receipt};
-use swapvm::types::{AccountId, XZEC};
 use swapvm::state::SwapState;
+use swapvm::tx::{Intent, Receipt};
+use swapvm::types::{AccountId, AssetId, PoolId, ADDRESS_SCOPE_V1, XZEC};
 use swapvm::{Fixed, Params, Revenue};
 use zyn::anchor::LineageError;
 use zyn::epoch::{Economics, EpochPolicy};
@@ -22,8 +22,13 @@ fn acct(n: u8) -> AccountId {
 }
 
 const TREASURY: u8 = 250;
-const CAT: u32 = 2;
-const POOL: u32 = 1;
+fn cat() -> AssetId {
+    zyn_vm::asset_address(ADDRESS_SCOPE_V1, &acct(1), b"CAT")
+}
+
+fn pool() -> PoolId {
+    zyn_vm::pool_address(ADDRESS_SCOPE_V1, &XZEC, &cat())
+}
 
 /// Zatoshi per Zcash transaction. A round figure in the right neighbourhood —
 /// the argument is about the ratio, not the constant.
@@ -50,8 +55,14 @@ fn market(policy: EpochPolicy) -> Node<SwapState> {
     // Seed the vault's observation: units issued can never exceed units the
     // vault was seen to hold, and this suite is about flow, not custody.
     let mut seeded = SwapState::new(1, market_params());
-    seeded.tokens.get_mut(&XZEC).unwrap().vault.as_mut().unwrap().observed =
-        Fixed::whole(1_000_000_000);
+    seeded
+        .tokens
+        .get_mut(&XZEC)
+        .unwrap()
+        .vault
+        .as_mut()
+        .unwrap()
+        .observed = Fixed::whole(1_000_000_000);
     let mut n = Node::resume(seeded, policy, Economics::flat(ZCASH_FEE), 0);
 
     let d = Intent::next_deposit(n.state(), acct(1), XZEC, Fixed::whole(1_000_000), [0u8; 32]);
@@ -94,15 +105,15 @@ fn trade_earning(n: &mut Node<SwapState>, rounds: u32, now: u64, rev: &mut Reven
             Intent::SwapExactIn {
                 account: who,
                 asset_in: XZEC,
-                path: vec![POOL],
+                path: vec![pool()],
                 amount_in: Fixed::whole(1 + (i % 5) as i64),
                 min_out: Fixed::ZERO,
             }
         } else {
             Intent::SwapExactIn {
                 account: who,
-                asset_in: CAT,
-                path: vec![POOL],
+                asset_in: cat(),
+                path: vec![pool()],
                 amount_in: Fixed::whole(400 + (i % 7) as i64 * 10),
                 min_out: Fixed::ZERO,
             }
@@ -137,8 +148,12 @@ fn a_real_session_compresses_into_a_handful_of_zcash_transactions() {
     assert!(ratio > 500, "only {} actions per Zcash transaction", ratio);
     assert_eq!(c.transactions_saved(), c.actions - c.anchors);
 
-    n.state().check_invariants().expect("5,000 swaps must leave the chain consistent");
-    n.ledger().verify_lineage().expect("the session's lineage must verify");
+    n.state()
+        .check_invariants()
+        .expect("5,000 swaps must leave the chain consistent");
+    n.ledger()
+        .verify_lineage()
+        .expect("the session's lineage must verify");
 }
 
 /// "Mainnet ZEC memecoin trading is too slow and too expensive to settle one by
@@ -183,15 +198,28 @@ fn the_flow_earns_more_than_it_costs_to_settle() {
 
     // Not every submitted swap fills — the first sellers reach the pool before
     // they hold any CAT — so revenue tracks executed flow, not offered flow.
-    assert!(rev.swaps > 4_900 && rev.swaps < 5_000, "{} swaps executed", rev.swaps);
-    assert!(rev.protocol_share.is_positive(), "the engine earned nothing");
-    assert!(rev.protocol_share < rev.fees_charged, "the protocol took the whole fee");
-    assert!(rev.lp_share().unwrap() > rev.protocol_share, "LPs kept less than the protocol");
+    assert!(
+        rev.swaps > 4_900 && rev.swaps < 5_000,
+        "{} swaps executed",
+        rev.swaps
+    );
+    assert!(
+        rev.protocol_share.is_positive(),
+        "the engine earned nothing"
+    );
+    assert!(
+        rev.protocol_share < rev.fees_charged,
+        "the protocol took the whole fee"
+    );
+    assert!(
+        rev.lp_share().unwrap() > rev.protocol_share,
+        "LPs kept less than the protocol"
+    );
 
     // Revenue is real balances, not a statistic: it is exactly what the
     // treasury holds across both sides of the pair.
     let held_zec = n.state().balance(&acct(TREASURY), XZEC);
-    let held_cat = n.state().balance(&acct(TREASURY), CAT);
+    let held_cat = n.state().balance(&acct(TREASURY), cat());
     assert!(held_zec.is_positive() && held_cat.is_positive());
     assert_eq!(held_zec.add(held_cat).unwrap(), rev.protocol_share);
 
@@ -218,7 +246,15 @@ fn backing_holds_across_the_whole_session() {
     for t in 10..20u8 {
         let held = n.state().balance(&acct(t), XZEC);
         if held.is_positive() {
-            n.submit_operator(Intent::RequestWithdrawal { account: acct(t), asset: XZEC, amount: held, destination: [0u8; 32] }, 0);
+            n.submit_operator(
+                Intent::RequestWithdrawal {
+                    account: acct(t),
+                    asset: XZEC,
+                    amount: held,
+                    destination: [0u8; 32],
+                },
+                0,
+            );
         }
     }
     n.state().check_invariants().unwrap();
@@ -231,12 +267,20 @@ fn backing_holds_across_the_whole_session() {
             .map(|a| a.pending_of(XZEC))
             .unwrap_or(Fixed::ZERO);
         if pending.is_positive() {
-            n.submit_operator(Intent::ConfirmWithdrawal { account: acct(t), asset: XZEC, amount: pending }, 0);
+            n.submit_operator(
+                Intent::ConfirmWithdrawal {
+                    account: acct(t),
+                    asset: XZEC,
+                    amount: pending,
+                },
+                0,
+            );
         }
     }
 
     let s = n.state();
-    s.check_invariants().expect("exits mid-session must leave the chain consistent");
+    s.check_invariants()
+        .expect("exits mid-session must leave the chain consistent");
     assert_eq!(
         s.token(XZEC).unwrap().supply,
         s.backing_of(XZEC),
@@ -254,7 +298,15 @@ fn every_holder_can_exit_with_the_sequencer_gone() {
     let mut n = market(EpochPolicy::v1());
     trade(&mut n, 2_000, 0);
     for t in 10..15u8 {
-        n.submit_operator(Intent::RequestWithdrawal { account: acct(t), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] }, 0);
+        n.submit_operator(
+            Intent::RequestWithdrawal {
+                account: acct(t),
+                asset: XZEC,
+                amount: Fixed::whole(100),
+                destination: [0u8; 32],
+            },
+            0,
+        );
     }
 
     n.seal_now(0).expect("seal");
@@ -263,9 +315,17 @@ fn every_holder_can_exit_with_the_sequencer_gone() {
     // The sequencer is now irrelevant. All anyone has is the root read off
     // Zcash and the snapshot the node published for it.
     let anchored = anchor.checkpoint.state_root;
-    let snapshot = n.publishable().expect("an anchored chain must publish its snapshot").clone();
-    assert_eq!(snapshot.root, anchored, "the snapshot does not open the anchored root");
-    snapshot.verifies_against(anchored).expect("published snapshot must open the anchored root");
+    let snapshot = n
+        .publishable()
+        .expect("an anchored chain must publish its snapshot")
+        .clone();
+    assert_eq!(
+        snapshot.root, anchored,
+        "the snapshot does not open the anchored root"
+    );
+    snapshot
+        .verifies_against(anchored)
+        .expect("published snapshot must open the anchored root");
 
     assert!(snapshot.len() >= 20);
     for id in snapshot.ids() {
@@ -276,7 +336,9 @@ fn every_holder_can_exit_with_the_sequencer_gone() {
         );
         // And the record is published, not merely its hash — so a holder can
         // read what was committed about them rather than trust the publisher.
-        let record = snapshot.record(id).expect("a committed account has a record");
+        let record = snapshot
+            .record(id)
+            .expect("a committed account has a record");
         assert!(!record.is_empty());
     }
 }
@@ -304,7 +366,10 @@ fn a_forked_history_cannot_be_settled() {
 
     // Replaying the rival's anchor over the honest one is refused: it does not
     // continue from the root Zcash actually saw.
-    assert_eq!(ledger.accept_trusted_operator(other), Err(LineageError::StaleBase));
+    assert_eq!(
+        ledger.accept_trusted_operator(other),
+        Err(LineageError::StaleBase)
+    );
     assert_eq!(ledger.len(), 1);
     ledger.verify_lineage().unwrap();
 }
@@ -326,7 +391,11 @@ fn tightening_the_policy_buys_cheaper_trades() {
         trade(&mut n, 3_000, 0);
         n.seal_now(0);
         n.anchor_now(0);
-        costs.push(n.report().cost_per_action.expect("a run with actions has a cost"));
+        costs.push(
+            n.report()
+                .cost_per_action
+                .expect("a run with actions has a cost"),
+        );
     }
     assert!(
         costs[0] > costs[1] && costs[1] > costs[2],
@@ -353,7 +422,13 @@ fn a_quiet_market_still_reaches_zcash() {
     trade(&mut n, 1, 400);
     let mut anchored = None;
     for step in n.submit_all_operator(
-        vec![Intent::next_deposit(n.state(), acct(10), XZEC, Fixed::whole(1), [0u8; 32])],
+        vec![Intent::next_deposit(
+            n.state(),
+            acct(10),
+            XZEC,
+            Fixed::whole(1),
+            [0u8; 32],
+        )],
         1_000,
     ) {
         if let Some(a) = step.anchor {
@@ -390,7 +465,7 @@ fn reported_revenue_is_what_the_receipts_say() {
             Intent::SwapExactIn {
                 account: acct(10 + (i % 20) as u8),
                 asset_in: XZEC,
-                path: vec![POOL],
+                path: vec![pool()],
                 amount_in: Fixed::whole(1),
                 min_out: Fixed::ZERO,
             },
@@ -407,8 +482,14 @@ fn reported_revenue_is_what_the_receipts_say() {
         }
     }
 
-    assert_eq!(rev.fees_charged, charged, "reported fees differ from the receipts");
-    assert_eq!(rev.protocol_share, taken, "reported revenue differs from the receipts");
+    assert_eq!(
+        rev.fees_charged, charged,
+        "reported fees differ from the receipts"
+    );
+    assert_eq!(
+        rev.protocol_share, taken,
+        "reported revenue differs from the receipts"
+    );
     assert_eq!(n.state().balance(&acct(TREASURY), XZEC), taken);
 }
 
@@ -428,12 +509,14 @@ fn a_deposit_becomes_spendable_through_the_node_alone() {
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let mut n: Node<SwapState> =
-        Node::new(1, market_params(), policy, Economics::flat(ZCASH_FEE));
+    let mut n: Node<SwapState> = Node::new(1, market_params(), policy, Economics::flat(ZCASH_FEE));
 
     // An operator reports what the Zcash vault holds, then credits against it.
     n.submit_operator(
-        Intent::AttestVaultBalance { asset: XZEC, observed: Fixed::whole(500) },
+        Intent::AttestVaultBalance {
+            asset: XZEC,
+            observed: Fixed::whole(500),
+        },
         0,
     );
     let d = Intent::next_deposit(n.state(), acct(1), XZEC, Fixed::whole(500), [7u8; 32]);
@@ -448,7 +531,12 @@ fn a_deposit_becomes_spendable_through_the_node_alone() {
     let mut anchored = false;
     for _ in 0..8 {
         let step = n.submit_operator(
-            Intent::Transfer { from: acct(1), to: acct(2), asset: XZEC, amount: Fixed::raw(1) },
+            Intent::Transfer {
+                from: acct(1),
+                to: acct(2),
+                asset: XZEC,
+                amount: Fixed::raw(1),
+            },
             0,
         );
         if step.anchor.is_some() {
@@ -458,7 +546,10 @@ fn a_deposit_becomes_spendable_through_the_node_alone() {
     assert!(anchored, "the node never anchored");
 
     // The node told the VM, and the deposit is live.
-    assert!(n.state().finalized_epoch > 0, "the node never confirmed finality");
+    assert!(
+        n.state().finalized_epoch > 0,
+        "the node never confirmed finality"
+    );
     assert!(
         n.state().balance(&acct(1), XZEC).is_positive(),
         "an anchored deposit was never released"

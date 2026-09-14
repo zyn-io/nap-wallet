@@ -23,17 +23,28 @@ use zyn_custody::ceremony::{Solana, Zcash};
 use zyn_custody::custody_net::Custodian;
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Load exactly one share from a directory. More than one would mean this
 /// machine could reach a threshold by itself, which is the thing custody is
 /// for — so refuse rather than serve it.
-fn one_share<C: zyn_custody::frost_core::Ciphersuite>(dir: &PathBuf, what: &str) -> (String, zyn_custody::ceremony::ThresholdKeys<C>) {
+fn one_share<C: zyn_custody::frost_core::Ciphersuite>(
+    dir: &PathBuf,
+    what: &str,
+) -> (String, zyn_custody::ceremony::ThresholdKeys<C>) {
     let shares = match zyn_custody::shares::load::<C>(dir) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("zyn-custodian: cannot load the {} share from {}: {}", what, dir.display(), e);
+            eprintln!(
+                "zyn-custodian: cannot load the {} share from {}: {}",
+                what,
+                dir.display(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -47,12 +58,20 @@ fn one_share<C: zyn_custody::frost_core::Ciphersuite>(dir: &PathBuf, what: &str)
         std::process::exit(1);
     }
     let (id, keys) = shares.into_iter().next().unwrap();
-    (AsRef::<[u8]>::as_ref(&id.serialize()).iter().map(|b| format!("{:02x}", b)).collect(), keys)
+    (
+        AsRef::<[u8]>::as_ref(&id.serialize())
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect(),
+        keys,
+    )
 }
 
 fn main() {
     let zcash_dir = std::env::var("ZYN_CUSTODY_SHARE").ok().map(PathBuf::from);
-    let solana_dir = std::env::var("ZYN_CUSTODY_SOLANA_SHARE").ok().map(PathBuf::from);
+    let solana_dir = std::env::var("ZYN_CUSTODY_SOLANA_SHARE")
+        .ok()
+        .map(PathBuf::from);
     if zcash_dir.is_none() && solana_dir.is_none() {
         eprintln!("zyn-custodian: set ZYN_CUSTODY_SHARE and/or ZYN_CUSTODY_SOLANA_SHARE (a directory with one share-*.bin and public.bin)");
         std::process::exit(1);

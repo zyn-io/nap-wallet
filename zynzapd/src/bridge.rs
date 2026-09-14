@@ -27,14 +27,14 @@
 //! decryption, which does not exist yet.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use swapvm::tx::Intent;
 use swapvm::types::AssetId;
 use zyn::verify::Authorized;
-use zyn_custody::shielded::{ScanRangeError, Scanner};
 use zyn_custody::evm::Observed as EvmObserved;
+use zyn_custody::shielded::{ScanRangeError, Scanner};
 use zyn_custody::solana::Observed as SolanaObserved;
 use zyn_custody::watcher::{ChainView, Watcher, WatcherAction};
 use zyn_custody::zebra::{Network, Zebra};
@@ -77,7 +77,10 @@ pub struct Progress {
 impl Progress {
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Encoder::new();
-        e.bytes(MAGIC_V2).u64(self.scanned_to).u64(self.next_index).u32(self.credited.len() as u32);
+        e.bytes(MAGIC_V2)
+            .u64(self.scanned_to)
+            .u64(self.next_index)
+            .u32(self.credited.len() as u32);
         for id in &self.credited {
             e.bytes(id);
         }
@@ -111,7 +114,12 @@ impl Progress {
         if d.remaining() != 0 {
             return None;
         }
-        Some(Progress { scanned_to, next_index, credited, forced_scanned_to })
+        Some(Progress {
+            scanned_to,
+            next_index,
+            credited,
+            forced_scanned_to,
+        })
     }
 
     /// Keyed by **asset as well as chain**, because more than one bridge runs
@@ -126,7 +134,7 @@ impl Progress {
     /// Two bridges never share an asset; if they did they would double-credit
     /// it regardless of any file. So the asset is the right discriminator.
     fn path(dir: &Path, chain_id: u32, asset: AssetId) -> PathBuf {
-        dir.join(format!("bridge-{}-{}.progress", chain_id, asset))
+        dir.join(format!("bridge-{}-{}.progress", chain_id, rawhex(&asset)))
     }
 
     /// Where a single-bridge node kept its progress, before the file was keyed
@@ -161,7 +169,7 @@ impl Progress {
     /// position nobody can vouch for.
     pub fn save(&self, dir: &Path, chain_id: u32, asset: AssetId) -> Result<(), String> {
         use std::io::Write;
-        let tmp = dir.join(format!(".bridge-{}-{}.tmp", chain_id, asset));
+        let tmp = dir.join(format!(".bridge-{}-{}.tmp", chain_id, rawhex(&asset)));
         {
             let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
             f.write_all(&self.encode()).map_err(|e| e.to_string())?;
@@ -183,7 +191,10 @@ pub fn load_addresses(path: &Path) -> Result<BTreeMap<String, AccountId>, String
         }
         let mut parts = line.split_whitespace();
         let (Some(addr), Some(acct)) = (parts.next(), parts.next()) else {
-            return Err(format!("line {}: expected `<address> <account-hex>`", n + 1));
+            return Err(format!(
+                "line {}: expected `<address> <account-hex>`",
+                n + 1
+            ));
         };
         let account = hex32(acct)
             .ok_or_else(|| format!("line {}: account must be 64 hex characters", n + 1))?;
@@ -245,7 +256,9 @@ pub enum Custody {
 /// How far the deposit watcher for `asset` has scanned, from its progress
 /// file. Zero on a first run.
 pub fn scanned_height(dir: &Path, chain_id: u32, asset: AssetId) -> u64 {
-    Progress::load(dir, chain_id, asset).map(|p| p.scanned_to).unwrap_or(0)
+    Progress::load(dir, chain_id, asset)
+        .map(|p| p.scanned_to)
+        .unwrap_or(0)
 }
 
 pub struct Bridge {
@@ -295,7 +308,9 @@ pub fn apply_forced(
     seen: &mut BTreeSet<[u8; 32]>,
     now: u64,
 ) -> Vec<(zyn_custody::shielded::ForcedSighting, ForcedOutcome)> {
-    let ignore = std::env::var("ZYN_IGNORE_FORCED").map(|v| v == "1").unwrap_or(false);
+    let ignore = std::env::var("ZYN_IGNORE_FORCED")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let mut out = Vec::new();
     for s in sightings {
         if seen.contains(&s.txid) {
@@ -313,23 +328,42 @@ pub fn apply_forced(
         let (cred, auth, intent) = match crate::rpc::decode_frame(chain_id, &s.frame) {
             Ok(x) => x,
             Err(e) => {
-                eprintln!("zynzapd: forced intent in {} is not a submission ({}); ignored", hex(&s.txid), e);
+                eprintln!(
+                    "zynzapd: forced intent in {} is not a submission ({}); ignored",
+                    hex(&s.txid),
+                    e
+                );
                 out.push((s.clone(), ForcedOutcome::Junk));
                 continue;
             }
         };
-        let authorized = match zyn::verify::authorize_intent(std::slice::from_ref(&cred), &auth, intent, node.state()) {
+        let authorized = match zyn::verify::authorize_intent(
+            std::slice::from_ref(&cred),
+            &auth,
+            intent,
+            node.state(),
+        ) {
             Ok(a) => a,
             Err(e) => {
-                eprintln!("zynzapd: forced intent in {} does not verify ({:?}); ignored", hex(&s.txid), e);
+                eprintln!(
+                    "zynzapd: forced intent in {} does not verify ({:?}); ignored",
+                    hex(&s.txid),
+                    e
+                );
                 out.push((s.clone(), ForcedOutcome::Junk));
                 continue;
             }
         };
         let key = crate::rpc::replay_key_of(&cred);
-        let fresh = replay.lock().map(|mut r| r.fresh(key, auth.valid_until_epoch)).unwrap_or(false);
+        let fresh = replay
+            .lock()
+            .map(|mut r| r.fresh(key, auth.valid_until_epoch))
+            .unwrap_or(false);
         if !fresh {
-            eprintln!("zynzapd: forced intent in {} was already applied; nothing to do", hex(&s.txid));
+            eprintln!(
+                "zynzapd: forced intent in {} was already applied; nothing to do",
+                hex(&s.txid)
+            );
             out.push((s.clone(), ForcedOutcome::Replay));
             continue;
         }
@@ -340,7 +374,11 @@ pub fn apply_forced(
             "zynzapd: FORCED intent from Zcash {} applied at seq {} ({})",
             hex(&s.txid),
             step.seq,
-            if step.rejected() { "rejected by the VM — still included" } else { "accepted" }
+            if step.rejected() {
+                "rejected by the VM — still included"
+            } else {
+                "accepted"
+            }
         );
         out.push((s.clone(), ForcedOutcome::Applied));
     }
@@ -353,21 +391,42 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn forced_pending_path(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> PathBuf {
-    dir.join(format!("forced-{}-{}.pending", chain_id, asset))
+    dir.join(format!("forced-{}-{}.pending", chain_id, rawhex(&asset)))
 }
 
 /// `txid height amount frame` per line, all hex but the numbers.
-fn save_forced_pending(dir: &std::path::Path, chain_id: u32, asset: AssetId, pending: &[zyn_custody::shielded::ForcedSighting]) -> Result<(), String> {
+fn save_forced_pending(
+    dir: &std::path::Path,
+    chain_id: u32,
+    asset: AssetId,
+    pending: &[zyn_custody::shielded::ForcedSighting],
+) -> Result<(), String> {
     let body: String = pending
         .iter()
-        .map(|p| format!("{} {} {} {}\n", rawhex(&p.txid), p.height, p.amount.0, rawhex(&p.frame)))
+        .map(|p| {
+            format!(
+                "{} {} {} {}\n",
+                rawhex(&p.txid),
+                p.height,
+                p.amount.0,
+                rawhex(&p.frame)
+            )
+        })
         .collect();
-    let tmp = dir.join(format!(".forced-{}-{}.pending.tmp", chain_id, asset));
+    let tmp = dir.join(format!(
+        ".forced-{}-{}.pending.tmp",
+        chain_id,
+        rawhex(&asset)
+    ));
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, forced_pending_path(dir, chain_id, asset)).map_err(|e| e.to_string())
 }
 
-fn load_forced_pending(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> Result<Vec<zyn_custody::shielded::ForcedSighting>, String> {
+fn load_forced_pending(
+    dir: &std::path::Path,
+    chain_id: u32,
+    asset: AssetId,
+) -> Result<Vec<zyn_custody::shielded::ForcedSighting>, String> {
     let s = match std::fs::read_to_string(forced_pending_path(dir, chain_id, asset)) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("cannot read pending forced intents: {}", e)),
@@ -376,14 +435,24 @@ fn load_forced_pending(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> 
     let mut out = Vec::new();
     for l in s.lines().filter(|l| !l.trim().is_empty()) {
         let f: Vec<&str> = l.split_whitespace().collect();
-        let (Some(t), Some(h), Some(a), Some(fr)) = (f.first(), f.get(1), f.get(2), f.get(3)) else {
+        let (Some(t), Some(h), Some(a), Some(fr)) = (f.first(), f.get(1), f.get(2), f.get(3))
+        else {
             return Err("pending forced intents file is corrupt".into());
         };
         let txid = unhex32(t).ok_or("pending forced intents file is corrupt")?;
-        let height: u64 = h.parse().map_err(|_| "pending forced intents file is corrupt")?;
-        let amount: i128 = a.parse().map_err(|_| "pending forced intents file is corrupt")?;
+        let height: u64 = h
+            .parse()
+            .map_err(|_| "pending forced intents file is corrupt")?;
+        let amount: i128 = a
+            .parse()
+            .map_err(|_| "pending forced intents file is corrupt")?;
         let frame = unhex(fr).ok_or("pending forced intents file is corrupt")?;
-        out.push(zyn_custody::shielded::ForcedSighting { txid, height, amount: swapvm::Fixed::raw(amount), frame });
+        out.push(zyn_custody::shielded::ForcedSighting {
+            txid,
+            height,
+            amount: swapvm::Fixed::raw(amount),
+            frame,
+        });
     }
     Ok(out)
 }
@@ -396,14 +465,20 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
 }
 
 fn forced_seen_path(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> PathBuf {
-    dir.join(format!("forced-{}-{}.seen", chain_id, asset))
+    dir.join(format!("forced-{}-{}.seen", chain_id, rawhex(&asset)))
 }
 
-fn load_forced_seen(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> Result<BTreeSet<[u8; 32]>, String> {
+fn load_forced_seen(
+    dir: &std::path::Path,
+    chain_id: u32,
+    asset: AssetId,
+) -> Result<BTreeSet<[u8; 32]>, String> {
     match std::fs::read_to_string(forced_seen_path(dir, chain_id, asset)) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
         Err(e) => Err(format!("cannot read forced-intent record: {}", e)),
@@ -415,9 +490,14 @@ fn load_forced_seen(dir: &std::path::Path, chain_id: u32, asset: AssetId) -> Res
     }
 }
 
-fn save_forced_seen(dir: &std::path::Path, chain_id: u32, asset: AssetId, seen: &BTreeSet<[u8; 32]>) -> Result<(), String> {
+fn save_forced_seen(
+    dir: &std::path::Path,
+    chain_id: u32,
+    asset: AssetId,
+    seen: &BTreeSet<[u8; 32]>,
+) -> Result<(), String> {
     let body: String = seen.iter().map(|t| format!("{}\n", rawhex(t))).collect();
-    let tmp = dir.join(format!(".forced-{}-{}.tmp", chain_id, asset));
+    let tmp = dir.join(format!(".forced-{}-{}.tmp", chain_id, rawhex(&asset)));
     std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, forced_seen_path(dir, chain_id, asset)).map_err(|e| e.to_string())
 }
@@ -474,9 +554,19 @@ impl Bridge {
         let watcher = Watcher::resume(confirmations, start_index, progress.scanned_to);
         let forced_seen = load_forced_seen(&dir, chain_id, asset)?;
         let forced_pending = load_forced_pending(&dir, chain_id, asset)?;
-        Ok(Bridge { custody, watcher, progress, asset, dir, chain_id, confirmations, replay: None, forced_seen, forced_pending })
+        Ok(Bridge {
+            custody,
+            watcher,
+            progress,
+            asset,
+            dir,
+            chain_id,
+            confirmations,
+            replay: None,
+            forced_seen,
+            forced_pending,
+        })
     }
-
 
     /// Everything seen joins the pending set; the pending set is tried every
     /// pass until each is handled. Runs whether or not the pass credited
@@ -490,16 +580,31 @@ impl Bridge {
     ) -> Result<(), String> {
         let mut changed = false;
         for f in forced {
-            if !self.forced_seen.contains(&f.txid) && !self.forced_pending.iter().any(|p| p.txid == f.txid) {
+            if !self.forced_seen.contains(&f.txid)
+                && !self.forced_pending.iter().any(|p| p.txid == f.txid)
+            {
                 self.forced_pending.push(f);
                 changed = true;
             }
         }
         if !self.forced_pending.is_empty() {
             if let Some(replay) = &self.replay {
-                let tip = if forced_tip > 0 { forced_tip } else { self.watcher.scanned_to() };
+                let tip = if forced_tip > 0 {
+                    forced_tip
+                } else {
+                    self.watcher.scanned_to()
+                };
                 let before = self.forced_seen.len();
-                apply_forced(node, replay, self.chain_id, &self.forced_pending.clone(), tip, self.confirmations, &mut self.forced_seen, now);
+                apply_forced(
+                    node,
+                    replay,
+                    self.chain_id,
+                    &self.forced_pending.clone(),
+                    tip,
+                    self.confirmations,
+                    &mut self.forced_seen,
+                    now,
+                );
                 let seen = &self.forced_seen;
                 let n = self.forced_pending.len();
                 self.forced_pending.retain(|p| !seen.contains(&p.txid));
@@ -523,13 +628,23 @@ impl Bridge {
     /// back up. Shielded custody only; the others carry no memos.
     pub fn rescan_forced(&mut self, from: u64) -> Result<usize, String> {
         let to = self.progress.scanned_to;
-        let Custody::Zcash { zebra, source: Source::Shielded(scanner) } = &self.custody else { return Ok(0) };
+        let Custody::Zcash {
+            zebra,
+            source: Source::Shielded(scanner),
+        } = &self.custody
+        else {
+            return Ok(0);
+        };
         let mut at = from;
         let mut added = 0;
         while at <= to {
-            let (end, found) = scanner.forced(zebra, at, to).map_err(|e| format!("forced rescan: {:?}", e))?;
+            let (end, found) = scanner
+                .forced(zebra, at, to)
+                .map_err(|e| format!("forced rescan: {:?}", e))?;
             for f in found {
-                if !self.forced_seen.contains(&f.txid) && !self.forced_pending.iter().any(|p| p.txid == f.txid) {
+                if !self.forced_seen.contains(&f.txid)
+                    && !self.forced_pending.iter().any(|p| p.txid == f.txid)
+                {
                     self.forced_pending.push(f);
                     added += 1;
                 }
@@ -572,7 +687,11 @@ impl Bridge {
         let floor = height.saturating_sub(1);
         if floor > self.progress.scanned_to {
             self.progress.scanned_to = floor;
-            self.watcher = Watcher::resume(self.watcher.confirmations(), self.progress.next_index, floor);
+            self.watcher = Watcher::resume(
+                self.watcher.confirmations(),
+                self.progress.next_index,
+                floor,
+            );
             self.progress.save(&self.dir, self.chain_id, self.asset)?;
         }
         Ok(())
@@ -583,9 +702,13 @@ impl Bridge {
     pub fn rescan_from(&mut self, height: u64) -> Result<(), String> {
         let to = height.saturating_sub(1);
         if to < self.progress.scanned_to {
-            eprintln!("zynzapd: rescanning from {} (was scanned to {})", height, self.progress.scanned_to);
+            eprintln!(
+                "zynzapd: rescanning from {} (was scanned to {})",
+                height, self.progress.scanned_to
+            );
             self.progress.scanned_to = to;
-            self.watcher = Watcher::resume(self.watcher.confirmations(), self.progress.next_index, to);
+            self.watcher =
+                Watcher::resume(self.watcher.confirmations(), self.progress.next_index, to);
             self.progress.save(&self.dir, self.chain_id, self.asset)?;
         }
         Ok(())
@@ -608,14 +731,23 @@ impl Bridge {
             self.progress.forced_scanned_to = self.progress.scanned_to;
         }
         let mut swept_to: Option<u64> = None;
-        if let Custody::Zcash { zebra, source: Source::Shielded(scanner) } = &self.custody {
+        if let Custody::Zcash {
+            zebra,
+            source: Source::Shielded(scanner),
+        } = &self.custody
+        {
             let sweep_from = self.progress.forced_scanned_to.saturating_add(1);
             if let Ok(tip) = zebra.block_count() {
                 if sweep_from <= tip {
                     match scanner.forced(zebra, sweep_from, tip) {
                         Ok((end, found)) => {
                             if !found.is_empty() {
-                                eprintln!("zynzapd: forced sweep {}..={} found {} intent(s)", sweep_from, end, found.len());
+                                eprintln!(
+                                    "zynzapd: forced sweep {}..={} found {} intent(s)",
+                                    sweep_from,
+                                    end,
+                                    found.len()
+                                );
                             }
                             forced.extend(found);
                             swept_to = Some(end);
@@ -623,7 +755,10 @@ impl Bridge {
                         // Loud, and the marker does not move: the same range
                         // is read again next pass. A skipped forced intent is
                         // the failure this exists to prevent.
-                        Err(e) => eprintln!("zynzapd: forced sweep {}..={} failed: {:?}", sweep_from, tip, e),
+                        Err(e) => eprintln!(
+                            "zynzapd: forced sweep {}..={} failed: {:?}",
+                            sweep_from, tip, e
+                        ),
                     }
                 }
             }
@@ -700,12 +835,21 @@ impl Bridge {
         for a in &actions {
             match *a {
                 WatcherAction::Attest { observed } => {
-                    intents.push(Intent::AttestVaultBalance { asset: self.asset, observed });
+                    intents.push(Intent::AttestVaultBalance {
+                        asset: self.asset,
+                        observed,
+                    });
                 }
                 WatcherAction::AttestAsset { asset, observed } => {
                     intents.push(Intent::AttestVaultBalance { asset, observed });
                 }
-                WatcherAction::Credit { account, amount, index, external_ref, asset } => {
+                WatcherAction::Credit {
+                    account,
+                    amount,
+                    index,
+                    external_ref,
+                    asset,
+                } => {
                     self.progress.credited.insert(external_ref);
                     intents.push(Intent::CreditDeposit {
                         account,
@@ -788,7 +932,12 @@ mod tests {
 
     #[test]
     fn progress_round_trips_and_refuses_junk() {
-        let mut p = Progress { scanned_to: 42, next_index: 7, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut p = Progress {
+            scanned_to: 42,
+            next_index: 7,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         p.credited.insert([1u8; 32]);
         p.credited.insert([2u8; 32]);
         assert_eq!(Progress::decode(&p.encode()), Some(p.clone()));
@@ -803,7 +952,12 @@ mod tests {
     #[test]
     fn progress_survives_a_restart() {
         let dir = tmpdir("restart");
-        let mut p = Progress { scanned_to: 900, next_index: 12, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut p = Progress {
+            scanned_to: 900,
+            next_index: 12,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         p.credited.insert([9u8; 32]);
         p.save(&dir, 5, XZEC).unwrap();
 
@@ -825,7 +979,12 @@ mod tests {
     #[test]
     fn a_corrupt_progress_file_refuses_rather_than_restarting_from_zero() {
         let dir = tmpdir("corrupt");
-        let p = Progress { scanned_to: 100, next_index: 3, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let p = Progress {
+            scanned_to: 100,
+            next_index: 3,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         p.save(&dir, 2, XZEC).unwrap();
         let path = Progress::path(&dir, 2, XZEC);
         let mut bytes = std::fs::read(&path).unwrap();
@@ -872,23 +1031,42 @@ mod tests {
     #[test]
     fn two_bridges_on_one_chain_do_not_share_progress() {
         let dir = tmpdir("isolation");
-        const OTHER: AssetId = XZEC + 1;
+        const OTHER: AssetId = [0x42; 32];
 
-        let mut zcash = Progress { scanned_to: 2_900_000, next_index: 4, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut zcash = Progress {
+            scanned_to: 2_900_000,
+            next_index: 4,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         zcash.credited.insert([0xAA; 32]);
         zcash.save(&dir, 7, XZEC).unwrap();
 
-        let mut evm = Progress { scanned_to: 19, next_index: 1, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut evm = Progress {
+            scanned_to: 19,
+            next_index: 1,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         evm.credited.insert([0xBB; 32]);
         evm.save(&dir, 7, OTHER).unwrap();
 
-        assert_ne!(Progress::path(&dir, 7, XZEC), Progress::path(&dir, 7, OTHER));
+        assert_ne!(
+            Progress::path(&dir, 7, XZEC),
+            Progress::path(&dir, 7, OTHER)
+        );
         let back_zcash = Progress::load(&dir, 7, XZEC).unwrap();
         let back_evm = Progress::load(&dir, 7, OTHER).unwrap();
 
-        assert_eq!(back_zcash, zcash, "a Zcash height was overwritten by an EVM one");
+        assert_eq!(
+            back_zcash, zcash,
+            "a Zcash height was overwritten by an EVM one"
+        );
         assert_eq!(back_evm, evm);
-        assert!(back_zcash.credited.contains(&[0xAA; 32]), "a dedup set was cleared");
+        assert!(
+            back_zcash.credited.contains(&[0xAA; 32]),
+            "a dedup set was cleared"
+        );
         assert!(back_evm.credited.contains(&[0xBB; 32]));
     }
 
@@ -899,7 +1077,12 @@ mod tests {
     #[test]
     fn an_existing_single_bridge_node_keeps_its_progress() {
         let dir = tmpdir("legacy");
-        let mut old = Progress { scanned_to: 3_100_000, next_index: 9, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut old = Progress {
+            scanned_to: 3_100_000,
+            next_index: 9,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         old.credited.insert([0xCC; 32]);
         std::fs::write(Progress::legacy_path(&dir, 4), old.encode()).unwrap();
 
@@ -921,10 +1104,18 @@ mod forced_progress_tests {
     /// sweep being contiguous: a marker that resets re-reads or, worse, skips.
     #[test]
     fn the_forced_marker_round_trips() {
-        let p = Progress { scanned_to: 4_337_734, next_index: 3, credited: BTreeSet::new(), forced_scanned_to: 4_337_728 };
+        let p = Progress {
+            scanned_to: 4_337_734,
+            next_index: 3,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 4_337_728,
+        };
         let back = Progress::decode(&p.encode()).expect("decode");
         assert_eq!(back.forced_scanned_to, 4_337_728);
-        assert_eq!(back.scanned_to, 4_337_734, "the deposit marker is untouched");
+        assert_eq!(
+            back.scanned_to, 4_337_734,
+            "the deposit marker is untouched"
+        );
     }
 
     /// A file written before the field existed must still load — the
@@ -939,14 +1130,22 @@ mod forced_progress_tests {
         let back = Progress::decode(&old).expect("an older file must still decode");
         assert_eq!(back.scanned_to, 900);
         assert_eq!(back.next_index, 4);
-        assert_eq!(back.forced_scanned_to, 0, "absent means zero, and zero seeds on first use");
+        assert_eq!(
+            back.forced_scanned_to, 0,
+            "absent means zero, and zero seeds on first use"
+        );
     }
 
     /// Zero is not a height to scan from — it would re-read the chain from
     /// genesis. The first pass seeds it from the deposit scan instead.
     #[test]
     fn a_zero_marker_seeds_from_the_deposit_scan_rather_than_genesis() {
-        let mut p = Progress { scanned_to: 4_337_734, next_index: 0, credited: BTreeSet::new(), forced_scanned_to: 0 };
+        let mut p = Progress {
+            scanned_to: 4_337_734,
+            next_index: 0,
+            credited: BTreeSet::new(),
+            forced_scanned_to: 0,
+        };
         // The seeding rule `poll_once` applies before sweeping.
         if p.forced_scanned_to == 0 {
             p.forced_scanned_to = p.scanned_to;

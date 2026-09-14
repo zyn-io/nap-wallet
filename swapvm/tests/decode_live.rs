@@ -2,7 +2,9 @@
 //! Ignored by default: `STATE_FILE=… cargo test -p swapvm --test decode_live -- --ignored --nocapture`
 use swapvm::state::SwapState;
 
-fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{:02x}", x)).collect() }
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{:02x}", x)).collect()
+}
 
 #[test]
 #[ignore]
@@ -10,22 +12,35 @@ fn decode_a_saved_state() {
     let path = std::env::var("STATE_FILE").expect("STATE_FILE");
     let b = std::fs::read(&path).expect("read");
     let blob = &b[10 + 4 + 8 + 8 + 32 + 4..];
-    println!("file {} bytes, blob {} bytes, version {}", b.len(), blob.len(), u16::from_be_bytes([blob[0], blob[1]]));
+    println!(
+        "file {} bytes, blob {} bytes, version {}",
+        b.len(),
+        blob.len(),
+        u16::from_be_bytes([blob[0], blob[1]])
+    );
     match SwapState::decode_state(blob) {
         Ok(s) => {
             let stored: [u8; 32] = b[30..62].try_into().unwrap();
             let got = s.state_root();
-            println!("decoded: seq {} epoch {} accounts {} pools {} launch {}", s.seq, s.epoch, s.accounts.len(), s.pools.len(), s.launch.is_some());
+            println!(
+                "decoded: seq {} epoch {} accounts {} pools {} launch {}",
+                s.seq,
+                s.epoch,
+                s.accounts.len(),
+                s.pools.len(),
+                s.launch.is_some()
+            );
             println!("stored root {}", hex(&stored));
             println!("recomputed  {}", hex(&got));
             if stored != got {
-                println!("the root moved: this state needs migrating before a node will resume from it");
+                println!(
+                    "the root moved: this state needs migrating before a node will resume from it"
+                );
             }
         }
         Err(e) => panic!("decode failed: {:?}", e),
     }
 }
-
 
 /// Rewrite a saved state's commitment after a change to what the commitment
 /// covers. The state itself is untouched: only the root beside it is

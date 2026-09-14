@@ -116,7 +116,9 @@ pub struct Output {
 /// The identity a program commits to: its name and version, hashed.
 pub fn vm_id<V: MicrochainVm>() -> Hash {
     let mut e = Encoder::new();
-    e.bytes(b"zyn.vm.v1").bytes(V::VM_NAME.as_bytes()).u16(V::VM_VERSION);
+    e.bytes(b"zyn.vm.v1")
+        .bytes(V::VM_NAME.as_bytes())
+        .u16(V::VM_VERSION);
     e.leaf()
 }
 
@@ -158,7 +160,10 @@ pub fn encode_input<V: MicrochainVm>(
     let committed: Vec<(u64, Vec<u8>)> = batch
         .iter()
         .map(|(seq, intent)| {
-            (*seq, encode_authorized::<V>(&Authorized::operator(intent.clone())))
+            (
+                *seq,
+                encode_authorized::<V>(&Authorized::operator(intent.clone())),
+            )
         })
         .collect();
     encode_committed_input::<V>(base_root, state, &committed)
@@ -182,9 +187,7 @@ pub fn encode_committed_input<V: MicrochainVm>(
         .bytes(&state_bytes)
         .u32(batch.len() as u32);
     for (seq, committed) in batch {
-        e.u64(*seq)
-            .u32(committed.len() as u32)
-            .bytes(committed);
+        e.u64(*seq).u32(committed.len() as u32).bytes(committed);
     }
     e.finish().to_vec()
 }
@@ -212,7 +215,11 @@ pub fn decode_input<V: MicrochainVm>(buf: &[u8]) -> Result<Input<V>, WireError> 
     if d.remaining() != 0 {
         return Err(WireError::TrailingBytes);
     }
-    Ok(Input { base_root, state, batch })
+    Ok(Input {
+        base_root,
+        state,
+        batch,
+    })
 }
 
 /// Why a run produced nothing.
@@ -326,8 +333,7 @@ pub fn transition_committed<V: MicrochainVm>(
 pub fn run<V: MicrochainVm>(tape: &[u8]) -> Result<Vec<u8>, ZvmError> {
     let input: Input<V> = decode_input(tape).map_err(|_| ZvmError::Malformed)?;
     let chain_id = input.state.chain_id();
-    let (state, final_root) =
-        transition_committed(input.state, input.base_root, &input.batch)?;
+    let (state, final_root) = transition_committed(input.state, input.base_root, &input.batch)?;
     Ok(Output {
         vm_id: vm_id::<V>(),
         chain_id,
@@ -371,7 +377,11 @@ mod tests {
         };
         let bytes = o.encode();
         for cut in 0..bytes.len() {
-            assert!(Output::decode(&bytes[..cut]).is_err(), "truncation at {} decoded", cut);
+            assert!(
+                Output::decode(&bytes[..cut]).is_err(),
+                "truncation at {} decoded",
+                cut
+            );
         }
     }
 }

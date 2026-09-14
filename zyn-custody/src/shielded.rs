@@ -35,21 +35,21 @@ use alloc_std::string::String;
 use alloc_std::vec::Vec;
 
 use orchard::keys::{FullViewingKey, PreparedIncomingViewingKey, Scope, SpendingKey};
-use zcash_protocol::consensus::NetworkType;
 use orchard::note_encryption::{IronwoodDomain, OrchardDomain};
 use orchard::ValuePool;
 use zcash_note_encryption::try_note_decryption;
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::consensus::BranchId;
+use zcash_protocol::consensus::NetworkType;
 use zyn_vm::fixed::Fixed;
 
 use crate::memo;
-use zyn_vm::AccountId;
 use crate::notes::NoteStore;
 use crate::watcher::ObservedDeposit;
 use orchard::note::ExtractedNoteCommitment;
 use orchard::Note;
 use std::sync::{Arc, Mutex};
+use zyn_vm::AccountId;
 
 mod alloc_std {
     pub use std::{collections, string, vec};
@@ -100,7 +100,11 @@ impl VaultKeys {
     pub fn from_full_viewing_key(fvk: FullViewingKey) -> VaultKeys {
         let plain = fvk.to_ivk(Scope::External);
         let ivk = PreparedIncomingViewingKey::new(&plain);
-        VaultKeys { fvk, ivk, plain_ivk: plain }
+        VaultKeys {
+            fvk,
+            ivk,
+            plain_ivk: plain,
+        }
     }
 
     /// The address an account's deposits arrive at.
@@ -111,7 +115,10 @@ impl VaultKeys {
     /// index is recoverable from the note, and [`deposit_index`] recomputes it
     /// from the account the credit names.
     pub fn deposit_address(&self, account: &AccountId, network: NetworkType) -> String {
-        self.encode_address(self.fvk.address_at(deposit_index(account), Scope::External), network)
+        self.encode_address(
+            self.fvk.address_at(deposit_index(account), Scope::External),
+            network,
+        )
     }
 
     /// The diversifier index a note arrived at, if this key can tell.
@@ -119,7 +126,9 @@ impl VaultKeys {
     /// `Some(ZERO)` is the vault's own address: change, anchors, top-ups.
     /// Anything else is a deposit address handed to one account.
     pub fn index_of(&self, note: &Note) -> Option<[u8; 11]> {
-        self.plain_ivk.diversifier_index(&note.recipient()).map(|i| *i.as_bytes())
+        self.plain_ivk
+            .diversifier_index(&note.recipient())
+            .map(|i| *i.as_bytes())
     }
 
     /// A unified address to hand a depositor.
@@ -175,7 +184,12 @@ impl VaultKeys {
 
     /// As [`scan_actions`](Self::scan_actions), but a note without a memo is
     /// simply ours — a wallet, not a vault, has no account to attribute it to.
-    pub fn scan_actions_lenient(&self, raw: &[u8], txid: [u8; 32], height: u64) -> Result<Scanned, ScanError> {
+    pub fn scan_actions_lenient(
+        &self,
+        raw: &[u8],
+        txid: [u8; 32],
+        height: u64,
+    ) -> Result<Scanned, ScanError> {
         self.scan_inner(raw, txid, height, &BTreeMap::new(), true)
     }
 
@@ -206,18 +220,43 @@ impl VaultKeys {
         // Two pools since NU6.3, one viewing key. Ironwood is where wallets
         // now send; Orchard is where older ones and older deposits are. Each
         // has its own note-encryption domain and its own commitment tree.
+        let mut output_index = 0u32;
         if let Some(bundle) = tx.orchard_bundle() {
             for action in bundle.actions() {
                 let domain = OrchardDomain::for_action(action);
                 let decrypted = try_note_decryption(&domain, &self.ivk, action);
-                self.take(&mut out, ValuePool::Orchard, *action.cmx(), *action.nullifier(), decrypted, txid, height, attributions, lenient)?;
+                self.take(
+                    &mut out,
+                    ValuePool::Orchard,
+                    *action.cmx(),
+                    *action.nullifier(),
+                    decrypted,
+                    txid,
+                    height,
+                    output_index,
+                    attributions,
+                    lenient,
+                )?;
+                output_index = output_index.checked_add(1).ok_or(ScanError::Undecodable)?;
             }
         }
         if let Some(bundle) = tx.ironwood_bundle() {
             for action in bundle.actions() {
                 let domain = IronwoodDomain::for_action(action);
                 let decrypted = try_note_decryption(&domain, &self.ivk, action);
-                self.take(&mut out, ValuePool::Ironwood, *action.cmx(), *action.nullifier(), decrypted, txid, height, attributions, lenient)?;
+                self.take(
+                    &mut out,
+                    ValuePool::Ironwood,
+                    *action.cmx(),
+                    *action.nullifier(),
+                    decrypted,
+                    txid,
+                    height,
+                    output_index,
+                    attributions,
+                    lenient,
+                )?;
+                output_index = output_index.checked_add(1).ok_or(ScanError::Undecodable)?;
             }
         }
         Ok(out)
@@ -233,29 +272,119 @@ impl VaultKeys {
         decrypted: Option<(Note, orchard::Address, [u8; 512])>,
         txid: [u8; 32],
         height: u64,
+        output_index: u32,
         attributions: &BTreeMap<[u8; 32], AccountId>,
         lenient: bool,
     ) -> Result<(), ScanError> {
         let Some((note, _addr, memo_bytes)) = decrypted else {
-            out.actions.push(ScannedAction { pool, cmx, nullifier, ours: None, account: None, memo: None, to_index: None, anchor: false, forced: None });
+            out.actions.push(ScannedAction {
+                pool,
+                cmx,
+                nullifier,
+                ours: None,
+                account: None,
+                memo: None,
+                to_index: None,
+                anchor: false,
+                forced: None,
+                cave_payment: None,
+                cave_reserved: false,
+            });
             return Ok(()); // not ours, which is almost always the case
         };
         if memo::is_anchor(&memo_bytes) {
             // The vault's own commitment to a Zyn root. It is money only in the
             // sense that a stamp is: recorded, never credited, never a problem.
-            out.actions.push(ScannedAction { pool, cmx, nullifier, to_index: self.index_of(&note), ours: Some(note), account: None, memo: Some(memo_bytes.to_vec()), anchor: true, forced: None });
+            out.actions.push(ScannedAction {
+                pool,
+                cmx,
+                nullifier,
+                to_index: self.index_of(&note),
+                ours: Some(note),
+                account: None,
+                memo: Some(memo_bytes.to_vec()),
+                anchor: true,
+                forced: None,
+                cave_payment: None,
+                cave_reserved: false,
+            });
             return Ok(());
         }
         let amount = Fixed(note.value().inner() as i128 * ZAT);
+        if let Ok(payment) = memo::decode_cave_payment(&memo_bytes) {
+            out.cave_payments.push(CavePaymentOutput {
+                txid,
+                height,
+                output_index,
+                amount,
+                payment,
+            });
+            out.actions.push(ScannedAction {
+                pool,
+                cmx,
+                nullifier,
+                to_index: self.index_of(&note),
+                ours: Some(note),
+                account: None,
+                memo: Some(memo_bytes.to_vec()),
+                anchor: false,
+                forced: None,
+                cave_payment: Some(payment),
+                cave_reserved: true,
+            });
+            return Ok(());
+        }
+        if memo::has_cave_payment_tag(&memo_bytes) {
+            if !lenient {
+                return Err(ScanError::UnaddressedDeposit(amount));
+            }
+            out.actions.push(ScannedAction {
+                pool,
+                cmx,
+                nullifier,
+                to_index: self.index_of(&note),
+                ours: Some(note),
+                account: None,
+                memo: Some(memo_bytes.to_vec()),
+                anchor: false,
+                forced: None,
+                cave_payment: None,
+                cave_reserved: true,
+            });
+            return Ok(());
+        }
         if let Some(frame) = memo::forced_frame(&memo_bytes) {
             // A submission the sequencer's door refused. The note pays the
             // signer; the frame is the thing that must be applied. A scheme
             // the memo route cannot carry falls through as a memo-less note,
             // for a human to decide.
             if let Some(account) = memo::forced_account(frame) {
-                out.deposits.push(ObservedDeposit { txid, account, amount, height, asset: None });
-                out.forced.push(ForcedSighting { txid, height, amount, frame: frame.to_vec() });
-                out.actions.push(ScannedAction { pool, cmx, nullifier, to_index: self.index_of(&note), ours: Some(note), account: Some(account), memo: Some(memo_bytes.to_vec()), anchor: false, forced: Some(frame.to_vec()) });
+                out.deposits.push(ObservedDeposit {
+                    txid,
+                    account,
+                    amount,
+                    height,
+                    asset: None,
+                });
+                out.forced.push(ForcedSighting {
+                    txid,
+                    height,
+                    amount,
+                    frame: frame.to_vec(),
+                });
+                out.actions.push(ScannedAction {
+                    pool,
+                    cmx,
+                    nullifier,
+                    to_index: self.index_of(&note),
+                    ours: Some(note),
+                    account: Some(account),
+                    memo: Some(memo_bytes.to_vec()),
+                    anchor: false,
+                    forced: Some(frame.to_vec()),
+                    cave_payment: None,
+                    cave_reserved: false,
+                });
                 return Ok(());
             }
         }
@@ -271,9 +400,27 @@ impl VaultKeys {
             },
         };
         if let Some(account) = account {
-            out.deposits.push(ObservedDeposit { txid, account, amount, height, asset: None });
+            out.deposits.push(ObservedDeposit {
+                txid,
+                account,
+                amount,
+                height,
+                asset: None,
+            });
         }
-        out.actions.push(ScannedAction { pool, cmx, nullifier, to_index: self.index_of(&note), ours: Some(note), account, memo: Some(memo_bytes.to_vec()), anchor: false, forced: None });
+        out.actions.push(ScannedAction {
+            pool,
+            cmx,
+            nullifier,
+            to_index: self.index_of(&note),
+            ours: Some(note),
+            account,
+            memo: Some(memo_bytes.to_vec()),
+            anchor: false,
+            forced: None,
+            cave_payment: None,
+            cave_reserved: false,
+        });
         Ok(())
     }
 }
@@ -322,7 +469,14 @@ pub fn classify(
     txid: [u8; 32],
     height: u64,
 ) -> Result<Vec<ObservedDeposit>, Fixed> {
-    classify_addressed(scanned, spends_ours, attributed, txid, height, &BTreeMap::new())
+    classify_addressed(
+        scanned,
+        spends_ours,
+        attributed,
+        txid,
+        height,
+        &BTreeMap::new(),
+    )
 }
 
 /// [`classify`], knowing which deposit addresses have been handed out.
@@ -344,15 +498,24 @@ pub fn classify_addressed(
     let mut out = Vec::new();
     for a in &scanned.actions {
         let Some(note) = &a.ours else { continue };
-        if a.anchor {
+        if a.anchor || a.cave_payment.is_some() {
             continue;
         }
         let amount = Fixed(note.value().inner() as i128 * ZAT);
+        if a.cave_reserved {
+            return Err(amount);
+        }
         // Arrived at an account's own deposit address: that settles it.
         if let Some(index) = a.to_index.filter(|i| *i != VAULT_INDEX) {
             if let Some(account) = handed_out.get(&index) {
                 if *account != [0u8; 32] {
-                    out.push(ObservedDeposit { txid, account: *account, amount, height, asset: None });
+                    out.push(ObservedDeposit {
+                        txid,
+                        account: *account,
+                        amount,
+                        height,
+                        asset: None,
+                    });
                 }
                 continue;
             }
@@ -362,9 +525,21 @@ pub fn classify_addressed(
             // operator (to cover fees), held, never credited.
             (Some(account), _, _) if account == [0u8; 32] => {}
             (None, false, Some(account)) if account == [0u8; 32] => {}
-            (Some(account), _, _) => out.push(ObservedDeposit { txid, account, amount, height, asset: None }),
+            (Some(account), _, _) => out.push(ObservedDeposit {
+                txid,
+                account,
+                amount,
+                height,
+                asset: None,
+            }),
             (None, true, _) => {} // change
-            (None, false, Some(account)) => out.push(ObservedDeposit { txid, account, amount, height, asset: None }),
+            (None, false, Some(account)) => out.push(ObservedDeposit {
+                txid,
+                account,
+                amount,
+                height,
+                asset: None,
+            }),
             (None, false, None) => return Err(amount),
         }
     }
@@ -395,6 +570,35 @@ pub struct ScannedAction {
     /// value is a deposit to the signer; the frame is for the sequencer to
     /// apply and for a replica to hold it to.
     pub forced: Option<Vec<u8>>,
+    /// A purpose-bound Cave payment. It is surfaced to Cave and is never an
+    /// ordinary account credit, even if it arrived at an issued address.
+    pub cave_payment: Option<memo::CavePaymentMemo>,
+    /// The memo claimed the Cave namespace. If `cave_payment` is absent it was
+    /// malformed and classification fails instead of crediting by address.
+    pub cave_reserved: bool,
+}
+
+/// One purpose-bound Cave payment as seen in canonical transaction order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CavePaymentOutput {
+    pub txid: [u8; 32],
+    pub height: u64,
+    /// Orchard actions first, followed by Ironwood actions, each in serialized
+    /// bundle order. This makes a stable output coordinate within the txid.
+    pub output_index: u32,
+    pub amount: Fixed,
+    pub payment: memo::CavePaymentMemo,
+}
+
+/// A Cave payment with its complete canonical position in a Zcash block.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CavePaymentSighting {
+    pub txid: [u8; 32],
+    pub height: u64,
+    pub tx_index: u32,
+    pub output_index: u32,
+    pub amount: Fixed,
+    pub payment: memo::CavePaymentMemo,
 }
 
 /// One forced intent as seen on the chain.
@@ -422,6 +626,8 @@ pub struct Scanned {
     pub actions: Vec<ScannedAction>,
     /// Forced intents this transaction carried.
     pub forced: Vec<ForcedSighting>,
+    /// Valid Cave payments, excluded from `deposits` by construction.
+    pub cave_payments: Vec<CavePaymentOutput>,
 }
 
 /// Scanning a range of blocks for deposits to this vault.
@@ -488,7 +694,10 @@ pub enum ScanRangeError {
     /// Fatal to the pass on purpose. Crediting the rest and moving on would
     /// leave the vault holding money whose owner nobody recorded, and the
     /// backing attestation that follows would be wrong by exactly that amount.
-    Unattributable { height: u64, amount: Fixed },
+    Unattributable {
+        height: u64,
+        amount: Fixed,
+    },
 }
 
 impl From<crate::zebra::RpcError> for ScanRangeError {
@@ -514,7 +723,10 @@ impl Scanner {
     }
 
     /// Share the register of deposit addresses that have been handed out.
-    pub fn with_addresses(mut self, addresses: Arc<Mutex<BTreeMap<[u8; 11], AccountId>>>) -> Scanner {
+    pub fn with_addresses(
+        mut self,
+        addresses: Arc<Mutex<BTreeMap<[u8; 11], AccountId>>>,
+    ) -> Scanner {
         self.addresses = addresses;
         self
     }
@@ -528,7 +740,15 @@ impl Scanner {
     }
 
     pub fn new(keys: VaultKeys, from_height: u64, max_blocks: u64) -> Scanner {
-        Scanner { keys, from_height, max_blocks: max_blocks.max(1), notes: None, attributions: BTreeMap::new(), addresses: Arc::new(Mutex::new(BTreeMap::new())), tree_lag: 0 }
+        Scanner {
+            keys,
+            from_height,
+            max_blocks: max_blocks.max(1),
+            notes: None,
+            attributions: BTreeMap::new(),
+            addresses: Arc::new(Mutex::new(BTreeMap::new())),
+            tree_lag: 0,
+        }
     }
 
     /// Feed the note trees only with blocks at least this deep. A block at
@@ -575,8 +795,13 @@ impl Scanner {
         let mut fed: Option<(u64, u64)> = None;
         if let Some(store) = &self.notes {
             let tree_ceiling = chain_tip.saturating_sub(self.tree_lag);
-            let tree_from = store.synced_to().map(|h| h + 1).unwrap_or(self.from_height).max(self.from_height);
-            let tree_to = tree_ceiling.min(tree_from.saturating_add(self.max_blocks).saturating_sub(1));
+            let tree_from = store
+                .synced_to()
+                .map(|h| h + 1)
+                .unwrap_or(self.from_height)
+                .max(self.from_height);
+            let tree_to =
+                tree_ceiling.min(tree_from.saturating_add(self.max_blocks).saturating_sub(1));
             if tree_from <= tree_to {
                 for height in tree_from..=tree_to {
                     let (d, f) = self.feed_block(zebra, store, height)?;
@@ -587,29 +812,47 @@ impl Scanner {
             }
         }
         for height in start..=end {
-            if fed.map(|(a, b)| height >= a && height <= b).unwrap_or(false) {
+            if fed
+                .map(|(a, b)| height >= a && height <= b)
+                .unwrap_or(false)
+            {
                 continue; // read once already, above
             }
             for txid_hex in zebra.block_txids(height)? {
                 let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else { continue };
+                let Some(txid) = txid_bytes(&txid_hex) else {
+                    continue;
+                };
                 // A transaction we cannot parse is not our problem: the
                 // chain contains every version there has ever been.
-                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else { continue };
+                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
+                    continue;
+                };
                 // The tree has this block already (the settler fed it to
                 // build an anchor), so its spends are applied — but the store
                 // remembers which nullifiers were ours, and that is what
                 // tells our own change from a stranger's memo-less deposit.
                 let spends_ours = match &self.notes {
                     Some(stores) => scanned.actions.iter().any(|a| {
-                        stores.of(a.pool).lock().map(|s| s.holds_nullifier(&a.nullifier, self.keys.fvk())).unwrap_or(false)
+                        stores
+                            .of(a.pool)
+                            .lock()
+                            .map(|s| s.holds_nullifier(&a.nullifier, self.keys.fvk()))
+                            .unwrap_or(false)
                     }),
                     None => false,
                 };
                 let handed_out = self.addresses.lock().map(|m| m.clone()).unwrap_or_default();
                 found.extend(
-                    classify_addressed(&scanned, spends_ours, self.attributions.get(&txid).copied(), txid, height, &handed_out)
-                        .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
+                    classify_addressed(
+                        &scanned,
+                        spends_ours,
+                        self.attributions.get(&txid).copied(),
+                        txid,
+                        height,
+                        &handed_out,
+                    )
+                    .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
                 );
                 forced.extend(scanned.forced);
             }
@@ -621,7 +864,12 @@ impl Scanner {
 
     /// Forced intents between `from` and `to` inclusive, in chain order. What
     /// a replica runs: it holds the sequencer to every one of them.
-    pub fn forced(&self, zebra: &crate::zebra::Zebra, from: u64, to: u64) -> Result<(u64, Vec<ForcedSighting>), ScanRangeError> {
+    pub fn forced(
+        &self,
+        zebra: &crate::zebra::Zebra,
+        from: u64,
+        to: u64,
+    ) -> Result<(u64, Vec<ForcedSighting>), ScanRangeError> {
         let start = from.max(self.from_height);
         let end = to.min(start.saturating_add(self.max_blocks).saturating_sub(1));
         let mut found = Vec::new();
@@ -631,9 +879,60 @@ impl Scanner {
         for height in start..=end {
             for txid_hex in zebra.block_txids(height)? {
                 let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else { continue };
-                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else { continue };
+                let Some(txid) = txid_bytes(&txid_hex) else {
+                    continue;
+                };
+                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
+                    continue;
+                };
                 found.extend(scanned.forced);
+            }
+        }
+        Ok((end, found))
+    }
+
+    /// Purpose-bound Cave payments between `from` and `to`, in canonical
+    /// block/transaction/output order. The ordinary bridge excludes these
+    /// notes from account credits; Cave consumes this independent view.
+    pub fn cave_payments(
+        &self,
+        zebra: &crate::zebra::Zebra,
+        from: u64,
+        to: u64,
+    ) -> Result<(u64, Vec<CavePaymentSighting>), ScanRangeError> {
+        let start = from.max(self.from_height);
+        let end = to.min(start.saturating_add(self.max_blocks).saturating_sub(1));
+        let mut found = Vec::new();
+        if end < start {
+            return Ok((to.min(end), found));
+        }
+        for height in start..=end {
+            for (tx_index, txid_hex) in zebra.block_txids(height)?.into_iter().enumerate() {
+                let raw = zebra.raw_transaction_bytes(&txid_hex)?;
+                let Some(txid) = txid_bytes(&txid_hex) else {
+                    continue;
+                };
+                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
+                    continue;
+                };
+                let tx_index = u32::try_from(tx_index).map_err(|_| {
+                    ScanRangeError::Rpc(crate::zebra::RpcError::Malformed(
+                        "too many transactions in one block",
+                    ))
+                })?;
+                found.extend(
+                    scanned
+                        .cave_payments
+                        .into_iter()
+                        .map(|output| CavePaymentSighting {
+                            txid: output.txid,
+                            height: output.height,
+                            tx_index,
+                            output_index: output.output_index,
+                            amount: output.amount,
+                            payment: output.payment,
+                        }),
+                );
             }
         }
         Ok((end, found))
@@ -660,8 +959,12 @@ impl Scanner {
         for height in start..=end {
             for txid_hex in zebra.block_txids(height)? {
                 let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else { continue };
-                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else { continue };
+                let Some(txid) = txid_bytes(&txid_hex) else {
+                    continue;
+                };
+                let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
+                    continue;
+                };
                 for a in scanned.actions.iter().filter(|a| a.anchor) {
                     let Some(m) = &a.memo else { continue };
                     let mut memo = [0u8; memo::ANCHOR_LEN];
@@ -677,27 +980,46 @@ impl Scanner {
     /// vault's birth, then walk every block again. Returns what the old tree
     /// had appended and what the node has at the same height — the number
     /// that says whether a block was fed twice, skipped, or reorganised.
-    pub fn reseed(&self, zebra: &crate::zebra::Zebra, pool: ValuePool, to: u64) -> Result<(u64, u64, u64), ScanRangeError> {
-        let Some(stores) = &self.notes else { return Ok((0, 0, 0)) };
+    pub fn reseed(
+        &self,
+        zebra: &crate::zebra::Zebra,
+        pool: ValuePool,
+        to: u64,
+    ) -> Result<(u64, u64, u64), ScanRangeError> {
+        let Some(stores) = &self.notes else {
+            return Ok((0, 0, 0));
+        };
         let seed_height = self.from_height.saturating_sub(1);
         let store = stores.of(pool);
         let (old_appended, old_at) = {
-            let s = store.lock().map_err(|_| ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned")))?;
+            let s = store.lock().map_err(|_| {
+                ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned"))
+            })?;
             (s.appended(), s.synced_to().unwrap_or(seed_height))
         };
         // What the node has at the height the old tree claimed.
         let at_node = zebra.tree_state_of(old_at, pool)?;
-        let node_count = NoteStore::from_frontier(&at_node.final_state, old_at).map(|s| s.appended()).unwrap_or(0);
+        let node_count = NoteStore::from_frontier(&at_node.final_state, old_at)
+            .map(|s| s.appended())
+            .unwrap_or(0);
         let ts = zebra.tree_state_of(seed_height, pool)?;
-        let fresh = NoteStore::from_frontier(&ts.final_state, seed_height)
-            .map_err(|_| ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("cannot seed from the node's frontier")))?;
+        let fresh = NoteStore::from_frontier(&ts.final_state, seed_height).map_err(|_| {
+            ScanRangeError::Rpc(crate::zebra::RpcError::Malformed(
+                "cannot seed from the node's frontier",
+            ))
+        })?;
         {
-            let mut s = store.lock().map_err(|_| ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned")))?;
+            let mut s = store.lock().map_err(|_| {
+                ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned"))
+            })?;
             *s = fresh;
         }
         // Both trees walk together in `feed_block`; bring the other pool to the
         // same start so a block is never half-fed.
-        let other = match pool { ValuePool::Orchard => ValuePool::Ironwood, ValuePool::Ironwood => ValuePool::Orchard };
+        let other = match pool {
+            ValuePool::Orchard => ValuePool::Ironwood,
+            ValuePool::Ironwood => ValuePool::Orchard,
+        };
         let ts2 = zebra.tree_state_of(seed_height, other)?;
         if let Ok(fresh2) = NoteStore::from_frontier(&ts2.final_state, seed_height) {
             if let Ok(mut s) = stores.of(other).lock() {
@@ -718,8 +1040,14 @@ impl Scanner {
     /// this walks the gap without crediting anything. Bounded like `observe`;
     /// call until it reports `to`.
     pub fn sync_notes(&self, zebra: &crate::zebra::Zebra, to: u64) -> Result<u64, ScanRangeError> {
-        let Some(store) = &self.notes else { return Ok(to) };
-        let start = store.synced_to().map(|h| h + 1).unwrap_or(self.from_height).max(self.from_height);
+        let Some(store) = &self.notes else {
+            return Ok(to);
+        };
+        let start = store
+            .synced_to()
+            .map(|h| h + 1)
+            .unwrap_or(self.from_height)
+            .max(self.from_height);
         let end = to.min(start.saturating_add(self.max_blocks).saturating_sub(1));
         if end < start {
             return Ok(to.min(start.saturating_sub(1)));
@@ -737,7 +1065,8 @@ impl Scanner {
         stores: &PoolStores,
         height: u64,
     ) -> Result<(Vec<ObservedDeposit>, Vec<ForcedSighting>), ScanRangeError> {
-        let poisoned = || ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned"));
+        let poisoned =
+            || ScanRangeError::Rpc(crate::zebra::RpcError::Malformed("note store poisoned"));
         let mut o = stores.orchard.lock().map_err(|_| poisoned())?;
         let mut i = stores.ironwood.lock().map_err(|_| poisoned())?;
         // From the guards already held — `stores.synced_to()` would lock
@@ -759,7 +1088,9 @@ impl Scanner {
             let mut forced = Vec::new();
             for txid_hex in zebra.block_txids(height)? {
                 let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else { continue };
+                let Some(txid) = txid_bytes(&txid_hex) else {
+                    continue;
+                };
                 // Lenient here, and strict below, once we know what the
                 // transaction is: one that spends our own note is one we
                 // sent, and a note it returns to us is **change** — held,
@@ -784,8 +1115,14 @@ impl Scanner {
                     s.spend_nullifier(&a.nullifier, self.keys.fvk());
                 }
                 deposits.extend(
-                    classify(&scanned, spends_ours, self.attributions.get(&txid).copied(), txid, height)
-                        .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
+                    classify(
+                        &scanned,
+                        spends_ours,
+                        self.attributions.get(&txid).copied(),
+                        txid,
+                        height,
+                    )
+                    .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
                 );
                 forced.extend(scanned.forced.iter().cloned());
                 for a in scanned.actions {
@@ -851,17 +1188,30 @@ mod tests {
     fn a_vault_has_an_orchard_only_unified_address() {
         let a = keys().address(0, NetworkType::Test);
         // Testnet unified addresses are `utest1...`.
-        assert!(a.starts_with("utest1"), "not a testnet unified address: {}", a);
+        assert!(
+            a.starts_with("utest1"),
+            "not a testnet unified address: {}",
+            a
+        );
         // Different diversifier indices give different addresses, which is
         // what per-account deposit addressing would use.
-        assert_ne!(keys().address(0, NetworkType::Test), keys().address(1, NetworkType::Test));
+        assert_ne!(
+            keys().address(0, NetworkType::Test),
+            keys().address(1, NetworkType::Test)
+        );
     }
 
     #[test]
     fn the_same_key_always_derives_the_same_address() {
-        assert_eq!(keys().address(0, NetworkType::Test), keys().address(0, NetworkType::Test));
+        assert_eq!(
+            keys().address(0, NetworkType::Test),
+            keys().address(0, NetworkType::Test)
+        );
         let other = VaultKeys::from_spending_key([8u8; 32]).unwrap();
-        assert_ne!(keys().address(0, NetworkType::Test), other.address(0, NetworkType::Test));
+        assert_ne!(
+            keys().address(0, NetworkType::Test),
+            other.address(0, NetworkType::Test)
+        );
     }
 
     /// **S10**, at the widest input surface we have: every transaction on a
@@ -869,8 +1219,14 @@ mod tests {
     #[test]
     fn junk_bytes_are_refused_rather_than_fatal() {
         let k = keys();
-        assert_eq!(k.scan_transaction(&[], [0u8; 32], 1), Err(ScanError::Undecodable));
-        assert_eq!(k.scan_transaction(&[0xFF; 9], [0u8; 32], 1), Err(ScanError::Undecodable));
+        assert_eq!(
+            k.scan_transaction(&[], [0u8; 32], 1),
+            Err(ScanError::Undecodable)
+        );
+        assert_eq!(
+            k.scan_transaction(&[0xFF; 9], [0u8; 32], 1),
+            Err(ScanError::Undecodable)
+        );
         for n in 0..64 {
             let junk = vec![0xABu8; n];
             let _ = k.scan_transaction(&junk, [0u8; 32], 1);
@@ -883,7 +1239,9 @@ mod tests {
             txid: [n; 32],
             account: [n; 32],
             amount: Fixed::whole(1),
-            height: h, asset: None };
+            height: h,
+            asset: None,
+        };
         let m = collect(vec![d(5, 1), d(5, 2), d(7, 3)]);
         assert_eq!(m[&5].len(), 2);
         assert_eq!(m[&7].len(), 1);
@@ -899,7 +1257,6 @@ mod tests {
 #[cfg(test)]
 mod roundtrip {
     use super::*;
-    use zyn_vm::spec::AccountId;
     use orchard::note::{ExtractedNoteCommitment, Nullifier, RandomSeed, Rho};
     use orchard::note_encryption::{CompactAction, OrchardDomain};
     use orchard::value::NoteValue;
@@ -907,6 +1264,7 @@ mod roundtrip {
         Domain, EphemeralKeyBytes, NoteEncryption, ShieldedOutput, COMPACT_NOTE_SIZE,
         ENC_CIPHERTEXT_SIZE,
     };
+    use zyn_vm::spec::AccountId;
 
     /// The full-size output a real `Action` provides. A `CompactAction` carries
     /// only 52 bytes — enough for the note, never enough for the memo, and the
@@ -936,7 +1294,11 @@ mod roundtrip {
         output_with_memo(keys, memo, zat)
     }
 
-    fn output_with_memo(keys: &VaultKeys, memo: [u8; 512], zat: u64) -> (FullOutput, OrchardDomain) {
+    fn output_with_memo(
+        keys: &VaultKeys,
+        memo: [u8; 512],
+        zat: u64,
+    ) -> (FullOutput, OrchardDomain) {
         let recipient = keys.fvk.address_at(0u32, Scope::External);
         let nf = Nullifier::from_bytes(&[9u8; 32]).unwrap();
         let rho = Rho::from_bytes(&nf.to_bytes()).unwrap();
@@ -959,7 +1321,10 @@ mod roundtrip {
         let mut compact = [0u8; COMPACT_NOTE_SIZE];
         compact.copy_from_slice(&enc[..COMPACT_NOTE_SIZE]);
         let ca = CompactAction::from_parts(nf, cmx_note, epk.clone(), compact);
-        (FullOutput { epk, cmx, enc }, OrchardDomain::for_compact_action(&ca))
+        (
+            FullOutput { epk, cmx, enc },
+            OrchardDomain::for_compact_action(&ca),
+        )
     }
 
     /// The whole point: a shielded payment to the vault is found, its value
@@ -975,8 +1340,15 @@ mod roundtrip {
                 .expect("the vault must be able to decrypt its own deposit");
 
         assert_eq!(note.value().inner(), 100_000);
-        assert_eq!(Fixed(note.value().inner() as i128 * ZAT), Fixed::raw(100_000 * ZAT));
-        assert_eq!(memo::decode(&memo), Ok(account), "the memo did not name the depositor");
+        assert_eq!(
+            Fixed(note.value().inner() as i128 * ZAT),
+            Fixed::raw(100_000 * ZAT)
+        );
+        assert_eq!(
+            memo::decode(&memo),
+            Ok(account),
+            "the memo did not name the depositor"
+        );
     }
 
     /// An anchor is the vault paying itself with a Zyn root in the memo. The
@@ -1005,10 +1377,82 @@ mod roundtrip {
             to_index: None,
             anchor: memo::is_anchor(&memo_back),
             forced: None,
+            cave_payment: None,
+            cave_reserved: false,
         });
         // Even in a transaction that does not visibly spend our note and with
         // no attribution, an anchor is not an unaddressed deposit.
         assert_eq!(classify(&scanned, false, None, [1u8; 32], 5), Ok(vec![]));
+    }
+
+    #[test]
+    fn a_cave_payment_is_surfaced_once_and_never_credited_to_the_buyer() {
+        let keys = VaultKeys::from_spending_key([7u8; 32]).unwrap();
+        let payment = memo::CavePaymentMemo {
+            purpose: memo::CavePaymentPurpose::Entry,
+            reference: [0x44; 32],
+            recipient: [0x55; 32],
+        };
+        let encoded = memo::encode_cave_payment(payment).unwrap();
+        let (out, domain) = output_with_memo(&keys, encoded, 1_000_000);
+        let decrypted = zcash_note_encryption::try_note_decryption(&domain, &keys.ivk, &out)
+            .expect("own Cave payment");
+        let note = decrypted.0;
+        let index = keys.index_of(&note).unwrap();
+        let nf = Nullifier::from_bytes(&[9u8; 32]).unwrap();
+        let mut scanned = Scanned::default();
+        keys.take(
+            &mut scanned,
+            ValuePool::Orchard,
+            ExtractedNoteCommitment::from(note.commitment()),
+            nf,
+            Some(decrypted),
+            [0x66; 32],
+            90,
+            3,
+            &BTreeMap::new(),
+            false,
+        )
+        .unwrap();
+
+        assert!(scanned.deposits.is_empty());
+        assert_eq!(scanned.cave_payments.len(), 1);
+        assert_eq!(scanned.cave_payments[0].payment, payment);
+        assert_eq!(scanned.cave_payments[0].output_index, 3);
+        let mut handed_out = BTreeMap::new();
+        handed_out.insert(index, payment.recipient);
+        assert_eq!(
+            classify_addressed(&scanned, false, None, [0x66; 32], 90, &handed_out),
+            Ok(vec![]),
+            "an issued address must not turn a Cave payment into buyer credit"
+        );
+
+        let mut malformed = encoded;
+        malformed[3] = memo::CAVE_PAYMENT_VERSION + 1;
+        let (bad_out, bad_domain) = output_with_memo(&keys, malformed, 1_000_000);
+        let bad_decrypted =
+            zcash_note_encryption::try_note_decryption(&bad_domain, &keys.ivk, &bad_out)
+                .expect("own malformed Cave payment");
+        let mut lenient = Scanned::default();
+        keys.take(
+            &mut lenient,
+            ValuePool::Orchard,
+            ExtractedNoteCommitment::from(bad_decrypted.0.commitment()),
+            Nullifier::from_bytes(&[9u8; 32]).unwrap(),
+            Some(bad_decrypted),
+            [0x77; 32],
+            91,
+            0,
+            &BTreeMap::new(),
+            true,
+        )
+        .unwrap();
+        assert!(lenient.cave_payments.is_empty());
+        assert_eq!(
+            classify_addressed(&lenient, false, None, [0x77; 32], 91, &handed_out),
+            Err(Fixed::raw(1_000_000 * ZAT)),
+            "a malformed ZYC memo must fail closed before address attribution"
+        );
     }
 
     /// Someone else's vault key must not see it. This is the property that
@@ -1056,7 +1500,10 @@ mod roundtrip {
 
         let (_n, _a, memo) =
             zcash_note_encryption::try_note_decryption(&domain, &keys.ivk, &out).unwrap();
-        assert!(memo::decode(&memo).is_err(), "an empty memo must not decode to an account");
+        assert!(
+            memo::decode(&memo).is_err(),
+            "an empty memo must not decode to an account"
+        );
     }
 }
 
@@ -1066,7 +1513,9 @@ mod deposit_address_tests {
     use orchard::keys::SpendingKey;
 
     fn keys() -> VaultKeys {
-        VaultKeys::from_full_viewing_key(FullViewingKey::from(&SpendingKey::from_bytes([7u8; 32]).unwrap()))
+        VaultKeys::from_full_viewing_key(FullViewingKey::from(
+            &SpendingKey::from_bytes([7u8; 32]).unwrap(),
+        ))
     }
 
     /// The index is a function of the account and nothing else, so a verifier
@@ -1076,9 +1525,17 @@ mod deposit_address_tests {
         let a = [1u8; 32];
         let b = [2u8; 32];
         assert_eq!(deposit_index(&a), deposit_index(&a), "deterministic");
-        assert_ne!(deposit_index(&a), deposit_index(&b), "distinct accounts, distinct addresses");
+        assert_ne!(
+            deposit_index(&a),
+            deposit_index(&b),
+            "distinct accounts, distinct addresses"
+        );
         for acct in [[0u8; 32], a, b, [0xffu8; 32]] {
-            assert_ne!(*deposit_index(&acct).as_bytes(), VAULT_INDEX, "never the vault's own index");
+            assert_ne!(
+                *deposit_index(&acct).as_bytes(),
+                VAULT_INDEX,
+                "never the vault's own index"
+            );
         }
     }
 
@@ -1130,6 +1587,10 @@ mod deposit_address_tests {
         let b = k.deposit_address(&[2u8; 32], NetworkType::Test);
         assert_ne!(a, b);
         assert!(a.starts_with('u'), "{}", a);
-        assert_ne!(a, k.address(0, NetworkType::Test), "an account's address is not the vault's own");
+        assert_ne!(
+            a,
+            k.address(0, NetworkType::Test),
+            "an account's address is not the vault's own"
+        );
     }
 }

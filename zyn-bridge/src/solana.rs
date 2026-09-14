@@ -57,13 +57,13 @@ pub const RECENT_BLOCKHASHES_SYSVAR: Pubkey = [
 pub const MAX_TRANSACTION_BYTES: usize = 1232;
 /// `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA` — the SPL Token program.
 pub const TOKEN_PROGRAM: Pubkey = [
-    6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95,
-    91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+    6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
+    95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
 ];
 /// `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL` — the Associated Token Account program.
 pub const ATA_PROGRAM: Pubkey = [
-    140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255,
-    16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+    140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218,
+    255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
 ];
 
 /// The associated token account of `owner` for `mint`.
@@ -84,7 +84,9 @@ pub fn associated_token_address(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
         h.update(ATA_PROGRAM);
         h.update(b"ProgramDerivedAddress");
         let out: [u8; 32] = h.finalize().into();
-        let on_curve = curve25519_dalek::edwards::CompressedEdwardsY(out).decompress().is_some();
+        let on_curve = curve25519_dalek::edwards::CompressedEdwardsY(out)
+            .decompress()
+            .is_some();
         if !on_curve {
             return out;
         }
@@ -143,10 +145,18 @@ pub struct SolPayout {
 
 impl SolPayout {
     pub fn native(to: Pubkey, lamports: u64) -> SolPayout {
-        SolPayout { to, lamports, token: None }
+        SolPayout {
+            to,
+            lamports,
+            token: None,
+        }
     }
     pub fn token(to: Pubkey, mint: Pubkey, amount: u64) -> SolPayout {
-        SolPayout { to, lamports: 0, token: Some((mint, amount)) }
+        SolPayout {
+            to,
+            lamports: 0,
+            token: Some((mint, amount)),
+        }
     }
 }
 
@@ -171,7 +181,10 @@ pub fn resolve(
 ) -> Result<Vec<SolPayout>, SolanaError> {
     let mut out = Vec::with_capacity(payouts.len());
     for p in payouts {
-        let r = reveals.iter().find(|r| r.account == p.account).ok_or(SolanaError::Undisclosed)?;
+        let r = reveals
+            .iter()
+            .find(|r| r.account == p.account)
+            .ok_or(SolanaError::Undisclosed)?;
         let b = binding_of(p.account).ok_or(SolanaError::Unbound)?;
         if !b.admits(commitment(&r.address, &r.salt)) {
             return Err(SolanaError::WrongDestination);
@@ -239,7 +252,11 @@ pub fn message(
                 if amount == 0 {
                     return Err(SolanaError::AmountOutOfRange);
                 }
-                for k in [p.to, associated_token_address(&p.to, &mint), associated_token_address(&accounts.vault, &mint)] {
+                for k in [
+                    p.to,
+                    associated_token_address(&p.to, &mint),
+                    associated_token_address(&accounts.vault, &mint),
+                ] {
                     if !writable.contains(&k) {
                         writable.push(k);
                     }
@@ -275,7 +292,10 @@ pub fn message(
     }
     out.extend_from_slice(&nonce_value);
 
-    let n_ix = 1 + payouts.iter().map(|p| if p.token.is_some() { 2 } else { 1 }).sum::<usize>();
+    let n_ix = 1 + payouts
+        .iter()
+        .map(|p| if p.token.is_some() { 2 } else { 1 })
+        .sum::<usize>();
     put_compact_u16(&mut out, n_ix as u16);
     // AdvanceNonceAccount must come first, or the nonce is not honoured.
     out.push(system_i);
@@ -294,10 +314,18 @@ pub fn message(
                 out.extend_from_slice(&p.lamports.to_le_bytes());
             }
             Some((mint, amount)) => {
-                let (to_i, mint_i) = (index(&p.to).ok_or(SolanaError::TooLarge)?, index(&mint).ok_or(SolanaError::TooLarge)?);
-                let dest_ata_i = index(&associated_token_address(&p.to, &mint)).ok_or(SolanaError::TooLarge)?;
-                let src_ata_i = index(&associated_token_address(&accounts.vault, &mint)).ok_or(SolanaError::TooLarge)?;
-                let (token_i, ata_i) = (index(&TOKEN_PROGRAM).ok_or(SolanaError::TooLarge)?, index(&ATA_PROGRAM).ok_or(SolanaError::TooLarge)?);
+                let (to_i, mint_i) = (
+                    index(&p.to).ok_or(SolanaError::TooLarge)?,
+                    index(&mint).ok_or(SolanaError::TooLarge)?,
+                );
+                let dest_ata_i =
+                    index(&associated_token_address(&p.to, &mint)).ok_or(SolanaError::TooLarge)?;
+                let src_ata_i = index(&associated_token_address(&accounts.vault, &mint))
+                    .ok_or(SolanaError::TooLarge)?;
+                let (token_i, ata_i) = (
+                    index(&TOKEN_PROGRAM).ok_or(SolanaError::TooLarge)?,
+                    index(&ATA_PROGRAM).ok_or(SolanaError::TooLarge)?,
+                );
                 // CreateIdempotent: the recipient's token account, made if
                 // missing, paid by the vault. Accounts: payer, ata, owner,
                 // mint, system, token program.
@@ -336,7 +364,10 @@ pub fn transaction(message: &[u8], signature: &[u8; SIGNATURE_BYTES]) -> Vec<u8>
 /// Greedy and deterministic. Every payout appears exactly once, and a group
 /// is closed only when the next payout would not fit — so the cut falls on
 /// whoever is last, which `settle::group` made whoever has waited least.
-pub fn chunk(accounts: VaultAccounts, payouts: &[SolPayout]) -> Result<Vec<Vec<SolPayout>>, SolanaError> {
+pub fn chunk(
+    accounts: VaultAccounts,
+    payouts: &[SolPayout],
+) -> Result<Vec<Vec<SolPayout>>, SolanaError> {
     let mut groups: Vec<Vec<SolPayout>> = Vec::new();
     let mut current: Vec<SolPayout> = Vec::new();
     for p in payouts {
@@ -371,7 +402,10 @@ pub fn settlement_payouts(
     if settlement.origin != ORIGIN_SOLANA {
         return Err(SolanaError::NotSolana);
     }
-    chunk(accounts, &resolve(&settlement.payouts, binding_of, reveals)?)
+    chunk(
+        accounts,
+        &resolve(&settlement.payouts, binding_of, reveals)?,
+    )
 }
 
 #[cfg(test)]
@@ -383,13 +417,22 @@ mod tests {
     fn pk(n: u8) -> Pubkey {
         [n; 32]
     }
-    const ACCTS: VaultAccounts = VaultAccounts { vault: [0xAA; 32], nonce_account: [0xBB; 32] };
+    const ACCTS: VaultAccounts = VaultAccounts {
+        vault: [0xAA; 32],
+        nonce_account: [0xBB; 32],
+    };
     const NONCE: [u8; 32] = [0xCC; 32];
 
     /// Known shortvec encodings from the Solana test suite.
     #[test]
     fn compact_u16_matches_the_runtime() {
-        for (v, bytes) in [(0u16, vec![0u8]), (127, vec![0x7f]), (128, vec![0x80, 0x01]), (16383, vec![0xff, 0x7f]), (16384, vec![0x80, 0x80, 0x01])] {
+        for (v, bytes) in [
+            (0u16, vec![0u8]),
+            (127, vec![0x7f]),
+            (128, vec![0x80, 0x01]),
+            (16383, vec![0xff, 0x7f]),
+            (16384, vec![0x80, 0x80, 0x01]),
+        ] {
             let mut out = Vec::new();
             put_compact_u16(&mut out, v);
             assert_eq!(out, bytes, "{}", v);
@@ -402,8 +445,16 @@ mod tests {
     fn the_message_has_the_legacy_layout() {
         let m = message(ACCTS, NONCE, &[SolPayout::native(pk(1), 5_000)]).unwrap();
         let mut i = 0;
-        let mut take = |n: usize| { let s = &m[i..i + n]; i += n; s };
-        assert_eq!(take(3), &[1, 0, 2], "header: one signer, two read-only unsigned");
+        let mut take = |n: usize| {
+            let s = &m[i..i + n];
+            i += n;
+            s
+        };
+        assert_eq!(
+            take(3),
+            &[1, 0, 2],
+            "header: one signer, two read-only unsigned"
+        );
         assert_eq!(take(1), &[5], "vault, nonce, destination, sysvar, system");
         assert_eq!(take(32), &ACCTS.vault);
         assert_eq!(take(32), &ACCTS.nonce_account);
@@ -439,7 +490,10 @@ mod tests {
     #[test]
     fn a_payout_to_the_vault_or_nonce_is_refused() {
         for to in [ACCTS.vault, ACCTS.nonce_account] {
-            assert_eq!(message(ACCTS, NONCE, &[SolPayout::native(to, 1)]), Err(SolanaError::PayoutToVault));
+            assert_eq!(
+                message(ACCTS, NONCE, &[SolPayout::native(to, 1)]),
+                Err(SolanaError::PayoutToVault)
+            );
         }
         assert_eq!(message(ACCTS, NONCE, &[]), Err(SolanaError::Empty));
     }
@@ -448,7 +502,10 @@ mod tests {
     fn lamports_are_exact_or_refused() {
         assert_eq!(lamports(Fixed::whole(1)), Ok(1_000_000_000));
         assert_eq!(lamports(Fixed::raw(WAD_PER_LAMPORT)), Ok(1));
-        assert_eq!(lamports(Fixed::raw(WAD_PER_LAMPORT + 1)), Err(SolanaError::Dust));
+        assert_eq!(
+            lamports(Fixed::raw(WAD_PER_LAMPORT + 1)),
+            Err(SolanaError::Dust)
+        );
         assert_eq!(lamports(Fixed::ZERO), Err(SolanaError::AmountOutOfRange));
     }
 
@@ -456,7 +513,9 @@ mod tests {
     /// every payout exactly once and in order.
     #[test]
     fn a_large_settlement_splits_in_order_within_the_limit() {
-        let payouts: Vec<SolPayout> = (1..=60u8).map(|n| SolPayout::native(pk(n), n as u64)).collect();
+        let payouts: Vec<SolPayout> = (1..=60u8)
+            .map(|n| SolPayout::native(pk(n), n as u64))
+            .collect();
         let groups = chunk(ACCTS, &payouts).unwrap();
         assert!(groups.len() >= 2, "sixty payouts cannot be one transaction");
         let flat: Vec<SolPayout> = groups.iter().flatten().copied().collect();
@@ -475,10 +534,32 @@ mod tests {
     fn a_substituted_destination_is_refused() {
         let salt = [7u8; 32];
         let bound = |a: AccountId| Some(Binding::new(commitment(&pk(a[0]), &salt)));
-        let payouts = vec![Payout { account: [1u8; 32], asset: 2, amount: Fixed::whole(1), since: 1 }];
-        assert!(resolve(&payouts, bound, &[Reveal { account: [1u8; 32], address: pk(1), salt }]).is_ok());
+        let payouts = vec![Payout {
+            account: [1u8; 32],
+            asset: asset(2),
+            amount: Fixed::whole(1),
+            since: 1,
+        }];
+        assert!(resolve(
+            &payouts,
+            bound,
+            &[Reveal {
+                account: [1u8; 32],
+                address: pk(1),
+                salt
+            }]
+        )
+        .is_ok());
         assert_eq!(
-            resolve(&payouts, bound, &[Reveal { account: [1u8; 32], address: pk(9), salt }]),
+            resolve(
+                &payouts,
+                bound,
+                &[Reveal {
+                    account: [1u8; 32],
+                    address: pk(9),
+                    salt
+                }]
+            ),
             Err(SolanaError::WrongDestination)
         );
         assert_eq!(resolve(&payouts, bound, &[]), Err(SolanaError::Undisclosed));
@@ -486,8 +567,17 @@ mod tests {
 
     #[test]
     fn a_settlement_for_another_chain_is_refused() {
-        let s = group(vec![([1u8; 32], 2u32, crate::vault::ORIGIN_ZCASH, Fixed::whole(1), 1u64)]);
-        assert_eq!(settlement_payouts(&s[0], ACCTS, |_| None, &[]), Err(SolanaError::NotSolana));
+        let s = group(vec![(
+            [1u8; 32],
+            asset(2),
+            crate::vault::ORIGIN_ZCASH,
+            Fixed::whole(1),
+            1u64,
+        )]);
+        assert_eq!(
+            settlement_payouts(&s[0], ACCTS, |_| None, &[]),
+            Err(SolanaError::NotSolana)
+        );
     }
 
     /// A token payout carries two instructions — create the recipient's
@@ -500,33 +590,62 @@ mod tests {
         let dest_ata = associated_token_address(&pk(1), &mint);
         let src_ata = associated_token_address(&ACCTS.vault, &mint);
         let mut i = 0;
-        let mut take = |n: usize| { let s = &m[i..i + n]; i += n; s };
-        assert_eq!(take(3), &[1, 0, 5], "five read-only: mint, sysvar, system, token, ata programs");
+        let mut take = |n: usize| {
+            let s = &m[i..i + n];
+            i += n;
+            s
+        };
+        assert_eq!(
+            take(3),
+            &[1, 0, 5],
+            "five read-only: mint, sysvar, system, token, ata programs"
+        );
         assert_eq!(take(1), &[10]);
         let mut keys = Vec::new();
-        for _ in 0..10 { keys.push(<[u8; 32]>::try_from(take(32)).unwrap()); }
+        for _ in 0..10 {
+            keys.push(<[u8; 32]>::try_from(take(32)).unwrap());
+        }
         assert_eq!(keys[0], ACCTS.vault);
         assert!(keys.contains(&dest_ata) && keys.contains(&src_ata) && keys.contains(&mint));
-        assert_eq!(&keys[5..], &[mint, RECENT_BLOCKHASHES_SYSVAR, SYSTEM_PROGRAM, TOKEN_PROGRAM, ATA_PROGRAM]);
+        assert_eq!(
+            &keys[5..],
+            &[
+                mint,
+                RECENT_BLOCKHASHES_SYSVAR,
+                SYSTEM_PROGRAM,
+                TOKEN_PROGRAM,
+                ATA_PROGRAM
+            ]
+        );
         take(32); // nonce
         assert_eq!(take(1), &[3], "advance, create, transfer");
         // skip the advance instruction
-        take(1); take(1); take(3); take(1); take(4);
+        take(1);
+        take(1);
+        take(3);
+        take(1);
+        take(4);
         assert_eq!(take(1), &[9], "ata program index");
         assert_eq!(take(1), &[6]);
         let accs = take(6).to_vec();
-        assert_eq!(keys[accs[0] as usize], ACCTS.vault, "the vault pays the rent");
+        assert_eq!(
+            keys[accs[0] as usize], ACCTS.vault,
+            "the vault pays the rent"
+        );
         assert_eq!(keys[accs[1] as usize], dest_ata);
         assert_eq!(keys[accs[2] as usize], pk(1));
         assert_eq!(keys[accs[3] as usize], mint);
-        assert_eq!(take(1), &[1]); assert_eq!(take(1), &[1], "CreateIdempotent");
+        assert_eq!(take(1), &[1]);
+        assert_eq!(take(1), &[1], "CreateIdempotent");
         assert_eq!(take(1), &[8], "token program index");
         assert_eq!(take(1), &[3]);
         let accs = take(3).to_vec();
         assert_eq!(keys[accs[0] as usize], src_ata);
         assert_eq!(keys[accs[1] as usize], dest_ata);
         assert_eq!(keys[accs[2] as usize], ACCTS.vault, "the vault authorises");
-        assert_eq!(take(1), &[9]); assert_eq!(take(1), &[3]); assert_eq!(take(8), &1u64.to_le_bytes());
+        assert_eq!(take(1), &[9]);
+        assert_eq!(take(1), &[3]);
+        assert_eq!(take(8), &1u64.to_le_bytes());
         assert_eq!(i, m.len());
     }
 
@@ -537,16 +656,31 @@ mod tests {
         let a = associated_token_address(&pk(1), &pk(2));
         assert_eq!(a, associated_token_address(&pk(1), &pk(2)));
         assert_ne!(a, associated_token_address(&pk(2), &pk(1)));
-        assert!(curve25519_dalek::edwards::CompressedEdwardsY(a).decompress().is_none());
+        assert!(curve25519_dalek::edwards::CompressedEdwardsY(a)
+            .decompress()
+            .is_none());
     }
 
     /// Against `spl-token address --owner … --token …` on a validator: the
     /// derivation must produce the account a wallet would actually pay.
     #[test]
     fn the_associated_token_address_matches_the_reference_tooling() {
-        let owner: Pubkey = [93, 232, 148, 139, 21, 198, 146, 50, 150, 53, 205, 125, 80, 156, 234, 224, 193, 3, 133, 12, 210, 56, 225, 109, 41, 184, 179, 152, 52, 41, 110, 193];
-        let mint: Pubkey = [47, 23, 234, 83, 3, 16, 22, 51, 46, 180, 115, 206, 240, 240, 126, 211, 184, 199, 103, 65, 99, 66, 73, 66, 170, 124, 252, 247, 205, 68, 45, 212];
-        let ata: Pubkey = [113, 121, 145, 41, 173, 126, 221, 138, 106, 78, 223, 65, 119, 137, 93, 121, 111, 1, 19, 176, 126, 176, 192, 127, 6, 112, 193, 166, 57, 100, 130, 146];
+        let owner: Pubkey = [
+            93, 232, 148, 139, 21, 198, 146, 50, 150, 53, 205, 125, 80, 156, 234, 224, 193, 3, 133,
+            12, 210, 56, 225, 109, 41, 184, 179, 152, 52, 41, 110, 193,
+        ];
+        let mint: Pubkey = [
+            47, 23, 234, 83, 3, 16, 22, 51, 46, 180, 115, 206, 240, 240, 126, 211, 184, 199, 103,
+            65, 99, 66, 73, 66, 170, 124, 252, 247, 205, 68, 45, 212,
+        ];
+        let ata: Pubkey = [
+            113, 121, 145, 41, 173, 126, 221, 138, 106, 78, 223, 65, 119, 137, 93, 121, 111, 1, 19,
+            176, 126, 176, 192, 127, 6, 112, 193, 166, 57, 100, 130, 146,
+        ];
         assert_eq!(associated_token_address(&owner, &mint), ata);
     }
+}
+#[cfg(test)]
+fn asset(n: u8) -> crate::settle::AssetId {
+    [n; 32]
 }

@@ -38,7 +38,9 @@ mod tests {
     use crate::fixed::Fixed;
     use crate::state::{symbol, TokenInfo};
     use crate::tx::{Intent, SequencedIntent};
-    use crate::types::{AccountId, AssetId, Params, ORIGIN_BITCOIN, ORIGIN_SOLANA, XZEC};
+    use crate::types::{
+        AccountId, AssetId, Params, BTC_ZY, ORIGIN_BITCOIN, ORIGIN_SOLANA, SOL_ZY, XZEC,
+    };
     use crate::vm;
 
     fn acct(n: u8) -> AccountId {
@@ -47,24 +49,29 @@ mod tests {
 
     fn chain() -> (SwapState, AssetId, AssetId) {
         let mut s = SwapState::new(1, Params::v1());
-        let xsol = s.next_asset_id;
-        s.next_asset_id += 1;
-        s.tokens.insert(xsol, TokenInfo::bridged(symbol(b"xSOL"), ORIGIN_SOLANA));
-        let xbtc = s.next_asset_id;
-        s.next_asset_id += 1;
-        s.tokens.insert(xbtc, TokenInfo::bridged(symbol(b"xBTC"), ORIGIN_BITCOIN));
+        let xsol = SOL_ZY;
+        s.tokens
+            .insert(xsol, TokenInfo::bridged(symbol(b"xSOL"), ORIGIN_SOLANA));
+        let xbtc = BTC_ZY;
+        s.tokens
+            .insert(xbtc, TokenInfo::bridged(symbol(b"xBTC"), ORIGIN_BITCOIN));
 
         let go = |s: &mut SwapState, i: Intent| {
             let at = s.seq;
-            let r = vm::apply(s, &SequencedIntent { seq: at + 1, intent: i });
+            let r = vm::apply(
+                s,
+                &SequencedIntent {
+                    seq: at + 1,
+                    intent: i,
+                },
+            );
             assert!(!r.iter().any(|x| x.is_rejection()), "rejected: {:?}", r);
         };
         for n in 1..=20u8 {
             for asset in [XZEC, xsol] {
                 let observed = s.backing_of(asset).add(Fixed::whole(100)).unwrap();
                 go(&mut s, Intent::AttestVaultBalance { asset, observed });
-                let credit =
-                    Intent::next_deposit(&s, acct(n), asset, Fixed::whole(100), [n; 32]);
+                let credit = Intent::next_deposit(&s, acct(n), asset, Fixed::whole(100), [n; 32]);
                 go(&mut s, credit);
             }
         }
@@ -74,12 +81,15 @@ mod tests {
         go(&mut s, Intent::ConfirmAnchor { epoch: at });
         for n in 1..=20u8 {
             for asset in [XZEC, xsol] {
-                go(&mut s, Intent::RequestWithdrawal {
-                    account: acct(n),
-                    asset,
-                    amount: Fixed::whole(n as i64),
-                    destination: [0u8; 32],
-                });
+                go(
+                    &mut s,
+                    Intent::RequestWithdrawal {
+                        account: acct(n),
+                        asset,
+                        amount: Fixed::whole(n as i64),
+                        destination: [0u8; 32],
+                    },
+                );
             }
         }
         s.check_invariants().unwrap();
@@ -96,7 +106,10 @@ mod tests {
         let sol = settlement_for(&s, ORIGIN_SOLANA).expect("Solana exits");
         assert_eq!(sol.len(), 20, "twenty users leaving in one transaction");
         assert_eq!(sol.total_of(xsol), Fixed::whole(210)); // 1 + 2 + ... + 20
-        assert!(is_covered(&s, &sol), "the vault cannot cover what it promised");
+        assert!(
+            is_covered(&s, &sol),
+            "the vault cannot cover what it promised"
+        );
         assert_eq!(exits_per_transaction(&all), 20);
     }
 

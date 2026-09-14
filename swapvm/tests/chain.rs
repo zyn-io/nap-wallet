@@ -12,7 +12,7 @@
 use swapvm::fixed::{Fixed, WAD};
 use swapvm::state::{symbol, SwapState};
 use swapvm::tx::{Intent, Receipt, Reject, SequencedIntent};
-use swapvm::types::{AccountId, Params, XZEC};
+use swapvm::types::{legacy_id, AccountId, AssetId, Params, PoolId, XZEC};
 use swapvm::vm::{apply, apply_batch, transition};
 
 fn acct(n: u8) -> AccountId {
@@ -32,12 +32,21 @@ struct Chain {
 
 impl Chain {
     fn new() -> Self {
-        Chain { state: SwapState::new(1, Params::v1()), seq: 0 }
+        Chain {
+            state: SwapState::new(1, Params::v1()),
+            seq: 0,
+        }
     }
 
     fn push(&mut self, intent: Intent) -> Vec<Receipt> {
         self.seq += 1;
-        let r = apply(&mut self.state, &SequencedIntent { seq: self.seq, intent: intent.clone() });
+        let r = apply(
+            &mut self.state,
+            &SequencedIntent {
+                seq: self.seq,
+                intent: intent.clone(),
+            },
+        );
         self.state
             .check_invariants()
             .unwrap_or_else(|e| panic!("invariant broken after {:?}: {}", intent, e));
@@ -71,14 +80,18 @@ impl Chain {
         );
         // The root must move — the sequence and the epoch commitment advanced —
         // but nothing else may have.
-        assert_ne!(self.state.state_root(), before, "a rejection did not advance history");
+        assert_ne!(
+            self.state.state_root(),
+            before,
+            "a rejection did not advance history"
+        );
         assert_eq!(self.state.seq, seq_before + 1);
     }
 
     /// Observe the vault growing, then credit the deposit — the operational
     /// order, and the only one the chain accepts: units issued can never exceed
     /// units last observed.
-    fn deposit(&mut self, who: u8, asset: u32, amount: Fixed) {
+    fn deposit(&mut self, who: u8, asset: AssetId, amount: Fixed) {
         let observed = self.state.backing_of(asset).add(amount).unwrap();
         self.ok(Intent::AttestVaultBalance { asset, observed });
         let credit = Intent::next_deposit(&self.state, acct(who), asset, amount, [0u8; 32]);
@@ -97,14 +110,14 @@ impl Chain {
         self.ok(Intent::ConfirmAnchor { epoch: at });
     }
 
-    fn bal(&self, who: u8, asset: u32) -> Fixed {
+    fn bal(&self, who: u8, asset: AssetId) -> Fixed {
         self.state.balance(&acct(who), asset)
     }
 }
 
 /// CAT is asset 2, DOG is asset 3 (LP assets take the ids in between).
 /// Returns `(cat, dog, cat_pool, dog_pool)`.
-fn seeded() -> (Chain, u32, u32, u32, u32) {
+fn seeded() -> (Chain, AssetId, AssetId, PoolId, PoolId) {
     let mut c = Chain::new();
 
     // Two traders and one LP arrive over the Zcash bridge.
@@ -178,7 +191,13 @@ fn the_full_deposit_trade_withdraw_cycle() {
         min_out: Fixed::ZERO,
     });
     match &r[0] {
-        Receipt::Swapped { asset_in, asset_out, hops, amount_out, .. } => {
+        Receipt::Swapped {
+            asset_in,
+            asset_out,
+            hops,
+            amount_out,
+            ..
+        } => {
             assert_eq!(*asset_in, cat);
             assert_eq!(*asset_out, dog);
             assert_eq!(hops.len(), 2, "the route did not go through xZEC");
@@ -188,7 +207,11 @@ fn the_full_deposit_trade_withdraw_cycle() {
         }
         r => panic!("expected Swapped, got {:?}", r),
     }
-    assert_eq!(c.bal(2, cat), Fixed::ZERO, "the whole CAT position should be spent");
+    assert_eq!(
+        c.bal(2, cat),
+        Fixed::ZERO,
+        "the whole CAT position should be spent"
+    );
     assert!(c.bal(2, dog).is_positive());
 
     // 5. Add liquidity, 6. remove it again.
@@ -235,18 +258,39 @@ fn the_full_deposit_trade_withdraw_cycle() {
         Receipt::Checkpointed(cp) => cp,
         _ => panic!("expected Checkpointed"),
     };
-    assert_ne!(cp.state_root, root_before, "the seal did not include its own intent");
+    assert_ne!(
+        cp.state_root, root_before,
+        "the seal did not include its own intent"
+    );
     assert_eq!(cp.epoch, c.state.epoch - 1);
-    assert_eq!(cp.seq, c.state.seq, "the seal must name the sequence it covers");
-    assert_eq!(c.state.parent_root, cp.state_root, "the sealed root did not become the parent");
+    assert_eq!(
+        cp.seq, c.state.seq,
+        "the seal must name the sequence it covers"
+    );
+    assert_eq!(
+        c.state.parent_root, cp.state_root,
+        "the sealed root did not become the parent"
+    );
 
     // 9. Withdraw back to Zcash.
     let held = c.bal(2, XZEC);
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: held, destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: held,
+        destination: [0u8; 32],
+    });
     assert_eq!(c.bal(2, XZEC), Fixed::ZERO);
     // Still backed while the exit is in flight: supply has not moved.
-    assert_eq!(c.state.token(XZEC).unwrap().supply, c.state.backing_of(XZEC));
-    c.ok(Intent::ConfirmWithdrawal { account: acct(2), asset: XZEC, amount: held });
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        c.state.backing_of(XZEC)
+    );
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: held,
+    });
     // The account survives with nothing pending, because it still holds the DOG
     // it routed into. Pruning removes accounts that hold *nothing*, not accounts
     // that have merely exited.
@@ -269,16 +313,38 @@ fn an_emptied_account_leaves_no_trace_in_the_root() {
     c.finalize();
     assert!(c.state.accounts.contains_key(&acct(1)));
 
-    c.ok(Intent::RequestWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::whole(10), destination: [0u8; 32] });
-    assert!(c.state.accounts.contains_key(&acct(1)), "a pending exit must keep the account");
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(1),
+        asset: XZEC,
+        amount: Fixed::whole(10),
+        destination: [0u8; 32],
+    });
+    assert!(
+        c.state.accounts.contains_key(&acct(1)),
+        "a pending exit must keep the account"
+    );
 
-    c.ok(Intent::ConfirmWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::whole(10) });
-    assert!(!c.state.accounts.contains_key(&acct(1)), "an emptied account was not pruned");
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(1),
+        asset: XZEC,
+        amount: Fixed::whole(10),
+    });
+    assert!(
+        !c.state.accounts.contains_key(&acct(1)),
+        "an emptied account was not pruned"
+    );
     assert_eq!(c.state.backing_of(XZEC), Fixed::ZERO);
 
     // Only the header has moved on; the accounts section is back to empty.
-    assert_eq!(c.state.accounts_root(), SwapState::new(1, Params::v1()).accounts_root());
-    assert_ne!(c.state.state_root(), genesis, "history must still have advanced");
+    assert_eq!(
+        c.state.accounts_root(),
+        SwapState::new(1, Params::v1()).accounts_root()
+    );
+    assert_ne!(
+        c.state.state_root(),
+        genesis,
+        "history must still have advanced"
+    );
 }
 
 /// Naming an account in an intent that then fails must not conjure it into the
@@ -295,7 +361,10 @@ fn a_rejected_intent_does_not_create_an_account() {
         },
         Reject::InsufficientBalance,
     );
-    assert!(c.state.accounts.is_empty(), "a rejected transfer left accounts behind");
+    assert!(
+        c.state.accounts.is_empty(),
+        "a rejected transfer left accounts behind"
+    );
 }
 
 /// The plan's headline infrastructure metric: many microchain actions
@@ -303,7 +372,12 @@ fn a_rejected_intent_does_not_create_an_account() {
 #[test]
 fn thousands_of_actions_compress_into_one_settlement() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(500_000) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(500_000),
+    });
 
     // Alternate directions so the pool does not walk off to one extreme.
     for i in 0..1_000 {
@@ -324,18 +398,34 @@ fn thousands_of_actions_compress_into_one_settlement() {
                 min_out: Fixed::ZERO,
             }
         };
-        let r = apply(&mut c.state, &SequencedIntent { seq: c.seq + 1, intent });
+        let r = apply(
+            &mut c.state,
+            &SequencedIntent {
+                seq: c.seq + 1,
+                intent,
+            },
+        );
         c.seq += 1;
-        assert!(!r.iter().any(|x| x.is_rejection()), "swap {} rejected: {:?}", i, r);
+        assert!(
+            !r.iter().any(|x| x.is_rejection()),
+            "swap {} rejected: {:?}",
+            i,
+            r
+        );
     }
-    c.state.check_invariants().expect("1000 swaps must leave the chain consistent");
+    c.state
+        .check_invariants()
+        .expect("1000 swaps must leave the chain consistent");
 
     let r = c.ok(Intent::Checkpoint);
     let cp = match r[0] {
         Receipt::Checkpointed(cp) => cp,
         _ => panic!("expected Checkpointed"),
     };
-    assert!(cp.intents > 1_000, "one settlement should cover the whole epoch");
+    assert!(
+        cp.intents > 1_000,
+        "one settlement should cover the whole epoch"
+    );
     assert_eq!(cp.seq, c.state.seq);
 }
 
@@ -349,7 +439,12 @@ fn thousands_of_actions_compress_into_one_settlement() {
 #[test]
 fn k_never_falls_across_a_swap() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(500_000) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(500_000),
+    });
 
     for i in 0..60 {
         let k_before = c.state.pool(cat_pool).unwrap().k().unwrap();
@@ -372,7 +467,13 @@ fn k_never_falls_across_a_swap() {
         };
         c.ok(intent);
         let k_after = c.state.pool(cat_pool).unwrap().k().unwrap();
-        assert!(k_after >= k_before, "swap {} lowered k: {} -> {}", i, k_before, k_after);
+        assert!(
+            k_after >= k_before,
+            "swap {} lowered k: {} -> {}",
+            i,
+            k_before,
+            k_after
+        );
     }
 }
 
@@ -431,7 +532,12 @@ fn exact_output_always_delivers_at_least_what_was_asked() {
 #[test]
 fn a_routed_swap_moves_every_pool_on_the_path() {
     let (mut c, cat, dog, cat_pool, dog_pool) = seeded();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(10_000) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(10_000),
+    });
     let cat_k = c.state.pool(cat_pool).unwrap().k().unwrap();
     let dog_k = c.state.pool(dog_pool).unwrap().k().unwrap();
 
@@ -460,7 +566,12 @@ fn an_lp_cannot_withdraw_more_than_they_deposited_without_fees() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
     c.deposit(4, XZEC, Fixed::whole(1_000));
     c.finalize();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(4), asset: cat, amount: Fixed::whole(500_000) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(4),
+        asset: cat,
+        amount: Fixed::whole(500_000),
+    });
     let (zec_before, cat_before) = (c.bal(4, XZEC), c.bal(4, cat));
 
     let lp_asset = c.state.pool(cat_pool).unwrap().lp_asset;
@@ -481,7 +592,10 @@ fn an_lp_cannot_withdraw_more_than_they_deposited_without_fees() {
     });
     // No trades happened in between, so nothing was earned and rounding must
     // not have created anything either.
-    assert!(c.bal(4, XZEC) <= zec_before, "LP gained xZEC out of nothing");
+    assert!(
+        c.bal(4, XZEC) <= zec_before,
+        "LP gained xZEC out of nothing"
+    );
     assert!(c.bal(4, cat) <= cat_before, "LP gained CAT out of nothing");
 }
 
@@ -492,7 +606,11 @@ fn the_first_lp_cannot_reclaim_the_locked_minimum() {
     let (mut c, _cat, _dog, cat_pool, _) = seeded();
     let p = *c.state.pool(cat_pool).unwrap();
     let held = c.bal(1, p.lp_asset);
-    assert_eq!(p.lp_supply.sub(p.locked).unwrap(), held, "creator should hold all but the lock");
+    assert_eq!(
+        p.lp_supply.sub(p.locked).unwrap(),
+        held,
+        "creator should hold all but the lock"
+    );
 
     c.ok(Intent::RemoveLiquidity {
         account: acct(1),
@@ -503,7 +621,10 @@ fn the_first_lp_cannot_reclaim_the_locked_minimum() {
     });
     let p = *c.state.pool(cat_pool).unwrap();
     assert_eq!(p.lp_supply, p.locked, "the lock was spent");
-    assert!(p.reserve0.is_positive() && p.reserve1.is_positive(), "pool was fully drained");
+    assert!(
+        p.reserve0.is_positive() && p.reserve1.is_positive(),
+        "pool was fully drained"
+    );
     // And there is nothing left to burn against it.
     c.rejects(
         Intent::RemoveLiquidity {
@@ -555,7 +676,9 @@ fn the_rail_is_inert_until_it_is_switched_on() {
 fn revenue_comes_out_of_the_fee_not_out_of_the_trader() {
     let (mut baseline, _cat, _dog, cat_pool, _) = seeded();
     let (mut earning, ..) = seeded();
-    earning.ok(Intent::SetParams { params: with_protocol_share(1_000) }); // 10% of the fee
+    earning.ok(Intent::SetParams {
+        params: with_protocol_share(1_000),
+    }); // 10% of the fee
 
     let swap = |pool| Intent::SwapExactIn {
         account: acct(2),
@@ -568,25 +691,43 @@ fn revenue_comes_out_of_the_fee_not_out_of_the_trader() {
     let r1 = earning.ok(swap(cat_pool));
 
     let (out0, hop0) = match &r0[0] {
-        Receipt::Swapped { amount_out, hops, .. } => (*amount_out, hops[0]),
+        Receipt::Swapped {
+            amount_out, hops, ..
+        } => (*amount_out, hops[0]),
         _ => panic!("expected Swapped"),
     };
     let (out1, hop1) = match &r1[0] {
-        Receipt::Swapped { amount_out, hops, .. } => (*amount_out, hops[0]),
+        Receipt::Swapped {
+            amount_out, hops, ..
+        } => (*amount_out, hops[0]),
         _ => panic!("expected Swapped"),
     };
 
     // The quote is identical. The trader cannot tell the rail is on.
-    assert_eq!(out0, out1, "switching on revenue changed the trader's quote");
+    assert_eq!(
+        out0, out1,
+        "switching on revenue changed the trader's quote"
+    );
     assert_eq!(hop0.fee, hop1.fee, "the fee charged should be unchanged");
     assert_eq!(hop0.protocol_fee, Fixed::ZERO);
-    assert!(hop1.protocol_fee.is_positive(), "the treasury earned nothing");
+    assert!(
+        hop1.protocol_fee.is_positive(),
+        "the treasury earned nothing"
+    );
 
     // Ten percent of the fee, and the LPs keep the other ninety.
-    assert_eq!(hop1.protocol_fee, hop1.fee.mul_div(Fixed::whole(1_000), Fixed::whole(10_000)).unwrap());
+    assert_eq!(
+        hop1.protocol_fee,
+        hop1.fee
+            .mul_div(Fixed::whole(1_000), Fixed::whole(10_000))
+            .unwrap()
+    );
     assert_eq!(earning.bal(TREASURY, XZEC), hop1.protocol_fee);
     let lp_kept = hop1.fee.sub(hop1.protocol_fee).unwrap();
-    assert!(lp_kept > hop1.protocol_fee, "the protocol took more than the LPs");
+    assert!(
+        lp_kept > hop1.protocol_fee,
+        "the protocol took more than the LPs"
+    );
 }
 
 /// `k` must stay non-decreasing with the rail on. It is the property that stops
@@ -596,7 +737,9 @@ fn revenue_comes_out_of_the_fee_not_out_of_the_trader() {
 fn revenue_does_not_break_the_curve() {
     for share in [0u16, 1, 2_500, 5_000, 9_999] {
         let (mut c, cat, _dog, cat_pool, _) = seeded();
-        c.ok(Intent::SetParams { params: with_protocol_share(share) });
+        c.ok(Intent::SetParams {
+            params: with_protocol_share(share),
+        });
         c.ok(Intent::Transfer {
             from: acct(1),
             to: acct(2),
@@ -627,7 +770,10 @@ fn revenue_does_not_break_the_curve() {
             assert!(
                 k_after >= k_before,
                 "share {} swap {} lowered k: {} -> {}",
-                share, i, k_before, k_after
+                share,
+                i,
+                k_before,
+                k_after
             );
         }
     }
@@ -638,8 +784,15 @@ fn revenue_does_not_break_the_curve() {
 #[test]
 fn treasury_revenue_is_an_ordinary_balance() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::SetParams { params: with_protocol_share(5_000) });
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(200_000) });
+    c.ok(Intent::SetParams {
+        params: with_protocol_share(5_000),
+    });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(200_000),
+    });
 
     // Earn in both assets: one swap each way.
     c.ok(Intent::SwapExactIn {
@@ -669,8 +822,17 @@ fn treasury_revenue_is_an_ordinary_balance() {
         min_out: Fixed::ZERO,
     });
     let held = c.bal(TREASURY, XZEC);
-    c.ok(Intent::RequestWithdrawal { account: acct(TREASURY), asset: XZEC, amount: held, destination: [0u8; 32] });
-    c.ok(Intent::ConfirmWithdrawal { account: acct(TREASURY), asset: XZEC, amount: held });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(TREASURY),
+        asset: XZEC,
+        amount: held,
+        destination: [0u8; 32],
+    });
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(TREASURY),
+        asset: XZEC,
+        amount: held,
+    });
     assert_eq!(c.bal(TREASURY, XZEC), Fixed::ZERO);
 }
 
@@ -679,8 +841,15 @@ fn treasury_revenue_is_an_ordinary_balance() {
 #[test]
 fn the_protocol_cannot_take_the_whole_fee() {
     let (mut c, _cat, _dog, _, _) = seeded();
-    c.rejects(Intent::SetParams { params: with_protocol_share(10_000) }, Reject::InvalidParams);
-    c.ok(Intent::SetParams { params: with_protocol_share(9_999) });
+    c.rejects(
+        Intent::SetParams {
+            params: with_protocol_share(10_000),
+        },
+        Reject::InvalidParams,
+    );
+    c.ok(Intent::SetParams {
+        params: with_protocol_share(9_999),
+    });
 }
 
 /// Revenue is a routed slice of a real fee, so it is bounded by volume — it can
@@ -688,8 +857,15 @@ fn the_protocol_cannot_take_the_whole_fee() {
 #[test]
 fn revenue_never_exceeds_the_fees_that_were_charged() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::SetParams { params: with_protocol_share(3_000) });
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(400_000) });
+    c.ok(Intent::SetParams {
+        params: with_protocol_share(3_000),
+    });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(400_000),
+    });
 
     let mut charged = Fixed::ZERO;
     let mut taken = Fixed::ZERO;
@@ -710,7 +886,11 @@ fn revenue_never_exceeds_the_fees_that_were_charged() {
     }
     assert!(taken.is_positive());
     assert!(taken < charged, "the protocol took more than was charged");
-    assert_eq!(c.bal(TREASURY, XZEC), taken, "treasury balance does not match the receipts");
+    assert_eq!(
+        c.bal(TREASURY, XZEC),
+        taken,
+        "treasury balance does not match the receipts"
+    );
 }
 
 /// An LP position is an ordinary balance, so it transfers, survives
@@ -731,7 +911,12 @@ fn an_lp_position_is_an_ordinary_transferable_asset() {
 
     // Divisible: half a position moves, which an NFT could not do.
     let half = held.mul_div(Fixed::whole(1), Fixed::whole(2)).unwrap();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(7), asset: lp, amount: half });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(7),
+        asset: lp,
+        amount: half,
+    });
     assert_eq!(c.bal(7, lp), half);
     assert_eq!(c.bal(1, lp), held.sub(half).unwrap());
 
@@ -748,7 +933,9 @@ fn an_lp_position_is_an_ordinary_transferable_asset() {
     assert!(c.bal(7, XZEC).is_positive() && c.bal(7, cat).is_positive());
 
     // And the pool's share supply still reconciles against the token's.
-    c.state.check_invariants().expect("a transferred LP position broke conservation");
+    c.state
+        .check_invariants()
+        .expect("a transferred LP position broke conservation");
 }
 
 /// A holder proves an LP position against an anchored root exactly as they
@@ -775,7 +962,11 @@ fn an_lp_position_exits_through_the_same_hatch_as_a_balance() {
         asset: lp,
         amount: Fixed::raw(1),
     });
-    assert!(!swapvm::merkle::verify_proof(leaf, &path, c.state.state_root()));
+    assert!(!swapvm::merkle::verify_proof(
+        leaf,
+        &path,
+        c.state.state_root()
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -786,11 +977,21 @@ use swapvm::state::TokenInfo;
 use swapvm::types::{ORIGIN_BITCOIN, ORIGIN_ETHEREUM, ORIGIN_SOLANA, ORIGIN_ZCASH};
 
 /// Register a bridged asset the way a governance action would.
-fn add_bridge(c: &mut Chain, sym: &[u8], origin: u16) -> u32 {
-    let id = c.state.next_asset_id;
-    c.state.next_asset_id += 1;
-    c.state.tokens.insert(id, TokenInfo::bridged(symbol(sym), origin));
-    c.state.check_invariants().expect("a fresh bridge must be consistent");
+fn add_bridge(c: &mut Chain, sym: &[u8], origin: u16) -> AssetId {
+    let origin_network: &[u8] = match origin {
+        ORIGIN_ZCASH => b"zcash",
+        ORIGIN_BITCOIN => b"bitcoin",
+        ORIGIN_ETHEREUM => b"ethereum",
+        ORIGIN_SOLANA => b"solana",
+        _ => b"test-origin",
+    };
+    let id = zyn_vm::bridged_address(swapvm::types::ADDRESS_SCOPE_V1, origin_network, sym);
+    c.state
+        .tokens
+        .insert(id, TokenInfo::bridged(symbol(sym), origin));
+    c.state
+        .check_invariants()
+        .expect("a fresh bridge must be consistent");
     id
 }
 
@@ -812,7 +1013,7 @@ fn every_bridge_is_the_same_shape() {
         assert_eq!(
             c.state.token(asset).unwrap().supply,
             c.state.backing_of(asset),
-            "asset {} drifted from its vault",
+            "asset {:?} drifted from its vault",
             asset
         );
     }
@@ -847,7 +1048,12 @@ fn bridged_assets_route_through_the_xzec_hub() {
         _ => panic!("expected PoolCreated"),
     };
 
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: xbtc, amount: Fixed::whole(10) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: xbtc,
+        amount: Fixed::whole(10),
+    });
     let r = c.ok(Intent::SwapExactIn {
         account: acct(2),
         asset_in: xbtc,
@@ -856,9 +1062,14 @@ fn bridged_assets_route_through_the_xzec_hub() {
         min_out: Fixed::ZERO,
     });
     match &r[0] {
-        Receipt::Swapped { asset_out, hops, .. } => {
+        Receipt::Swapped {
+            asset_out, hops, ..
+        } => {
             assert_eq!(*asset_out, cat);
-            assert_eq!(hops[0].asset_out, XZEC, "the route did not go through the hub");
+            assert_eq!(
+                hops[0].asset_out, XZEC,
+                "the route did not go through the hub"
+            );
         }
         r => panic!("expected Swapped, got {:?}", r),
     }
@@ -882,9 +1093,23 @@ fn one_bridge_cannot_borrow_anothers_reserves() {
 
     // Bitcoin's vault is short by one; Ethereum's is over by one. A pooled
     // total would net to zero and notice nothing.
-    let b = c.state.tokens.get_mut(&xbtc).unwrap().vault.as_mut().unwrap();
+    let b = c
+        .state
+        .tokens
+        .get_mut(&xbtc)
+        .unwrap()
+        .vault
+        .as_mut()
+        .unwrap();
     b.confirmed = b.confirmed.sub(Fixed::whole(1)).unwrap();
-    let e = c.state.tokens.get_mut(&xeth).unwrap().vault.as_mut().unwrap();
+    let e = c
+        .state
+        .tokens
+        .get_mut(&xeth)
+        .unwrap()
+        .vault
+        .as_mut()
+        .unwrap();
     e.confirmed = e.confirmed.add(Fixed::whole(1)).unwrap();
 
     assert!(
@@ -903,7 +1128,14 @@ fn one_bridge_cannot_borrow_anothers_reserves() {
 fn the_zec_path_holds_end_to_end() {
     let mut c = Chain::new();
     {
-        let v = c.state.tokens.get_mut(&XZEC).unwrap().vault.as_mut().unwrap();
+        let v = c
+            .state
+            .tokens
+            .get_mut(&XZEC)
+            .unwrap()
+            .vault
+            .as_mut()
+            .unwrap();
         v.cap = Fixed::whole(10_000); // staged mainnet: a limited deposit cap
         v.epoch_cap = Fixed::whole(1_000); // bound a compromise to one epoch
         v.min_exit = Fixed::raw(100_000_000_000); // Zcash cannot pay less
@@ -911,7 +1143,10 @@ fn the_zec_path_holds_end_to_end() {
 
     // 1. Deposits mint against confirmed backing, each naming its transaction —
     //    and never beyond what the vault was observed to hold.
-    c.ok(Intent::AttestVaultBalance { asset: XZEC, observed: Fixed::whole(10_000) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: XZEC,
+        observed: Fixed::whole(10_000),
+    });
     for i in 1..=4u8 {
         c.ok(Intent::CreditDeposit {
             account: acct(i),
@@ -922,7 +1157,10 @@ fn the_zec_path_holds_end_to_end() {
         });
     }
     assert_eq!(c.state.backing_of(XZEC), Fixed::whole(800));
-    assert_eq!(c.state.token(XZEC).unwrap().supply, c.state.backing_of(XZEC));
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        c.state.backing_of(XZEC)
+    );
 
     // 2. The per-epoch allowance binds, and the next epoch restores it.
     c.rejects(
@@ -962,10 +1200,20 @@ fn the_zec_path_holds_end_to_end() {
     //    dust exit is refused and a real one queues and is still backed.
     c.finalize();
     c.rejects(
-        Intent::RequestWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::raw(1), destination: [0u8; 32] },
+        Intent::RequestWithdrawal {
+            account: acct(1),
+            asset: XZEC,
+            amount: Fixed::raw(1),
+            destination: [0u8; 32],
+        },
         Reject::BelowExitMinimum,
     );
-    c.ok(Intent::RequestWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::whole(50), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(1),
+        asset: XZEC,
+        amount: Fixed::whole(50),
+        destination: [0u8; 32],
+    });
     assert_eq!(
         c.state.token(XZEC).unwrap().supply,
         c.state.backing_of(XZEC),
@@ -974,26 +1222,54 @@ fn the_zec_path_holds_end_to_end() {
 
     // 5. Settlement pays the longest wait first.
     c.ok(Intent::Checkpoint);
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(60), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(60),
+        destination: [0u8; 32],
+    });
     let s = swapvm::bridge::settlement_for(&c.state, swapvm::types::ORIGIN_ZCASH)
         .expect("exits are waiting");
     assert_eq!(s.len(), 2);
-    assert_eq!(s.payouts[0].account, acct(1), "the older exit was not paid first");
-    assert!(swapvm::bridge::is_covered(&c.state, &s), "the vault cannot cover its queue");
+    assert_eq!(
+        s.payouts[0].account,
+        acct(1),
+        "the older exit was not paid first"
+    );
+    assert!(
+        swapvm::bridge::is_covered(&c.state, &s),
+        "the vault cannot cover its queue"
+    );
 
     // 6. Confirming burns and releases; the identity holds throughout.
     let before = c.state.backing_of(XZEC);
-    c.ok(Intent::ConfirmWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::whole(50) });
-    assert_eq!(c.state.backing_of(XZEC), before.sub(Fixed::whole(50)).unwrap());
-    assert_eq!(c.state.token(XZEC).unwrap().supply, c.state.backing_of(XZEC));
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(1),
+        asset: XZEC,
+        amount: Fixed::whole(50),
+    });
+    assert_eq!(
+        c.state.backing_of(XZEC),
+        before.sub(Fixed::whole(50)).unwrap()
+    );
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        c.state.backing_of(XZEC)
+    );
 
     // 7. The exit that was never settled comes home after the timeout.
     let timeout = c.state.params.exit_timeout_epochs;
     for _ in 0..timeout {
         c.ok(Intent::Checkpoint);
     }
-    c.ok(Intent::CancelWithdrawal { account: acct(2), asset: XZEC });
-    assert_eq!(c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC), Fixed::ZERO);
+    c.ok(Intent::CancelWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+    });
+    assert_eq!(
+        c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC),
+        Fixed::ZERO
+    );
 
     // 8. And a holder can prove their balance against the sealed root with the
     //    sequencer gone.
@@ -1002,7 +1278,10 @@ fn the_zec_path_holds_end_to_end() {
         Receipt::Checkpointed(cp) => cp,
         _ => panic!("expected Checkpointed"),
     };
-    let sealed = c.state.as_sealed(&cp).expect("the sealed view must be recoverable");
+    let sealed = c
+        .state
+        .as_sealed(&cp)
+        .expect("the sealed view must be recoverable");
     for id in sealed.accounts.keys() {
         let leaf = sealed.account_leaf(id).unwrap();
         let path = sealed.account_proof(id).unwrap();
@@ -1012,7 +1291,9 @@ fn the_zec_path_holds_end_to_end() {
             id[0]
         );
     }
-    c.state.check_invariants().expect("the ZEC path must leave the chain consistent");
+    c.state
+        .check_invariants()
+        .expect("the ZEC path must leave the chain consistent");
 }
 
 /// Units issued can never exceed units the vault was observed to hold.
@@ -1046,7 +1327,10 @@ fn nothing_can_be_minted_beyond_what_the_vault_was_seen_to_hold() {
     );
 
     // Report what the vault holds, and exactly that much may be issued.
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(10) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(10),
+    });
     c.ok(Intent::CreditDeposit {
         account: acct(2),
         asset: xbtc,
@@ -1077,7 +1361,10 @@ fn nothing_can_be_minted_beyond_what_the_vault_was_seen_to_hold() {
 fn a_vault_reported_short_is_refused_loudly() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let xbtc = add_bridge(&mut c, b"xBTC", ORIGIN_BITCOIN);
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(10) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(10),
+    });
     c.ok(Intent::CreditDeposit {
         account: acct(2),
         asset: xbtc,
@@ -1087,7 +1374,10 @@ fn a_vault_reported_short_is_refused_loudly() {
     });
 
     c.rejects(
-        Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(9) },
+        Intent::AttestVaultBalance {
+            asset: xbtc,
+            observed: Fixed::whole(9),
+        },
         Reject::AttestedShortfall,
     );
     assert_eq!(
@@ -1095,13 +1385,27 @@ fn a_vault_reported_short_is_refused_loudly() {
         Fixed::whole(10),
         "a refused report moved the record"
     );
-    c.state.check_invariants().expect("a refused shortfall must not corrupt the chain");
+    c.state
+        .check_invariants()
+        .expect("a refused shortfall must not corrupt the chain");
 
     // A payout legitimately lowers both, and reports fine.
     c.finalize();
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: xbtc, amount: Fixed::whole(4), destination: [0u8; 32] });
-    c.ok(Intent::ConfirmWithdrawal { account: acct(2), asset: xbtc, amount: Fixed::whole(4) });
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(6) });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: xbtc,
+        amount: Fixed::whole(4),
+        destination: [0u8; 32],
+    });
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(2),
+        asset: xbtc,
+        amount: Fixed::whole(4),
+    });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(6),
+    });
     c.state.check_invariants().unwrap();
 }
 
@@ -1123,7 +1427,10 @@ fn a_fresh_deposit_cannot_be_spent_before_it_is_anchored() {
     c.deposit(9, XZEC, Fixed::whole(1_000));
 
     // Real and backed...
-    assert_eq!(c.state.token(XZEC).unwrap().supply, c.state.backing_of(XZEC));
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        c.state.backing_of(XZEC)
+    );
     assert_eq!(
         c.state.accounts.get(&acct(9)).unwrap().incoming_of(XZEC),
         Fixed::whole(1_000)
@@ -1138,17 +1445,34 @@ fn a_fresh_deposit_cannot_be_spent_before_it_is_anchored() {
             amount_in: Fixed::whole(100),
             min_out: Fixed::ZERO,
         },
-        Intent::Transfer { from: acct(9), to: acct(1), asset: XZEC, amount: Fixed::whole(1) },
-        Intent::RequestWithdrawal { account: acct(9), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] },
+        Intent::Transfer {
+            from: acct(9),
+            to: acct(1),
+            asset: XZEC,
+            amount: Fixed::whole(1),
+        },
+        Intent::RequestWithdrawal {
+            account: acct(9),
+            asset: XZEC,
+            amount: Fixed::whole(100),
+            destination: [0u8; 32],
+        },
     ] {
         c.rejects(intent, Reject::InsufficientBalance);
     }
-    assert_eq!(c.bal(9, cat), Fixed::ZERO, "an unanchored deposit bought something");
+    assert_eq!(
+        c.bal(9, cat),
+        Fixed::ZERO,
+        "an unanchored deposit bought something"
+    );
 
     // The anchor releases it, and only then.
     c.finalize();
     assert_eq!(c.bal(9, XZEC), Fixed::whole(1_000));
-    assert_eq!(c.state.accounts.get(&acct(9)).unwrap().incoming_of(XZEC), Fixed::ZERO);
+    assert_eq!(
+        c.state.accounts.get(&acct(9)).unwrap().incoming_of(XZEC),
+        Fixed::ZERO
+    );
     c.ok(Intent::SwapExactIn {
         account: acct(9),
         asset_in: XZEC,
@@ -1167,11 +1491,27 @@ fn an_epoch_cannot_be_finalised_early_twice_or_backwards() {
 
     // Not the epoch still being written to — otherwise a sequencer could
     // fabricate a credit and release it in the same breath.
-    c.rejects(Intent::ConfirmAnchor { epoch: c.state.epoch }, Reject::InvalidFinality);
-    c.rejects(Intent::ConfirmAnchor { epoch: c.state.epoch + 5 }, Reject::InvalidFinality);
+    c.rejects(
+        Intent::ConfirmAnchor {
+            epoch: c.state.epoch,
+        },
+        Reject::InvalidFinality,
+    );
+    c.rejects(
+        Intent::ConfirmAnchor {
+            epoch: c.state.epoch + 5,
+        },
+        Reject::InvalidFinality,
+    );
     // Nor one already settled, nor an earlier one.
-    c.rejects(Intent::ConfirmAnchor { epoch: finalized }, Reject::InvalidFinality);
-    assert_eq!(c.state.finalized_epoch, finalized, "a refused confirmation moved finality");
+    c.rejects(
+        Intent::ConfirmAnchor { epoch: finalized },
+        Reject::InvalidFinality,
+    );
+    assert_eq!(
+        c.state.finalized_epoch, finalized,
+        "a refused confirmation moved finality"
+    );
 
     // A sealed, unfinalised epoch is accepted.
     let at = c.state.epoch;
@@ -1192,8 +1532,15 @@ fn a_later_deposit_does_not_inherit_an_earlier_finality() {
     // A second deposit lands in a later epoch and is not released by the
     // finality that released the first.
     c.deposit(9, XZEC, Fixed::whole(100));
-    assert_eq!(c.bal(9, XZEC), Fixed::whole(100), "a later deposit was released early");
-    assert_eq!(c.state.accounts.get(&acct(9)).unwrap().incoming_of(XZEC), Fixed::whole(100));
+    assert_eq!(
+        c.bal(9, XZEC),
+        Fixed::whole(100),
+        "a later deposit was released early"
+    );
+    assert_eq!(
+        c.state.accounts.get(&acct(9)).unwrap().incoming_of(XZEC),
+        Fixed::whole(100)
+    );
     c.finalize();
     assert_eq!(c.bal(9, XZEC), Fixed::whole(200));
 }
@@ -1214,7 +1561,10 @@ fn the_same_deposit_cannot_be_credited_twice() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let xbtc = add_bridge(&mut c, b"xBTC", ORIGIN_BITCOIN);
     let txid = [0x7Fu8; 32];
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(100) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(100),
+    });
 
     let next = c.state.next_deposit_index(xbtc);
     assert_eq!(next, 1, "a fresh vault starts at one");
@@ -1250,7 +1600,11 @@ fn the_same_deposit_cannot_be_credited_twice() {
     );
     // Backing moved once, not twice — and the units are still unspendable,
     // which is the second line of defence behind the index.
-    assert_eq!(c.state.backing_of(xbtc), Fixed::whole(5), "a refused credit minted units");
+    assert_eq!(
+        c.state.backing_of(xbtc),
+        Fixed::whole(5),
+        "a refused credit minted units"
+    );
     assert_eq!(c.bal(2, xbtc), Fixed::ZERO);
 
     // The next one in sequence is fine, and each vault counts separately.
@@ -1262,7 +1616,10 @@ fn the_same_deposit_cannot_be_credited_twice() {
         external_ref: [0x81; 32],
     });
     assert_eq!(c.state.next_deposit_index(xbtc), 3);
-    assert_eq!(c.state.next_deposit_index(XZEC), c.state.token(XZEC).unwrap().vault.unwrap().deposits + 1);
+    assert_eq!(
+        c.state.next_deposit_index(XZEC),
+        c.state.token(XZEC).unwrap().vault.unwrap().deposits + 1
+    );
 }
 
 /// Every minted unit is traceable to a named external transaction, without the
@@ -1277,7 +1634,10 @@ fn a_credit_names_the_transaction_it_mirrors() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let xbtc = add_bridge(&mut c, b"xBTC", ORIGIN_BITCOIN);
     let txid = [0xAB; 32];
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(1) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(1),
+    });
 
     let before = c.state.intent_acc;
     let r = c.ok(Intent::CreditDeposit {
@@ -1288,15 +1648,26 @@ fn a_credit_names_the_transaction_it_mirrors() {
         external_ref: txid,
     });
     match r[0] {
-        Receipt::DepositCredited { external_ref, index, .. } => {
-            assert_eq!(external_ref, txid, "the receipt lost the transaction it mirrors");
+        Receipt::DepositCredited {
+            external_ref,
+            index,
+            ..
+        } => {
+            assert_eq!(
+                external_ref, txid,
+                "the receipt lost the transaction it mirrors"
+            );
             assert_eq!(index, 1);
         }
         _ => panic!("expected DepositCredited"),
     }
     // The reference is inside the epoch commitment, not the state.
     assert_ne!(c.state.intent_acc, before);
-    assert_eq!(c.state.token(xbtc).unwrap().vault.unwrap().deposits, 1, "state grew by a counter, not a set");
+    assert_eq!(
+        c.state.token(xbtc).unwrap().vault.unwrap().deposits,
+        1,
+        "state grew by a counter, not a set"
+    );
 }
 
 /// Exits are per asset and per vault, so an account can be leaving to two
@@ -1308,22 +1679,47 @@ fn exits_to_different_chains_are_independent() {
     c.deposit(2, xbtc, Fixed::whole(10));
     c.finalize();
 
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] });
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: xbtc, amount: Fixed::whole(4), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(100),
+        destination: [0u8; 32],
+    });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: xbtc,
+        amount: Fixed::whole(4),
+        destination: [0u8; 32],
+    });
     let a = c.state.accounts.get(&acct(2)).unwrap();
     assert_eq!(a.pending_of(XZEC), Fixed::whole(100));
     assert_eq!(a.pending_of(xbtc), Fixed::whole(4));
 
     // Confirming the Bitcoin leg releases only Bitcoin's backing.
     let zec_backing = c.state.backing_of(XZEC);
-    c.ok(Intent::ConfirmWithdrawal { account: acct(2), asset: xbtc, amount: Fixed::whole(4) });
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(2),
+        asset: xbtc,
+        amount: Fixed::whole(4),
+    });
     assert_eq!(c.state.backing_of(xbtc), Fixed::whole(6));
-    assert_eq!(c.state.backing_of(XZEC), zec_backing, "the wrong vault was debited");
-    assert_eq!(c.state.accounts.get(&acct(2)).unwrap().pending_of(xbtc), Fixed::ZERO);
+    assert_eq!(
+        c.state.backing_of(XZEC),
+        zec_backing,
+        "the wrong vault was debited"
+    );
+    assert_eq!(
+        c.state.accounts.get(&acct(2)).unwrap().pending_of(xbtc),
+        Fixed::ZERO
+    );
 
     // And a vault cannot be asked to release more than was committed to it.
     c.rejects(
-        Intent::ConfirmWithdrawal { account: acct(2), asset: xbtc, amount: Fixed::raw(1) },
+        Intent::ConfirmWithdrawal {
+            account: acct(2),
+            asset: xbtc,
+            amount: Fixed::raw(1),
+        },
         Reject::InsufficientPending,
     );
 }
@@ -1356,7 +1752,10 @@ fn a_bound_account_cannot_be_paid_out_elsewhere() {
         destination: theirs,
     });
 
-    let r = c.ok(Intent::BindWithdrawal { account: acct(2), destination: mine });
+    let r = c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: mine,
+    });
     match r[0] {
         Receipt::WithdrawalBound { effective, .. } => {
             assert!(effective, "a first binding should take effect at once")
@@ -1393,8 +1792,14 @@ fn redirecting_a_binding_takes_time_and_re_asking_restarts_it() {
     let elsewhere = [0x77u8; 32];
     let delay = c.state.params.exit_timeout_epochs;
 
-    c.ok(Intent::BindWithdrawal { account: acct(2), destination: mine });
-    let r = c.ok(Intent::BindWithdrawal { account: acct(2), destination: theirs });
+    c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: mine,
+    });
+    let r = c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: theirs,
+    });
     match r[0] {
         Receipt::WithdrawalBound { effective, .. } => {
             assert!(!effective, "a redirect took effect immediately")
@@ -1414,8 +1819,14 @@ fn redirecting_a_binding_takes_time_and_re_asking_restarts_it() {
 
     advance_epochs(&mut c, delay);
     // Asking for somewhere else resets the clock — the matured request is gone.
-    c.ok(Intent::BindWithdrawal { account: acct(2), destination: elsewhere });
-    let r = c.ok(Intent::BindWithdrawal { account: acct(2), destination: theirs });
+    c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: elsewhere,
+    });
+    let r = c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: theirs,
+    });
     match r[0] {
         Receipt::WithdrawalBound { effective, .. } => {
             assert!(!effective, "an abandoned redirect matured anyway")
@@ -1425,7 +1836,10 @@ fn redirecting_a_binding_takes_time_and_re_asking_restarts_it() {
 
     // Waited out and re-confirmed, it applies.
     advance_epochs(&mut c, delay);
-    let r = c.ok(Intent::BindWithdrawal { account: acct(2), destination: theirs });
+    let r = c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: theirs,
+    });
     match r[0] {
         Receipt::WithdrawalBound { effective, .. } => assert!(effective),
         _ => panic!("expected WithdrawalBound"),
@@ -1445,21 +1859,34 @@ fn redirecting_a_binding_takes_time_and_re_asking_restarts_it() {
 fn a_destination_is_a_commitment_not_an_address() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let commitment = [0x11u8; 32];
-    c.ok(Intent::BindWithdrawal { account: acct(2), destination: commitment });
+    c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: commitment,
+    });
 
     // What the chain holds is 32 bytes that reveal nothing about the address
     // behind them, and it moves the state root like anything else committed.
     let before = c.state.state_root();
     let b = c.state.accounts.get(&acct(2)).unwrap().binding.unwrap();
     assert_eq!(b.destination, commitment);
-    c.ok(Intent::BindWithdrawal { account: acct(2), destination: [0x12u8; 32] });
-    assert_ne!(c.state.state_root(), before, "a binding change did not move the root");
+    c.ok(Intent::BindWithdrawal {
+        account: acct(2),
+        destination: [0x12u8; 32],
+    });
+    assert_ne!(
+        c.state.state_root(),
+        before,
+        "a binding change did not move the root"
+    );
 
     // And it survives a restart, or a resumed node would forget where an
     // account is allowed to pay out.
     let back = SwapState::decode_state(&c.state.encode_state()).unwrap();
     assert_eq!(back.state_root(), c.state.state_root());
-    assert_eq!(back.accounts.get(&acct(2)).unwrap().binding, Some(b.request([0x12u8; 32], c.state.epoch)));
+    assert_eq!(
+        back.accounts.get(&acct(2)).unwrap().binding,
+        Some(b.request([0x12u8; 32], c.state.epoch))
+    );
 }
 
 /// An exit the vault never settles can be taken back.
@@ -1472,27 +1899,44 @@ fn a_destination_is_a_commitment_not_an_address() {
 fn an_unsettled_exit_can_be_taken_back() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let timeout = c.state.params.exit_timeout_epochs;
-    assert!(timeout > 0, "the default parameters must allow cancellation");
+    assert!(
+        timeout > 0,
+        "the default parameters must allow cancellation"
+    );
 
     let held = c.bal(2, XZEC);
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(500), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(500),
+        destination: [0u8; 32],
+    });
     assert_eq!(c.bal(2, XZEC), held.sub(Fixed::whole(500)).unwrap());
 
     // Not yet. An exit that could be cancelled at will could race a payout
     // already in flight and be paid on both sides.
     c.rejects(
-        Intent::CancelWithdrawal { account: acct(2), asset: XZEC },
+        Intent::CancelWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+        },
         Reject::ExitNotTimedOut,
     );
     advance_epochs(&mut c, timeout - 1);
     c.rejects(
-        Intent::CancelWithdrawal { account: acct(2), asset: XZEC },
+        Intent::CancelWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+        },
         Reject::ExitNotTimedOut,
     );
 
     // Once the deadline passes, the units come home.
     advance_epochs(&mut c, 1);
-    let r = c.ok(Intent::CancelWithdrawal { account: acct(2), asset: XZEC });
+    let r = c.ok(Intent::CancelWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+    });
     match r[0] {
         Receipt::WithdrawalCancelled { amount, waited, .. } => {
             assert_eq!(amount, Fixed::whole(500));
@@ -1501,8 +1945,13 @@ fn an_unsettled_exit_can_be_taken_back() {
         _ => panic!("expected WithdrawalCancelled"),
     }
     assert_eq!(c.bal(2, XZEC), held, "the units did not come back");
-    assert_eq!(c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC), Fixed::ZERO);
-    c.state.check_invariants().expect("a cancelled exit broke conservation");
+    assert_eq!(
+        c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC),
+        Fixed::ZERO
+    );
+    c.state
+        .check_invariants()
+        .expect("a cancelled exit broke conservation");
 }
 
 /// A payout confirmed after a cancellation finds nothing pending and is
@@ -1516,16 +1965,32 @@ fn an_unsettled_exit_can_be_taken_back() {
 fn a_cancelled_exit_cannot_still_be_settled() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let timeout = c.state.params.exit_timeout_epochs;
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(500), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(500),
+        destination: [0u8; 32],
+    });
     advance_epochs(&mut c, timeout);
-    c.ok(Intent::CancelWithdrawal { account: acct(2), asset: XZEC });
+    c.ok(Intent::CancelWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+    });
 
     let backing = c.state.backing_of(XZEC);
     c.rejects(
-        Intent::ConfirmWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(500) },
+        Intent::ConfirmWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+            amount: Fixed::whole(500),
+        },
         Reject::InsufficientPending,
     );
-    assert_eq!(c.state.backing_of(XZEC), backing, "backing was released twice");
+    assert_eq!(
+        c.state.backing_of(XZEC),
+        backing,
+        "backing was released twice"
+    );
 }
 
 /// Adding to an exit restarts its clock, or a claim could be accumulated over
@@ -1534,18 +1999,37 @@ fn a_cancelled_exit_cannot_still_be_settled() {
 fn topping_up_an_exit_restarts_the_clock() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let timeout = c.state.params.exit_timeout_epochs;
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(100),
+        destination: [0u8; 32],
+    });
     advance_epochs(&mut c, timeout);
 
     // The first request has aged out — but topping up resets it.
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(100),
+        destination: [0u8; 32],
+    });
     c.rejects(
-        Intent::CancelWithdrawal { account: acct(2), asset: XZEC },
+        Intent::CancelWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+        },
         Reject::ExitNotTimedOut,
     );
     advance_epochs(&mut c, timeout);
-    c.ok(Intent::CancelWithdrawal { account: acct(2), asset: XZEC });
-    assert_eq!(c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC), Fixed::ZERO);
+    c.ok(Intent::CancelWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+    });
+    assert_eq!(
+        c.state.accounts.get(&acct(2)).unwrap().pending_of(XZEC),
+        Fixed::ZERO
+    );
 }
 
 /// An exit below what the custodying chain can broadcast is refused.
@@ -1559,7 +2043,14 @@ fn an_exit_below_the_chains_dust_limit_is_refused() {
     let xbtc = add_bridge(&mut c, b"xBTC", ORIGIN_BITCOIN);
     // Bitcoin's dust limit, roughly, in whole-BTC terms.
     let dust = Fixed::raw(5_460_000_000_000);
-    c.state.tokens.get_mut(&xbtc).unwrap().vault.as_mut().unwrap().min_exit = dust;
+    c.state
+        .tokens
+        .get_mut(&xbtc)
+        .unwrap()
+        .vault
+        .as_mut()
+        .unwrap()
+        .min_exit = dust;
     c.deposit(2, xbtc, Fixed::whole(1));
     c.finalize();
 
@@ -1568,14 +2059,24 @@ fn an_exit_below_the_chains_dust_limit_is_refused() {
             account: acct(2),
             asset: xbtc,
             amount: dust.sub(Fixed::raw(1)).unwrap(),
-                    destination: [0u8; 32],
+            destination: [0u8; 32],
         },
         Reject::BelowExitMinimum,
     );
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: xbtc, amount: dust, destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: xbtc,
+        amount: dust,
+        destination: [0u8; 32],
+    });
 
     // xZEC is unaffected: its own floor is one raw unit.
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::raw(1), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::raw(1),
+        destination: [0u8; 32],
+    });
 }
 
 /// A native token has no vault, so it can neither be deposited nor exited.
@@ -1585,8 +2086,17 @@ fn a_native_asset_has_no_bridge() {
     assert!(!c.state.token(cat).unwrap().is_bridged());
     for intent in [
         Intent::next_deposit(&c.state, acct(1), cat, Fixed::whole(1), [0u8; 32]),
-        Intent::RequestWithdrawal { account: acct(1), asset: cat, amount: Fixed::whole(1), destination: [0u8; 32] },
-        Intent::ConfirmWithdrawal { account: acct(1), asset: cat, amount: Fixed::whole(1) },
+        Intent::RequestWithdrawal {
+            account: acct(1),
+            asset: cat,
+            amount: Fixed::whole(1),
+            destination: [0u8; 32],
+        },
+        Intent::ConfirmWithdrawal {
+            account: acct(1),
+            asset: cat,
+            amount: Fixed::whole(1),
+        },
     ] {
         c.rejects(intent, Reject::NotBridged);
     }
@@ -1617,13 +2127,22 @@ fn an_item_can_be_minted_owned_traded_and_ended() {
         Receipt::ItemMinted { asset, .. } => asset,
         _ => panic!("expected ItemMinted"),
     };
-    assert_eq!(c.bal(4, XZEC), before.sub(bond).unwrap(), "the bond was not taken");
+    assert_eq!(
+        c.bal(4, XZEC),
+        before.sub(bond).unwrap(),
+        "the bond was not taken"
+    );
     assert_eq!(c.bal(4, item), Fixed::whole(1));
     assert!(!c.state.token(item).unwrap().is_divisible());
 
     // It cannot be split, and it cannot be wrapped into something divisible.
     c.rejects(
-        Intent::Transfer { from: acct(4), to: acct(5), asset: item, amount: Fixed::raw(1) },
+        Intent::Transfer {
+            from: acct(4),
+            to: acct(5),
+            asset: item,
+            amount: Fixed::raw(1),
+        },
         Reject::Indivisible,
     );
     c.rejects(
@@ -1651,8 +2170,15 @@ fn an_item_can_be_minted_owned_traded_and_ended() {
 
     // The new owner ends it and the deposit comes back to them.
     let held = c.bal(2, XZEC);
-    c.ok(Intent::BurnItem { holder: acct(2), asset: item });
-    assert_eq!(c.bal(2, XZEC), held.add(bond).unwrap(), "the bond was not refunded");
+    c.ok(Intent::BurnItem {
+        holder: acct(2),
+        asset: item,
+    });
+    assert_eq!(
+        c.bal(2, XZEC),
+        held.add(bond).unwrap(),
+        "the bond was not refunded"
+    );
     assert!(c.state.token(item).is_none(), "the state was not reclaimed");
 }
 
@@ -1670,7 +2196,7 @@ fn every_bond_is_returned_when_its_item_ends() {
     let mut items = Vec::new();
     for i in 0..5u8 {
         let r = c.ok(Intent::MintItem {
-        content: [0u8; 32],
+            content: [0u8; 32],
             creator: acct(4),
             symbol: symbol(&[b'I', b'0' + i]),
             supply: Fixed::whole(1),
@@ -1688,9 +2214,16 @@ fn every_bond_is_returned_when_its_item_ends() {
     );
 
     for item in items {
-        c.ok(Intent::BurnItem { holder: acct(4), asset: item });
+        c.ok(Intent::BurnItem {
+            holder: acct(4),
+            asset: item,
+        });
     }
-    assert_eq!(c.bal(4, XZEC), start, "minting and ending was not free of charge");
+    assert_eq!(
+        c.bal(4, XZEC),
+        start,
+        "minting and ending was not free of charge"
+    );
     assert_eq!(c.state.total_bonded().unwrap(), Fixed::ZERO);
 }
 
@@ -1713,14 +2246,33 @@ fn an_item_cannot_be_ended_by_a_partial_holder() {
         Receipt::ItemMinted { asset, .. } => asset,
         _ => panic!(),
     };
-    c.ok(Intent::Transfer { from: acct(4), to: acct(5), asset: item, amount: Fixed::whole(1) });
+    c.ok(Intent::Transfer {
+        from: acct(4),
+        to: acct(5),
+        asset: item,
+        amount: Fixed::whole(1),
+    });
 
     for who in [acct(4), acct(5)] {
-        c.rejects(Intent::BurnItem { holder: who, asset: item }, Reject::NotSoleHolder);
+        c.rejects(
+            Intent::BurnItem {
+                holder: who,
+                asset: item,
+            },
+            Reject::NotSoleHolder,
+        );
     }
     // Reassembled, it can be ended.
-    c.ok(Intent::Transfer { from: acct(5), to: acct(4), asset: item, amount: Fixed::whole(1) });
-    c.ok(Intent::BurnItem { holder: acct(4), asset: item });
+    c.ok(Intent::Transfer {
+        from: acct(5),
+        to: acct(4),
+        asset: item,
+        amount: Fixed::whole(1),
+    });
+    c.ok(Intent::BurnItem {
+        holder: acct(4),
+        asset: item,
+    });
     assert!(c.state.token(item).is_none());
 }
 
@@ -1736,7 +2288,8 @@ fn minting_an_item_is_bonded_and_whole() {
             creator: acct(4),
             symbol: symbol(b"X"),
             supply: Fixed::whole(1),
-            bond: bond.sub(Fixed::raw(1)).unwrap(), content: [0u8; 32]
+            bond: bond.sub(Fixed::raw(1)).unwrap(),
+            content: [0u8; 32],
         },
         Reject::BelowLaunchBond,
     );
@@ -1744,7 +2297,7 @@ fn minting_an_item_is_bonded_and_whole() {
     // bond would be stranded forever.
     c.rejects(
         Intent::MintItem {
-        content: [0u8; 32],
+            content: [0u8; 32],
             creator: acct(4),
             symbol: symbol(b"X"),
             supply: Fixed::whole(1).add(Fixed::raw(1)).unwrap(),
@@ -1753,8 +2306,14 @@ fn minting_an_item_is_bonded_and_whole() {
         Reject::Indivisible,
     );
     // And an ordinary token cannot be burned through this path.
-    let (_, cat, _, _, _) = (0, 2u32, 0, 0, 0);
-    c.rejects(Intent::BurnItem { holder: acct(1), asset: cat }, Reject::Indivisible);
+    let (_, cat, _, _, _) = seeded();
+    c.rejects(
+        Intent::BurnItem {
+            holder: acct(1),
+            asset: cat,
+        },
+        Reject::Indivisible,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1791,7 +2350,12 @@ fn a_supply_of_one_does_not_prevent_fractional_ownership() {
     let held = c.bal(7, lp);
 
     let third = held.mul_div(Fixed::whole(1), Fixed::whole(3)).unwrap();
-    c.ok(Intent::Transfer { from: acct(7), to: acct(8), asset: lp, amount: third });
+    c.ok(Intent::Transfer {
+        from: acct(7),
+        to: acct(8),
+        asset: lp,
+        amount: third,
+    });
     assert_eq!(c.bal(8, lp), third, "a stranger holds part of a one-of-one");
     assert!(c.bal(7, lp) < held);
 }
@@ -1813,12 +2377,19 @@ fn an_unwrapped_asset_cannot_be_fractionalised() {
     let nft = inject_indivisible(&mut c, b"ONE", Fixed::whole(1));
 
     for fraction in [
-        Fixed::whole(1).mul_div(Fixed::whole(1), Fixed::whole(3)).unwrap(),
+        Fixed::whole(1)
+            .mul_div(Fixed::whole(1), Fixed::whole(3))
+            .unwrap(),
         Fixed::raw(1),
         Fixed::whole(1).sub(Fixed::raw(1)).unwrap(),
     ] {
         c.rejects(
-            Intent::Transfer { from: acct(1), to: acct(2), asset: nft, amount: fraction },
+            Intent::Transfer {
+                from: acct(1),
+                to: acct(2),
+                asset: nft,
+                amount: fraction,
+            },
             Reject::Indivisible,
         );
     }
@@ -1851,12 +2422,19 @@ fn a_diverged_pool_charges_for_the_arbitrage() {
 
     // Reported 20% away from where the pool is.
     let reference = spot.mul_div(Fixed::whole(12), Fixed::whole(10)).unwrap();
-    let r = c.ok(Intent::UpdateReference { pool: cat_pool, price: reference });
+    let r = c.ok(Intent::UpdateReference {
+        pool: cat_pool,
+        price: reference,
+    });
     let charged = match r[0] {
         Receipt::ReferenceUpdated { fee_bps, .. } => fee_bps,
         _ => panic!("expected ReferenceUpdated"),
     };
-    assert!(charged > 900 && charged < 1_000, "expected about 9.54%, got {} bps", charged);
+    assert!(
+        charged > 900 && charged < 1_000,
+        "expected about 9.54%, got {} bps",
+        charged
+    );
 
     // And the swap actually pays it: the LP keeps far more than 0.30%.
     let r = c.ok(Intent::SwapExactIn {
@@ -1870,8 +2448,13 @@ fn a_diverged_pool_charges_for_the_arbitrage() {
         Receipt::Swapped { hops, .. } => (hops[0].amount_in, hops[0].fee),
         _ => panic!("expected Swapped"),
     };
-    let ordinary = paid.mul_div(Fixed::whole(30), Fixed::whole(10_000)).unwrap();
-    assert!(fee > ordinary.mul(Fixed::whole(20)).unwrap(), "the divergence fee was not charged");
+    let ordinary = paid
+        .mul_div(Fixed::whole(30), Fixed::whole(10_000))
+        .unwrap();
+    assert!(
+        fee > ordinary.mul(Fixed::whole(20)).unwrap(),
+        "the divergence fee was not charged"
+    );
     let _ = cat;
     c.state.check_invariants().unwrap();
 }
@@ -1915,7 +2498,12 @@ fn a_stale_reference_falls_back_to_the_ordinary_fee() {
     // Age it out with unrelated activity.
     let staleness = c.state.params.reference_staleness;
     for _ in 0..=staleness {
-        c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: XZEC, amount: Fixed::raw(1) });
+        c.ok(Intent::Transfer {
+            from: acct(1),
+            to: acct(2),
+            asset: XZEC,
+            amount: Fixed::raw(1),
+        });
     }
     let r = c.ok(Intent::SwapExactIn {
         account: acct(2),
@@ -1928,7 +2516,11 @@ fn a_stale_reference_falls_back_to_the_ordinary_fee() {
         Receipt::Swapped { hops, .. } => (hops[0].amount_in, hops[0].fee),
         _ => panic!("expected Swapped"),
     };
-    assert_eq!(fee, swapvm::amm::fee_taken(paid, 30).unwrap(), "a stale reference still priced");
+    assert_eq!(
+        fee,
+        swapvm::amm::fee_taken(paid, 30).unwrap(),
+        "a stale reference still priced"
+    );
 }
 
 /// The safety property, end to end: a forged reference changes what a trader
@@ -1985,7 +2577,10 @@ fn a_forged_reference_cannot_drain_a_pool() {
         Receipt::Swapped { amount_out, .. } => *amount_out,
         _ => panic!("expected Swapped"),
     };
-    assert!(out < honest, "a forged reference paid out more than an honest one");
+    assert!(
+        out < honest,
+        "a forged reference paid out more than an honest one"
+    );
     assert!(out.is_positive());
     assert!(c.state.pool(cat_pool).unwrap().k().unwrap() > k_before);
     c.state.check_invariants().unwrap();
@@ -1997,7 +2592,10 @@ fn a_forged_reference_cannot_drain_a_pool() {
 #[test]
 fn an_unrepresentable_reference_falls_back_rather_than_halting_the_pool() {
     let (mut c, _cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::UpdateReference { pool: cat_pool, price: Fixed::raw(1) });
+    c.ok(Intent::UpdateReference {
+        pool: cat_pool,
+        price: Fixed::raw(1),
+    });
     let r = c.ok(Intent::SwapExactIn {
         account: acct(2),
         asset_in: XZEC,
@@ -2009,7 +2607,11 @@ fn an_unrepresentable_reference_falls_back_rather_than_halting_the_pool() {
         Receipt::Swapped { hops, .. } => (hops[0].amount_in, hops[0].fee),
         _ => panic!("expected Swapped"),
     };
-    assert_eq!(fee, swapvm::amm::fee_taken(paid, 30).unwrap(), "nonsense priced the trade");
+    assert_eq!(
+        fee,
+        swapvm::amm::fee_taken(paid, 30).unwrap(),
+        "nonsense priced the trade"
+    );
 }
 
 /// The endpoint read path must hand out exactly the proofs the one-shot path
@@ -2056,7 +2658,10 @@ fn the_served_proof_matches_the_one_shot_proof() {
 fn a_vaults_observation_survives_a_restart() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let xbtc = add_bridge(&mut c, b"xBTC", ORIGIN_BITCOIN);
-    c.ok(Intent::AttestVaultBalance { asset: xbtc, observed: Fixed::whole(42) });
+    c.ok(Intent::AttestVaultBalance {
+        asset: xbtc,
+        observed: Fixed::whole(42),
+    });
     c.ok(Intent::CreditDeposit {
         account: acct(2),
         asset: xbtc,
@@ -2068,7 +2673,11 @@ fn a_vaults_observation_survives_a_restart() {
     let back = SwapState::decode_state(&c.state.encode_state()).expect("decode");
     assert_eq!(back.state_root(), c.state.state_root());
     let v = back.token(xbtc).unwrap().vault.unwrap();
-    assert_eq!(v.observed, Fixed::whole(42), "the observation was lost on restore");
+    assert_eq!(
+        v.observed,
+        Fixed::whole(42),
+        "the observation was lost on restore"
+    );
     assert_eq!(v.observed_headroom(), Fixed::whole(32));
     assert_eq!(back, c.state);
 }
@@ -2148,7 +2757,11 @@ fn a_pool_can_decline_dust_trades() {
     let p = *c.state.pool(cat_pool).unwrap();
     assert_eq!(p.asset0, XZEC, "xZEC should be the canonical first side");
     assert_eq!(p.min_in(XZEC), Some(floor));
-    assert_eq!(p.min_in(cat), Some(Fixed::raw(1)), "the other side is untouched");
+    assert_eq!(
+        p.min_in(cat),
+        Some(Fixed::raw(1)),
+        "the other side is untouched"
+    );
 
     c.rejects(
         Intent::SwapExactIn {
@@ -2196,7 +2809,12 @@ fn a_pool_can_decline_dust_trades() {
 #[test]
 fn a_declared_minimum_binds_mid_route() {
     let (mut c, cat, dog, cat_pool, dog_pool) = seeded();
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(10) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(10),
+    });
 
     // The DOG pool declines small xZEC inputs; a CAT -> xZEC -> DOG route pays
     // xZEC into it on the second hop.
@@ -2258,14 +2876,20 @@ fn a_pool_position_can_be_sold_off_curve() {
         want_asset: XZEC,
         want_amount: bid,
     });
-    assert_eq!(c.bal(5, lp), position, "the buyer did not receive the position");
+    assert_eq!(
+        c.bal(5, lp),
+        position,
+        "the buyer did not receive the position"
+    );
     assert_eq!(c.bal(4, lp), Fixed::ZERO);
     assert_eq!(c.bal(5, XZEC), Fixed::whole(50).sub(bid).unwrap());
 
     // The asset never moved: it is still where it was locked.
     let p = *c.state.pool(pool).unwrap();
     assert_eq!(p.reserve_of(XZEC).unwrap(), Fixed::whole(10));
-    c.state.check_invariants().expect("an off-curve sale broke conservation");
+    c.state
+        .check_invariants()
+        .expect("an off-curve sale broke conservation");
 }
 
 /// A trade that cannot be paid for does not half-happen.
@@ -2284,7 +2908,11 @@ fn an_unpayable_offer_moves_nothing() {
         },
         Reject::InsufficientBalance,
     );
-    assert_eq!(c.bal(2, cat), Fixed::ZERO, "the taker received an asset they did not pay for");
+    assert_eq!(
+        c.bal(2, cat),
+        Fixed::ZERO,
+        "the taker received an asset they did not pay for"
+    );
 
     // And the same when the maker is the one who cannot deliver.
     c.rejects(
@@ -2298,7 +2926,11 @@ fn an_unpayable_offer_moves_nothing() {
         },
         Reject::InsufficientBalance,
     );
-    assert_ne!(c.state.state_root(), before, "rejections must still advance history");
+    assert_ne!(
+        c.state.state_root(),
+        before,
+        "rejections must still advance history"
+    );
 }
 
 #[test]
@@ -2366,7 +2998,12 @@ fn a_launched_pool_can_never_be_fully_unwrapped() {
     let got = c.bal(6, asset);
     assert!(got < Fixed::whole(1), "the bond did not withhold anything");
     assert!(
-        c.state.pool(pool).unwrap().reserve_of(asset).unwrap().is_positive(),
+        c.state
+            .pool(pool)
+            .unwrap()
+            .reserve_of(asset)
+            .unwrap()
+            .is_positive(),
         "the pool should still hold the remainder"
     );
 }
@@ -2381,7 +3018,11 @@ fn a_launched_pool_can_never_be_fully_unwrapped() {
 fn a_token_cannot_exist_without_a_market() {
     let (c, cat, dog, cat_pool, dog_pool) = seeded();
     for (asset, pool) in [(cat, cat_pool), (dog, dog_pool)] {
-        assert_eq!(c.state.find_pool(XZEC, asset), Some(pool), "a token has no xZEC market");
+        assert_eq!(
+            c.state.find_pool(XZEC, asset),
+            Some(pool),
+            "a token has no xZEC market"
+        );
     }
     // Every non-LP token on the chain is one side of an xZEC pool, which is
     // what makes the two-hop routing bound a property rather than an
@@ -2390,7 +3031,11 @@ fn a_token_cannot_exist_without_a_market() {
         if id == XZEC || info.lp_of.is_some() {
             continue;
         }
-        assert!(c.state.find_pool(XZEC, id).is_some(), "token {} is unroutable", id);
+        assert!(
+            c.state.find_pool(XZEC, id).is_some(),
+            "token {:?} is unroutable",
+            id
+        );
     }
 }
 
@@ -2399,9 +3044,17 @@ fn a_token_cannot_exist_without_a_market() {
 fn a_launch_below_the_bond_is_refused() {
     let (mut c, _cat, _dog, _, _) = seeded();
     let bond = c.state.params.min_pool_xzec;
-    assert!(bond.is_positive(), "the default parameters must charge a bond");
+    assert!(
+        bond.is_positive(),
+        "the default parameters must charge a bond"
+    );
 
-    for short in [Fixed::ZERO, Fixed::raw(1), bond.sub(Fixed::raw(1)).unwrap(), bond] {
+    for short in [
+        Fixed::ZERO,
+        Fixed::raw(1),
+        bond.sub(Fixed::raw(1)).unwrap(),
+        bond,
+    ] {
         c.rejects(
             Intent::CreateToken {
                 creator: acct(1),
@@ -2520,7 +3173,11 @@ fn the_bond_is_a_fixed_amount_not_a_fixed_fraction() {
         };
         let p = *c.state.pool(pool).unwrap();
         // locked/total of the xZEC reserve is the bond, whatever the size.
-        let locked_xzec = p.reserve_of(XZEC).unwrap().mul_div(p.locked, p.lp_supply).unwrap();
+        let locked_xzec = p
+            .reserve_of(XZEC)
+            .unwrap()
+            .mul_div(p.locked, p.lp_supply)
+            .unwrap();
         let drift = locked_xzec.sub(bond).unwrap().abs().unwrap();
         assert!(
             drift < Fixed::raw(1_000_000),
@@ -2548,7 +3205,10 @@ fn the_bond_applies_to_xzec_pools_and_is_inherited_by_others() {
         amount_b: Fixed::whole(1_000),
         fee_bps: 30,
     });
-    let cross = c.state.find_pool(cat, dog).expect("a cross pool should open");
+    let cross = c
+        .state
+        .find_pool(cat, dog)
+        .expect("a cross pool should open");
     assert_eq!(
         c.state.pool(cross).unwrap().locked,
         c.state.params.min_liquidity,
@@ -2562,9 +3222,8 @@ fn the_bond_applies_to_xzec_pools_and_is_inherited_by_others() {
 
 /// Inject an indivisible asset directly, standing in for one bridged from
 /// Zcash. There is deliberately no intent that creates one — see below.
-fn inject_indivisible(c: &mut Chain, sym: &[u8], supply: Fixed) -> u32 {
-    let id = c.state.next_asset_id;
-    c.state.next_asset_id += 1;
+fn inject_indivisible(c: &mut Chain, sym: &[u8], supply: Fixed) -> AssetId {
+    let id = zyn_vm::asset_address(swapvm::types::ADDRESS_SCOPE_V1, &acct(1), sym);
     c.state.tokens.insert(
         id,
         swapvm::state::TokenInfo {
@@ -2576,11 +3235,15 @@ fn inject_indivisible(c: &mut Chain, sym: &[u8], supply: Fixed) -> u32 {
             genesis_pool: None,
             unit: Fixed::ONE,
             bond: Fixed::ZERO,
-            vault: None, content: None, collection: None
+            vault: None,
+            content: None,
+            collection: None,
         },
     );
     c.state.account_mut(&acct(1)).credit(id, supply).unwrap();
-    c.state.check_invariants().expect("an injected asset must be consistent");
+    c.state
+        .check_invariants()
+        .expect("an injected asset must be consistent");
     id
 }
 
@@ -2597,16 +3260,34 @@ fn an_indivisible_asset_moves_only_in_whole_units() {
     let ticket = inject_indivisible(&mut c, b"TICKET", Fixed::whole(10));
     assert!(!c.state.token(ticket).unwrap().is_divisible());
 
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: ticket, amount: Fixed::whole(3) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: ticket,
+        amount: Fixed::whole(3),
+    });
     assert_eq!(c.bal(2, ticket), Fixed::whole(3));
 
-    for bad in [Fixed::raw(1), Fixed::raw(WAD / 2), Fixed::whole(1).add(Fixed::raw(1)).unwrap()] {
+    for bad in [
+        Fixed::raw(1),
+        Fixed::raw(WAD / 2),
+        Fixed::whole(1).add(Fixed::raw(1)).unwrap(),
+    ] {
         c.rejects(
-            Intent::Transfer { from: acct(1), to: acct(2), asset: ticket, amount: bad },
+            Intent::Transfer {
+                from: acct(1),
+                to: acct(2),
+                asset: ticket,
+                amount: bad,
+            },
             Reject::Indivisible,
         );
     }
-    assert_eq!(c.bal(2, ticket), Fixed::whole(3), "a rejected transfer moved a balance");
+    assert_eq!(
+        c.bal(2, ticket),
+        Fixed::whole(3),
+        "a rejected transfer moved a balance"
+    );
 }
 
 /// An indivisible asset cannot be launched, because a launch opens a pool and
@@ -2658,9 +3339,17 @@ fn divisible_assets_behave_exactly_as_before() {
     assert!(c.state.token(cat).unwrap().is_divisible());
     assert!(c.state.token(XZEC).unwrap().is_divisible());
     let lp = c.state.pool(cat_pool).unwrap().lp_asset;
-    assert!(c.state.token(lp).unwrap().is_divisible(), "LP shares must stay divisible");
+    assert!(
+        c.state.token(lp).unwrap().is_divisible(),
+        "LP shares must stay divisible"
+    );
 
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::raw(1) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::raw(1),
+    });
     assert_eq!(c.bal(2, cat), Fixed::raw(1));
 }
 
@@ -2675,7 +3364,12 @@ fn only_the_bridge_moves_xzec_supply() {
     let (mut c, cat, _dog, cat_pool, _) = seeded();
     let supply = c.state.token(XZEC).unwrap().supply;
 
-    c.ok(Intent::Transfer { from: acct(1), to: acct(2), asset: cat, amount: Fixed::whole(1_000) });
+    c.ok(Intent::Transfer {
+        from: acct(1),
+        to: acct(2),
+        asset: cat,
+        amount: Fixed::whole(1_000),
+    });
     c.ok(Intent::SwapExactIn {
         account: acct(2),
         asset_in: cat,
@@ -2691,7 +3385,11 @@ fn only_the_bridge_moves_xzec_supply() {
         min_shares: Fixed::ZERO,
     });
     c.ok(Intent::Checkpoint);
-    assert_eq!(c.state.token(XZEC).unwrap().supply, supply, "trading moved xZEC supply");
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        supply,
+        "trading moved xZEC supply"
+    );
     assert_eq!(c.state.backing_of(XZEC), supply);
 }
 
@@ -2700,9 +3398,17 @@ fn only_the_bridge_moves_xzec_supply() {
 #[test]
 fn a_pending_exit_is_neither_spendable_nor_forgotten() {
     let (mut c, _cat, _dog, cat_pool, _) = seeded();
-    c.ok(Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(9_000), destination: [0u8; 32] });
+    c.ok(Intent::RequestWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(9_000),
+        destination: [0u8; 32],
+    });
     assert_eq!(c.bal(2, XZEC), Fixed::whole(1_000));
-    assert_eq!(c.state.token(XZEC).unwrap().supply, c.state.backing_of(XZEC));
+    assert_eq!(
+        c.state.token(XZEC).unwrap().supply,
+        c.state.backing_of(XZEC)
+    );
 
     // The committed units cannot be traded.
     c.rejects(
@@ -2717,12 +3423,20 @@ fn a_pending_exit_is_neither_spendable_nor_forgotten() {
     );
     // Nor confirmed beyond what was requested.
     c.rejects(
-        Intent::ConfirmWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(9_001) },
+        Intent::ConfirmWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+            amount: Fixed::whole(9_001),
+        },
         Reject::InsufficientPending,
     );
 
     let backing_before = c.state.backing_of(XZEC);
-    c.ok(Intent::ConfirmWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(9_000) });
+    c.ok(Intent::ConfirmWithdrawal {
+        account: acct(2),
+        asset: XZEC,
+        amount: Fixed::whole(9_000),
+    });
     assert_eq!(
         c.state.backing_of(XZEC),
         backing_before.sub(Fixed::whole(9_000)).unwrap(),
@@ -2764,7 +3478,7 @@ fn the_rules_that_protect_the_pools_hold() {
         Intent::CreatePool {
             creator: acct(1),
             asset_a: cat,
-            asset_b: 999,
+            asset_b: legacy_id(999),
             amount_a: Fixed::whole(1),
             amount_b: Fixed::whole(1),
             fee_bps: 30,
@@ -2884,7 +3598,7 @@ fn the_rules_that_protect_the_pools_hold() {
         Intent::SwapExactIn {
             account: acct(2),
             asset_in: XZEC,
-            path: vec![999],
+            path: vec![legacy_id(999)],
             amount_in: Fixed::whole(1),
             min_out: Fixed::ZERO,
         },
@@ -2910,11 +3624,18 @@ fn the_rules_that_protect_the_pools_hold() {
         Reject::NonPositiveAmount,
     );
     c.rejects(
-        Intent::RequestWithdrawal { account: acct(1), asset: XZEC, amount: Fixed::ZERO, destination: [0u8; 32] },
+        Intent::RequestWithdrawal {
+            account: acct(1),
+            asset: XZEC,
+            amount: Fixed::ZERO,
+            destination: [0u8; 32],
+        },
         Reject::NonPositiveAmount,
     );
 
-    c.state.check_invariants().expect("rejections must leave the chain consistent");
+    c.state
+        .check_invariants()
+        .expect("rejections must leave the chain consistent");
 }
 
 /// An out-of-order intent is refused without touching anything at all — not
@@ -2927,7 +3648,12 @@ fn an_out_of_order_intent_changes_nothing() {
     for seq in [0, c.state.seq, c.state.seq + 2, u64::MAX] {
         let intent = Intent::next_deposit(&c.state, acct(1), XZEC, Fixed::whole(1), [0u8; 32]);
         let r = apply(&mut c.state, &SequencedIntent { seq, intent });
-        assert_eq!(r[0].rejection(), Some(Reject::OutOfOrder), "seq {} was accepted", seq);
+        assert_eq!(
+            r[0].rejection(),
+            Some(Reject::OutOfOrder),
+            "seq {} was accepted",
+            seq
+        );
     }
     assert_eq!(c.state, before, "an out-of-order intent moved state");
 }
@@ -2974,9 +3700,19 @@ fn replay_reproduces_the_root_exactly() {
             amount_in: Fixed::whole(37),
             min_out: Fixed::ZERO,
         },
-        Intent::Transfer { from: acct(1), to: acct(5), asset: cat, amount: Fixed::whole(3) },
+        Intent::Transfer {
+            from: acct(1),
+            to: acct(5),
+            asset: cat,
+            amount: Fixed::whole(3),
+        },
         Intent::Checkpoint,
-        Intent::RequestWithdrawal { account: acct(2), asset: XZEC, amount: Fixed::whole(1), destination: [0u8; 32] },
+        Intent::RequestWithdrawal {
+            account: acct(2),
+            asset: XZEC,
+            amount: Fixed::whole(1),
+            destination: [0u8; 32],
+        },
     ];
     for i in extra {
         a.ok(i.clone());
@@ -3009,7 +3745,11 @@ fn checkpoints_chain_to_their_parent() {
         assert_eq!(cp.chain_id, c.state.chain_id);
         assert_eq!(cp.epoch, c.state.epoch - 1);
         if let Some(prev) = previous {
-            assert_eq!(cp.parent_root, prev.state_root, "epoch {} lost its parent", round);
+            assert_eq!(
+                cp.parent_root, prev.state_root,
+                "epoch {} lost its parent",
+                round
+            );
             assert!(cp.seq > prev.seq);
             assert_ne!(cp.intent_root, prev.intent_root);
         }
@@ -3040,8 +3780,14 @@ fn the_intent_commitment_distinguishes_equivalent_histories() {
         (Receipt::Checkpointed(x), Receipt::Checkpointed(y)) => (*x, *y),
         _ => panic!("expected Checkpointed"),
     };
-    assert_ne!(ca.intent_root, cb.intent_root, "different histories shared a commitment");
-    assert_ne!(ca.state_root, cb.state_root, "the sequence should differ too");
+    assert_ne!(
+        ca.intent_root, cb.intent_root,
+        "different histories shared a commitment"
+    );
+    assert_ne!(
+        ca.state_root, cb.state_root,
+        "the sequence should differ too"
+    );
 }
 
 /// `transition` is the statement a proof would carry: it must refuse a base
@@ -3124,7 +3870,11 @@ fn a_batch_survives_rejections_but_not_arithmetic_failure() {
     )
     .unwrap();
     assert_eq!(r[0].rejection(), Some(Reject::OutOfOrder));
-    assert_eq!(s2.state_root(), before, "an out-of-order intent moved a batch's state");
+    assert_eq!(
+        s2.state_root(),
+        before,
+        "an out-of-order intent moved a batch's state"
+    );
 }
 
 /// A balance proved against a checkpointed root is the withdrawal path that
@@ -3141,7 +3891,11 @@ fn a_balance_can_be_proved_against_a_checkpointed_root() {
     // The chain has moved on since the checkpoint, but the sealed root is still
     // the one the signers hold, so the proof must be taken against that state.
     let sealed = SwapState::decode_state(&c.state.encode_state()).unwrap();
-    assert_ne!(sealed.state_root(), cp.state_root, "the epoch should have advanced");
+    assert_ne!(
+        sealed.state_root(),
+        cp.state_root,
+        "the epoch should have advanced"
+    );
 
     // Re-derive the sealed state by replaying to the checkpointed sequence.
     let (mut replay, _, _, _, _) = seeded();
@@ -3155,8 +3909,12 @@ fn a_balance_can_be_proved_against_a_checkpointed_root() {
     at_seal.epoch_intents = cp.intents;
     assert_eq!(at_seal.state_root(), cp.state_root);
 
-    let leaf = at_seal.account_leaf(&acct(2)).expect("account should be committed");
-    let path = at_seal.account_proof(&acct(2)).expect("account should be provable");
+    let leaf = at_seal
+        .account_leaf(&acct(2))
+        .expect("account should be committed");
+    let path = at_seal
+        .account_proof(&acct(2))
+        .expect("account should be provable");
     assert!(
         swapvm::merkle::verify_proof(leaf, &path, cp.state_root),
         "a balance did not prove against the checkpointed root"

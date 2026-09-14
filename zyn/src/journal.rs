@@ -42,7 +42,9 @@ const MAX_RECORD: usize = 1 << 20;
 
 /// Where a chain's journal lives under a data directory.
 pub fn dir_for(root: impl AsRef<Path>, chain_id: u32) -> PathBuf {
-    root.as_ref().join("journal").join(format!("chain-{}", chain_id))
+    root.as_ref()
+        .join("journal")
+        .join(format!("chain-{}", chain_id))
 }
 
 /// The file for one epoch.
@@ -75,7 +77,11 @@ impl Journal {
     pub fn open(root: impl AsRef<Path>, chain_id: u32) -> std::io::Result<Journal> {
         let dir = dir_for(root, chain_id);
         fs::create_dir_all(&dir)?;
-        Ok(Journal { dir, chain_id, open: None })
+        Ok(Journal {
+            dir,
+            chain_id,
+            open: None,
+        })
     }
 
     pub fn chain_id(&self) -> u32 {
@@ -86,7 +92,10 @@ impl Journal {
     /// first, so an epoch file is never left half-written behind a newer one.
     pub fn record(&mut self, epoch: u64, seq: u64, encoded: &[u8]) -> std::io::Result<()> {
         if encoded.len() > MAX_RECORD {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "intent too large"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "intent too large",
+            ));
         }
         if self.open.as_ref().map(|(e, _)| *e != epoch).unwrap_or(true) {
             self.sync()?;
@@ -253,16 +262,25 @@ pub fn replay<V: MicrochainVm>(start: V, epochs: &[EpochFile]) -> Result<Replaye
         }
         saw_v2 |= file.version == 2;
         if file.chain_id != state.chain_id() {
-            return Err(ReplayError::WrongChain { file: file.chain_id, state: state.chain_id() });
+            return Err(ReplayError::WrongChain {
+                file: file.chain_id,
+                state: state.chain_id(),
+            });
         }
         if file.epoch != state.epoch() {
-            return Err(ReplayError::EpochMismatch { file: file.epoch, state: state.epoch() });
+            return Err(ReplayError::EpochMismatch {
+                file: file.epoch,
+                state: state.epoch(),
+            });
         }
         let mut sealed_here = false;
         for (seq, bytes) in &file.records {
             let expected = state.seq() + 1;
             if *seq != expected {
-                return Err(ReplayError::SeqGap { expected, got: *seq });
+                return Err(ReplayError::SeqGap {
+                    expected,
+                    got: *seq,
+                });
             }
             let receipts = if file.version == 1 {
                 let mut d = Decoder::new(bytes);
@@ -278,13 +296,14 @@ pub fn replay<V: MicrochainVm>(start: V, epochs: &[EpochFile]) -> Result<Replaye
                 let receipts = state.apply(*seq, &intent);
                 receipts
             } else {
-                let authorized = crate::verify::decode_authorized::<V>(bytes, &state).map_err(
-                    |error| ReplayError::Unauthorised {
-                        epoch: file.epoch,
-                        seq: *seq,
-                        error,
-                    },
-                )?;
+                let authorized =
+                    crate::verify::decode_authorized::<V>(bytes, &state).map_err(|error| {
+                        ReplayError::Unauthorised {
+                            epoch: file.epoch,
+                            seq: *seq,
+                            error,
+                        }
+                    })?;
                 let intent = authorized.into_intent();
                 let receipts = state.apply_committed(*seq, &intent, bytes);
                 receipts
@@ -325,7 +344,10 @@ mod tests {
         let mut cps = Vec::new();
         type Make = Box<dyn Fn(&SwapState) -> Intent>;
         let script: Vec<Make> = vec![
-            Box::new(move |_| Intent::AttestVaultBalance { asset: XZEC, observed }),
+            Box::new(move |_| Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            }),
             Box::new(|s| Intent::next_deposit(s, [1u8; 32], XZEC, Fixed::whole(10), [0u8; 32])),
             Box::new(|_| Intent::Checkpoint),
             Box::new(|s| Intent::next_deposit(s, [2u8; 32], XZEC, Fixed::whole(20), [0u8; 32])),
@@ -348,7 +370,11 @@ mod tests {
     }
 
     fn files(root: &Path, epochs: impl IntoIterator<Item = u64>) -> Vec<EpochFile> {
-        files_for(root, 5, epochs).unwrap().into_iter().map(|(_, b)| read_epoch(&b).unwrap()).collect()
+        files_for(root, 5, epochs)
+            .unwrap()
+            .into_iter()
+            .map(|(_, b)| read_epoch(&b).unwrap())
+            .collect()
     }
 
     #[test]
@@ -358,7 +384,10 @@ mod tests {
         assert_eq!(epochs[0].records.len(), 3);
         assert_eq!(epochs[1].records.len(), 2);
         let out = replay(SwapState::new(5, Params::v1()), &epochs).unwrap();
-        assert_eq!(out.checkpoints, cps, "replay must reproduce the sealed checkpoints");
+        assert_eq!(
+            out.checkpoints, cps,
+            "replay must reproduce the sealed checkpoints"
+        );
         assert_eq!(out.state.state_root(), live.state_root());
         assert_eq!(cps.len(), 2);
     }
@@ -371,7 +400,10 @@ mod tests {
         let last = epochs[0].records[1].1.len() - 1;
         epochs[0].records[1].1[last] ^= 0x01;
         match replay(SwapState::new(5, Params::v1()), &epochs) {
-            Ok(out) => assert_ne!(out.checkpoints[0].state_root, cps[0].state_root, "a changed input must change the root"),
+            Ok(out) => assert_ne!(
+                out.checkpoints[0].state_root, cps[0].state_root,
+                "a changed input must change the root"
+            ),
             Err(ReplayError::Undecodable { .. }) => {}
             Err(e) => panic!("unexpected {:?}", e),
         }
@@ -384,7 +416,10 @@ mod tests {
         epochs[0].records.remove(1);
         assert_eq!(
             replay(SwapState::new(5, Params::v1()), &epochs).unwrap_err(),
-            ReplayError::SeqGap { expected: 2, got: 3 }
+            ReplayError::SeqGap {
+                expected: 2,
+                got: 3
+            }
         );
     }
 
@@ -396,7 +431,10 @@ mod tests {
         assert!(replay(SwapState::new(5, Params::v1()), &epochs).is_ok());
         let mut cut = files(&root, [0, 1]);
         cut[0].records.pop(); // epoch 0 never sealed but epoch 1 follows: not fine
-        assert!(matches!(replay(SwapState::new(5, Params::v1()), &cut), Err(ReplayError::NoSeal { epoch: 0 })));
+        assert!(matches!(
+            replay(SwapState::new(5, Params::v1()), &cut),
+            Err(ReplayError::NoSeal { epoch: 0 })
+        ));
     }
 
     #[test]

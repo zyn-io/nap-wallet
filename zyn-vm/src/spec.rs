@@ -78,7 +78,7 @@
 use alloc::vec::Vec;
 
 use crate::checkpoint::Checkpoint;
-use crate::commit::{merkle_root, merkle_proof, Hash, ProofStep};
+use crate::commit::{merkle_proof, merkle_root, Hash, ProofStep};
 
 /// A holder identity. Fixed at 32 bytes across every Zyn VM so one exit path,
 /// one proof format and one settlement verifier serve all of them.
@@ -206,9 +206,7 @@ pub trait MicrochainVm: Clone + Sized {
     /// use it, never that a session can use it unsupervised. A VM adding an
     /// intent and forgetting this method loses convenience, not money.
     fn intent_capability(_intent: &Self::Intent) -> u32 {
-        crate::session::CAP_OPERATE
-            | crate::session::CAP_WITHDRAW
-            | crate::session::CAP_DELEGATE
+        crate::session::CAP_OPERATE | crate::session::CAP_WITHDRAW | crate::session::CAP_DELEGATE
     }
 
     /// Application-specific checks for an owner-signed constrained session.

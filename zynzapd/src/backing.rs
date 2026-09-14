@@ -74,7 +74,13 @@ pub struct ZcashBacking {
 
 impl ZcashBacking {
     pub fn new(zebra: Zebra, keys: VaultKeys, confirmations: u64, asset: AssetId) -> ZcashBacking {
-        ZcashBacking { zebra, keys, confirmations, asset, strict: false }
+        ZcashBacking {
+            zebra,
+            keys,
+            confirmations,
+            asset,
+            strict: false,
+        }
     }
 
     /// Refuse credits whose ownership only the operator can vouch for.
@@ -96,8 +102,12 @@ impl Backing for ZcashBacking {
         // checked against the transaction together.
         let mut wanted: BTreeMap<[u8; 32], (Fixed, Vec<AccountId>)> = BTreeMap::new();
         for c in credits.iter().filter(|c| c.asset == self.asset) {
-            let e = wanted.entry(c.external_ref).or_insert((Fixed::ZERO, Vec::new()));
-            e.0 = e.0.add(c.amount).ok_or_else(|| "credited amounts overflow".to_string())?;
+            let e = wanted
+                .entry(c.external_ref)
+                .or_insert((Fixed::ZERO, Vec::new()));
+            e.0 =
+                e.0.add(c.amount)
+                    .ok_or_else(|| "credited amounts overflow".to_string())?;
             e.1.push(c.account);
         }
 
@@ -168,7 +178,10 @@ impl Backing for ZcashBacking {
             // account's. The index is recomputed here from the account the
             // credit names, so the operator asserts nothing.
             for (index, _) in &addressed {
-                if !accounts.iter().any(|a| deposit_index(a).as_bytes() == index) {
+                if !accounts
+                    .iter()
+                    .any(|a| deposit_index(a).as_bytes() == index)
+                {
                     return Err(format!(
                         "{} paid a deposit address belonging to an account the credit does not pay",
                         hex

@@ -47,7 +47,7 @@ use zyn_vm::eip712::keccak;
 use zyn_vm::Fixed;
 
 use crate::memo;
-use crate::watcher::{ChainView, ObservedDeposit};
+use crate::watcher::{AssetId, ChainView, ObservedDeposit};
 
 /// One lamport in `Fixed`'s 1e18 scale. SOL has 9 decimals.
 pub const LAMPORT: i128 = 1_000_000_000;
@@ -73,7 +73,10 @@ pub enum SolanaError {
     Malformed(&'static str),
     RefusingMainnet,
     /// The endpoint is not the cluster configured.
-    WrongCluster { expected: Cluster, found: String },
+    WrongCluster {
+        expected: Cluster,
+        found: String,
+    },
 }
 
 impl std::fmt::Display for SolanaError {
@@ -84,7 +87,11 @@ impl std::fmt::Display for SolanaError {
             SolanaError::Malformed(w) => write!(f, "malformed response: {}", w),
             SolanaError::RefusingMainnet => write!(f, "refusing to run against mainnet-beta"),
             SolanaError::WrongCluster { expected, found } => {
-                write!(f, "endpoint reports genesis {}, expected {:?}", found, expected)
+                write!(
+                    f,
+                    "endpoint reports genesis {}, expected {:?}",
+                    found, expected
+                )
             }
         }
     }
@@ -110,7 +117,9 @@ impl Rpc {
         let rpc = Rpc {
             url: url.to_string(),
             cluster,
-            agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(30))
+                .build(),
         };
         let found = rpc.genesis_hash()?;
         let expected = match cluster {
@@ -119,7 +128,10 @@ impl Rpc {
             Cluster::MainnetBeta => unreachable!("refused above"),
         };
         if found != expected {
-            return Err(SolanaError::WrongCluster { expected: cluster, found });
+            return Err(SolanaError::WrongCluster {
+                expected: cluster,
+                found,
+            });
         }
         Ok(rpc)
     }
@@ -130,7 +142,9 @@ impl Rpc {
         Rpc {
             url: url.to_string(),
             cluster,
-            agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(30))
+                .build(),
         }
     }
 
@@ -147,7 +161,11 @@ impl Rpc {
         let mut attempt = 0;
         let resp: Value = loop {
             match self.agent.post(&self.url).send_json(body.clone()) {
-                Ok(r) => break r.into_json().map_err(|_| SolanaError::Malformed("not json"))?,
+                Ok(r) => {
+                    break r
+                        .into_json()
+                        .map_err(|_| SolanaError::Malformed("not json"))?
+                }
                 Err(ureq::Error::Status(429, _)) if attempt < 3 => {
                     attempt += 1;
                     std::thread::sleep(Duration::from_millis(400 * (1 << attempt)));
@@ -160,7 +178,9 @@ impl Rpc {
                 return Err(SolanaError::Node(e.to_string()));
             }
         }
-        resp.get("result").cloned().ok_or(SolanaError::Malformed("no result"))
+        resp.get("result")
+            .cloned()
+            .ok_or(SolanaError::Malformed("no result"))
     }
 
     pub fn genesis_hash(&self) -> Result<String, SolanaError> {
@@ -183,11 +203,7 @@ impl Rpc {
     /// A **skipped slot is not an error**. Solana produces no block for a slot
     /// whose leader failed, and treating that as a failure would stall the
     /// watcher on an entirely ordinary event.
-    pub fn deposits_at(
-        &self,
-        vault: &str,
-        slot: u64,
-    ) -> Result<Vec<ObservedDeposit>, SolanaError> {
+    pub fn deposits_at(&self, vault: &str, slot: u64) -> Result<Vec<ObservedDeposit>, SolanaError> {
         let params = serde_json::json!([slot, {
             "encoding": "jsonParsed",
             "transactionDetails": "full",
@@ -204,22 +220,35 @@ impl Rpc {
             None => return Ok(Vec::new()),
             Some(t) => t,
         };
-        Ok(txs.iter().filter_map(|tx| decode_deposit(tx, vault, slot)).collect())
+        Ok(txs
+            .iter()
+            .filter_map(|tx| decode_deposit(tx, vault, slot))
+            .collect())
     }
 
     /// Signatures of finalized transactions touching `address`, newest first,
     /// stopping at `until` (exclusive) when given. One call for the whole
     /// history since the cursor, instead of one per slot.
-    pub fn signatures_for_address(&self, address: &str, until: Option<&str>) -> Result<Vec<(u64, String)>, SolanaError> {
+    pub fn signatures_for_address(
+        &self,
+        address: &str,
+        until: Option<&str>,
+    ) -> Result<Vec<(u64, String)>, SolanaError> {
         let mut opts = serde_json::json!({"commitment": "finalized", "limit": 1000});
         if let Some(u) = until {
             opts["until"] = Value::String(u.to_string());
         }
-        let v = self.call("getSignaturesForAddress", serde_json::json!([address, opts]))?;
+        let v = self.call(
+            "getSignaturesForAddress",
+            serde_json::json!([address, opts]),
+        )?;
         let arr = v.as_array().ok_or(SolanaError::Malformed("signatures"))?;
         let mut out = Vec::with_capacity(arr.len());
         for e in arr {
-            let (Some(slot), Some(sig)) = (e.get("slot").and_then(Value::as_u64), e.get("signature").and_then(Value::as_str)) else {
+            let (Some(slot), Some(sig)) = (
+                e.get("slot").and_then(Value::as_u64),
+                e.get("signature").and_then(Value::as_str),
+            ) else {
                 return Err(SolanaError::Malformed("signature entry"));
             };
             out.push((slot, sig.to_string()));
@@ -239,22 +268,33 @@ impl Rpc {
     /// Base units held by a token account, at the finalized commitment.
     /// Zero for an account that does not exist yet.
     pub fn token_balance(&self, ata: &str) -> Result<u64, SolanaError> {
-        match self.call("getTokenAccountBalance", serde_json::json!([ata, {"commitment": "finalized"}])) {
+        match self.call(
+            "getTokenAccountBalance",
+            serde_json::json!([ata, {"commitment": "finalized"}]),
+        ) {
             Ok(v) => v
-                .get("value").and_then(|x| x.get("amount")).and_then(Value::as_str)
+                .get("value")
+                .and_then(|x| x.get("amount"))
+                .and_then(Value::as_str)
                 .and_then(|a| a.parse().ok())
                 .ok_or(SolanaError::Malformed("token balance")),
             // "could not find account": nothing has been sent there yet.
-            Err(SolanaError::Node(e)) if e.contains("could not find") || e.contains("-32602") => Ok(0),
+            Err(SolanaError::Node(e)) if e.contains("could not find") || e.contains("-32602") => {
+                Ok(0)
+            }
             Err(e) => Err(e),
         }
     }
 
     /// Lamports held by the vault, at the finalized commitment.
     pub fn balance(&self, vault: &str) -> Result<u64, SolanaError> {
-        let v = self
-            .call("getBalance", serde_json::json!([vault, {"commitment": "finalized"}]))?;
-        v.get("value").and_then(Value::as_u64).ok_or(SolanaError::Malformed("balance"))
+        let v = self.call(
+            "getBalance",
+            serde_json::json!([vault, {"commitment": "finalized"}]),
+        )?;
+        v.get("value")
+            .and_then(Value::as_u64)
+            .ok_or(SolanaError::Malformed("balance"))
     }
 }
 
@@ -304,8 +344,19 @@ pub fn decode_deposit(tx: &Value, vault: &str, slot: u64) -> Option<ObservedDepo
     // A Solana signature is 64 bytes and `external_ref` is 32, so the dedup key
     // is a hash of it rather than a prefix — two signatures sharing a prefix
     // would silently suppress a real deposit.
-    let sig = tx.get("transaction")?.get("signatures")?.as_array()?.first()?.as_str()?;
-    Some(ObservedDeposit { txid: keccak(&[sig.as_bytes()]), account, amount, height: slot , asset: None })
+    let sig = tx
+        .get("transaction")?
+        .get("signatures")?
+        .as_array()?
+        .first()?
+        .as_str()?;
+    Some(ObservedDeposit {
+        txid: keccak(&[sig.as_bytes()]),
+        account,
+        amount,
+        height: slot,
+        asset: None,
+    })
 }
 
 /// A transfer of a mirrored token into the vault's token account, with the
@@ -316,7 +367,11 @@ pub fn decode_token_deposit(tx: &Value, m: &Mirrored, slot: u64) -> Option<Obser
     }
     let message = tx.get("transaction")?.get("message")?;
     let mut all: Vec<&Value> = message.get("instructions")?.as_array()?.iter().collect();
-    if let Some(groups) = tx.get("meta").and_then(|x| x.get("innerInstructions")).and_then(Value::as_array) {
+    if let Some(groups) = tx
+        .get("meta")
+        .and_then(|x| x.get("innerInstructions"))
+        .and_then(Value::as_array)
+    {
         for g in groups {
             if let Some(list) = g.get("instructions").and_then(Value::as_array) {
                 all.extend(list.iter());
@@ -336,12 +391,20 @@ pub fn decode_token_deposit(tx: &Value, m: &Mirrored, slot: u64) -> Option<Obser
             continue;
         }
         let amount = match kind {
-            "transfer" => info.get("amount").and_then(Value::as_str)?.parse::<u64>().ok()?,
+            "transfer" => info
+                .get("amount")
+                .and_then(Value::as_str)?
+                .parse::<u64>()
+                .ok()?,
             "transferChecked" => {
                 if info.get("mint").and_then(Value::as_str) != Some(m.mint.as_str()) {
                     continue;
                 }
-                info.get("tokenAmount")?.get("amount").and_then(Value::as_str)?.parse::<u64>().ok()?
+                info.get("tokenAmount")?
+                    .get("amount")
+                    .and_then(Value::as_str)?
+                    .parse::<u64>()
+                    .ok()?
             }
             _ => continue,
         };
@@ -351,8 +414,19 @@ pub fn decode_token_deposit(tx: &Value, m: &Mirrored, slot: u64) -> Option<Obser
         return None;
     }
     let amount = Fixed::raw(i128::from(units).checked_mul(Fixed::ONE.0 / m.per_unit as i128)?);
-    let sig = tx.get("transaction")?.get("signatures")?.as_array()?.first()?.as_str()?;
-    Some(ObservedDeposit { txid: keccak(&[sig.as_bytes()]), account, amount, height: slot, asset: Some(m.asset) })
+    let sig = tx
+        .get("transaction")?
+        .get("signatures")?
+        .as_array()?
+        .first()?
+        .as_str()?;
+    Some(ObservedDeposit {
+        txid: keccak(&[sig.as_bytes()]),
+        account,
+        amount,
+        height: slot,
+        asset: Some(m.asset),
+    })
 }
 
 /// The Zyn account named by a memo instruction, if exactly one names anything.
@@ -368,7 +442,9 @@ fn find_memo(instructions: &[&Value]) -> Option<[u8; 32]> {
         }
         // spl-memo parses to the memo string itself.
         let text = ix.get("parsed").and_then(Value::as_str)?;
-        let Ok(account) = memo::decode_text(text) else { continue };
+        let Ok(account) = memo::decode_text(text) else {
+            continue;
+        };
         match found {
             Some(prev) if prev != account => return None,
             _ => found = Some(account),
@@ -410,7 +486,7 @@ fn total_transferred(instructions: &[&Value], vault: &str) -> Option<u64> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Mirrored {
     pub mint: String,
-    pub asset: u32,
+    pub asset: AssetId,
     pub ata: String,
     /// Base units per whole unit: `1` for an NFT (0 decimals), `10^d` else.
     pub per_unit: u64,
@@ -468,16 +544,28 @@ impl Observed {
         let mut filed = self.filed.borrow_mut();
         let mut newest: Option<String> = None;
         for (i, addr) in addresses.iter().enumerate() {
-            let until = self.cursor.borrow().as_ref().and_then(|c: &Vec<Option<String>>| c.get(i).cloned().flatten());
+            let until = self
+                .cursor
+                .borrow()
+                .as_ref()
+                .and_then(|c: &Vec<Option<String>>| c.get(i).cloned().flatten());
             let fresh = self.rpc.signatures_for_address(addr, until.as_deref())?;
-            if i == 0 { newest = fresh.first().map(|(_, s)| s.clone()); }
+            if i == 0 {
+                newest = fresh.first().map(|(_, s)| s.clone());
+            }
             let mut cursors = self.cursor.borrow_mut();
             let cur = cursors.get_or_insert_with(|| vec![None; addresses.len()]);
-            if cur.len() < addresses.len() { cur.resize(addresses.len(), None); }
-            if let Some((_, s)) = fresh.first() { cur[i] = Some(s.clone()); }
+            if cur.len() < addresses.len() {
+                cur.resize(addresses.len(), None);
+            }
+            if let Some((_, s)) = fresh.first() {
+                cur[i] = Some(s.clone());
+            }
             for (slot, sig) in fresh {
                 let list = filed.entry(slot).or_default();
-                if !list.contains(&sig) { list.push(sig); }
+                if !list.contains(&sig) {
+                    list.push(sig);
+                }
             }
         }
         let _ = newest;
@@ -535,10 +623,12 @@ impl ChainView for Observed {
 
     /// What the vault holds of a mirrored token: its token account's balance,
     /// in whole units. `None` for an asset this vault does not custody.
-    fn balance_of(&self, asset: u32, _height: u64) -> Option<Fixed> {
+    fn balance_of(&self, asset: AssetId, _height: u64) -> Option<Fixed> {
         let m = self.mirrored.iter().find(|m| m.asset == asset)?;
         match self.rpc.token_balance(&m.ata) {
-            Ok(units) => Some(Fixed::raw(i128::from(units).checked_mul(Fixed::ONE.0 / m.per_unit as i128)?)),
+            Ok(units) => Some(Fixed::raw(
+                i128::from(units).checked_mul(Fixed::ONE.0 / m.per_unit as i128)?,
+            )),
             Err(_) => {
                 self.failed.set(true);
                 None
@@ -582,7 +672,8 @@ mod tests {
 
     const VAULT: &str = "VauLtzynzap1111111111111111111111111111111";
     const OTHER: &str = "0therzynzap1111111111111111111111111111111";
-    const SIG: &str = "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7";
+    const SIG: &str =
+        "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7";
 
     fn transfer(to: &str, lamports: u64) -> Value {
         json!({
@@ -617,7 +708,10 @@ mod tests {
     #[test]
     fn a_transfer_with_a_memo_is_a_deposit() {
         let t = tx(
-            vec![transfer(VAULT, 2_500_000_000), memo_ix(&memo::encode_text(&account(4)))],
+            vec![
+                transfer(VAULT, 2_500_000_000),
+                memo_ix(&memo::encode_text(&account(4))),
+            ],
             Value::Null,
         );
         let d = decode_deposit(&t, VAULT, 900).unwrap();
@@ -633,7 +727,10 @@ mod tests {
     #[test]
     fn a_failed_transaction_credits_nothing() {
         let t = tx(
-            vec![transfer(VAULT, 1_000_000_000), memo_ix(&memo::encode_text(&account(4)))],
+            vec![
+                transfer(VAULT, 1_000_000_000),
+                memo_ix(&memo::encode_text(&account(4))),
+            ],
             json!({"InstructionError": [0, "Custom"]}),
         );
         assert!(decode_deposit(&t, VAULT, 900).is_none());
@@ -664,10 +761,15 @@ mod tests {
             ],
             Value::Null,
         );
-        assert_eq!(decode_deposit(&t, VAULT, 900).unwrap().amount, Fixed::whole(1));
+        assert_eq!(
+            decode_deposit(&t, VAULT, 900).unwrap().amount,
+            Fixed::whole(1)
+        );
 
-        let only_theirs =
-            tx(vec![transfer(OTHER, 5), memo_ix(&memo::encode_text(&account(4)))], Value::Null);
+        let only_theirs = tx(
+            vec![transfer(OTHER, 5), memo_ix(&memo::encode_text(&account(4)))],
+            Value::Null,
+        );
         assert!(decode_deposit(&only_theirs, VAULT, 900).is_none());
     }
 
@@ -683,7 +785,10 @@ mod tests {
             ],
             Value::Null,
         );
-        assert_eq!(decode_deposit(&t, VAULT, 900).unwrap().amount, Fixed::raw(15 * LAMPORT * LAMPORT / 10));
+        assert_eq!(
+            decode_deposit(&t, VAULT, 900).unwrap().amount,
+            Fixed::raw(15 * LAMPORT * LAMPORT / 10)
+        );
     }
 
     /// Two memos naming different accounts is not something a rule should
@@ -709,7 +814,10 @@ mod tests {
             ],
             Value::Null,
         );
-        assert_eq!(decode_deposit(&same, VAULT, 900).unwrap().account, account(4));
+        assert_eq!(
+            decode_deposit(&same, VAULT, 900).unwrap().account,
+            account(4)
+        );
     }
 
     /// A memo that is not a Zyn instruction is the common case and must be
@@ -736,7 +844,10 @@ mod tests {
         let mut t = tx(vec![memo_ix(&memo::encode_text(&account(4)))], Value::Null);
         t["meta"]["innerInstructions"] =
             json!([{"index": 0, "instructions": [transfer(VAULT, 3_000_000_000)]}]);
-        assert_eq!(decode_deposit(&t, VAULT, 900).unwrap().amount, Fixed::whole(3));
+        assert_eq!(
+            decode_deposit(&t, VAULT, 900).unwrap().amount,
+            Fixed::whole(3)
+        );
     }
 
     /// An SPL `transferChecked` into the vault's token account for a mirrored
@@ -744,22 +855,73 @@ mod tests {
     /// of another mint, is not.
     #[test]
     fn a_token_transfer_into_the_vaults_token_account_is_an_item_deposit() {
-        let m = Mirrored { mint: "MintPubkey1111111111111111111111111111111111".into(), asset: 7, ata: "VaultAta111111111111111111111111111111111111".into(), per_unit: 1 };
-        let ix = |dest: &str, mint: &str, amount: &str| json!({
-            "program": "spl-token", "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-            "parsed": {"type": "transferChecked", "info": {"source": "Src", "destination": dest, "mint": mint, "authority": "Auth",
-                "tokenAmount": {"amount": amount, "decimals": 0, "uiAmount": 1.0}}},
-        });
-        let t = tx(vec![ix(&m.ata, &m.mint, "1"), memo_ix(&memo::encode_text(&account(4)))], Value::Null);
+        let m = Mirrored {
+            mint: "MintPubkey1111111111111111111111111111111111".into(),
+            asset: [7; 32],
+            ata: "VaultAta111111111111111111111111111111111111".into(),
+            per_unit: 1,
+        };
+        let ix = |dest: &str, mint: &str, amount: &str| {
+            json!({
+                "program": "spl-token", "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "parsed": {"type": "transferChecked", "info": {"source": "Src", "destination": dest, "mint": mint, "authority": "Auth",
+                    "tokenAmount": {"amount": amount, "decimals": 0, "uiAmount": 1.0}}},
+            })
+        };
+        let t = tx(
+            vec![
+                ix(&m.ata, &m.mint, "1"),
+                memo_ix(&memo::encode_text(&account(4))),
+            ],
+            Value::Null,
+        );
         let d = decode_token_deposit(&t, &m, 5).unwrap();
-        assert_eq!((d.asset, d.amount, d.account, d.height), (Some(7), Fixed::whole(1), account(4), 5));
+        assert_eq!(
+            (d.asset, d.amount, d.account, d.height),
+            (Some([7; 32]), Fixed::whole(1), account(4), 5)
+        );
         // Not ours: a different token account, or a different mint.
-        assert!(decode_token_deposit(&tx(vec![ix("SomeoneElse", &m.mint, "1"), memo_ix(&memo::encode_text(&account(4)))], Value::Null), &m, 5).is_none());
-        assert!(decode_token_deposit(&tx(vec![ix(&m.ata, "OtherMint", "1"), memo_ix(&memo::encode_text(&account(4)))], Value::Null), &m, 5).is_none());
+        assert!(decode_token_deposit(
+            &tx(
+                vec![
+                    ix("SomeoneElse", &m.mint, "1"),
+                    memo_ix(&memo::encode_text(&account(4)))
+                ],
+                Value::Null
+            ),
+            &m,
+            5
+        )
+        .is_none());
+        assert!(decode_token_deposit(
+            &tx(
+                vec![
+                    ix(&m.ata, "OtherMint", "1"),
+                    memo_ix(&memo::encode_text(&account(4)))
+                ],
+                Value::Null
+            ),
+            &m,
+            5
+        )
+        .is_none());
         // No memo: names nobody, like a SOL deposit.
-        assert!(decode_token_deposit(&tx(vec![ix(&m.ata, &m.mint, "1")], Value::Null), &m, 5).is_none());
+        assert!(
+            decode_token_deposit(&tx(vec![ix(&m.ata, &m.mint, "1")], Value::Null), &m, 5).is_none()
+        );
         // Failed transaction: moved nothing.
-        assert!(decode_token_deposit(&tx(vec![ix(&m.ata, &m.mint, "1"), memo_ix(&memo::encode_text(&account(4)))], json!({"InstructionError": [0, "Custom"]})), &m, 5).is_none());
+        assert!(decode_token_deposit(
+            &tx(
+                vec![
+                    ix(&m.ata, &m.mint, "1"),
+                    memo_ix(&memo::encode_text(&account(4)))
+                ],
+                json!({"InstructionError": [0, "Custom"]})
+            ),
+            &m,
+            5
+        )
+        .is_none());
         // A SOL decoder must not see a token transfer as SOL.
         assert!(decode_deposit(&t, VAULT, 5).is_none());
     }
@@ -768,9 +930,15 @@ mod tests {
     /// would stall the watcher on every skipped slot.
     #[test]
     fn a_skipped_slot_is_not_a_failure() {
-        assert!(is_skipped("{\"code\":-32009,\"message\":\"Slot 12 was skipped\"}"));
-        assert!(is_skipped("Slot 5 was skipped, or missing due to ledger jump"));
-        assert!(!is_skipped("{\"code\":-32001,\"message\":\"Block not available\"}"));
+        assert!(is_skipped(
+            "{\"code\":-32009,\"message\":\"Slot 12 was skipped\"}"
+        ));
+        assert!(is_skipped(
+            "Slot 5 was skipped, or missing due to ledger jump"
+        ));
+        assert!(!is_skipped(
+            "{\"code\":-32001,\"message\":\"Block not available\"}"
+        ));
     }
 
     /// SOL has 9 decimals and `Fixed` has 18, so the multiplier and the
@@ -779,16 +947,25 @@ mod tests {
     #[test]
     fn one_sol_is_one_unit() {
         let one = tx(
-            vec![transfer(VAULT, 1_000_000_000), memo_ix(&memo::encode_text(&account(1)))],
+            vec![
+                transfer(VAULT, 1_000_000_000),
+                memo_ix(&memo::encode_text(&account(1))),
+            ],
             Value::Null,
         );
-        assert_eq!(decode_deposit(&one, VAULT, 1).unwrap().amount, Fixed::whole(1));
+        assert_eq!(
+            decode_deposit(&one, VAULT, 1).unwrap().amount,
+            Fixed::whole(1)
+        );
 
         let dust = tx(
             vec![transfer(VAULT, 1), memo_ix(&memo::encode_text(&account(1)))],
             Value::Null,
         );
-        assert_eq!(decode_deposit(&dust, VAULT, 1).unwrap().amount, Fixed::raw(LAMPORT));
+        assert_eq!(
+            decode_deposit(&dust, VAULT, 1).unwrap().amount,
+            Fixed::raw(LAMPORT)
+        );
     }
 
     #[test]
@@ -889,7 +1066,9 @@ impl Rpc {
             "sendTransaction",
             serde_json::json!([crate::zebra::base64(tx), {"encoding": "base64", "preflightCommitment": "finalized"}]),
         )?;
-        Ok(v.as_str().ok_or(SolanaError::Malformed("signature"))?.to_string())
+        Ok(v.as_str()
+            .ok_or(SolanaError::Malformed("signature"))?
+            .to_string())
     }
 }
 
@@ -932,13 +1111,22 @@ pub mod custody {
     /// The vault's address: the group key, which Solana treats as an ordinary
     /// ed25519 account. Nothing is derived — this *is* the account.
     pub fn vault_address(keys: &Keys) -> [u8; 32] {
-        keys.group_key().serialize().ok().and_then(|v| v.try_into().ok()).expect("ed25519 keys are 32 bytes")
+        keys.group_key()
+            .serialize()
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .expect("ed25519 keys are 32 bytes")
     }
 
     /// The same address, from the public package alone — what a sequencer
     /// holding no share knows about its own vault.
     pub fn vault_address_of(public: &frost_core::keys::PublicKeyPackage<Solana>) -> [u8; 32] {
-        public.verifying_key().serialize().ok().and_then(|v| v.try_into().ok()).expect("ed25519 keys are 32 bytes")
+        public
+            .verifying_key()
+            .serialize()
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .expect("ed25519 keys are 32 bytes")
     }
 
     /// Produce one ed25519 signature over `message` with a quorum of shares.
@@ -953,7 +1141,12 @@ pub mod custody {
         message: &[u8],
         _rng: &mut R,
     ) -> Result<[u8; 64], PayError> {
-        let public = shares.first().ok_or(PayError::Signing(SigningError::BelowThreshold))?.1.public_package.clone();
+        let public = shares
+            .first()
+            .ok_or(PayError::Signing(SigningError::BelowThreshold))?
+            .1
+            .public_package
+            .clone();
         let mut quorum = LocalSolanaQuorum::new(shares.iter().map(|(_, k)| (*k).clone()).collect());
         sign_with(&mut quorum, threshold, &public, message, 0)
     }
@@ -990,7 +1183,9 @@ pub mod custody {
         if shares.len() < want {
             return Err(PayError::Signing(SigningError::BelowThreshold));
         }
-        let sig = coord.aggregate(&package, &shares, public).map_err(PayError::Signing)?;
+        let sig = coord
+            .aggregate(&package, &shares, public)
+            .map_err(PayError::Signing)?;
         let bytes: [u8; 64] = sig
             .serialize()
             .ok()
@@ -1001,7 +1196,8 @@ pub mod custody {
     }
 
     pub fn verify(vault: &[u8; 32], message: &[u8], sig: &[u8; 64]) -> Result<(), PayError> {
-        let vk = ed25519_dalek::VerifyingKey::from_bytes(vault).map_err(|_| PayError::DoesNotVerify)?;
+        let vk =
+            ed25519_dalek::VerifyingKey::from_bytes(vault).map_err(|_| PayError::DoesNotVerify)?;
         vk.verify_strict(message, &ed25519_dalek::Signature::from_bytes(sig))
             .map_err(|_| PayError::DoesNotVerify)
     }
@@ -1034,14 +1230,28 @@ pub mod custody {
         payouts: &[SolPayout],
         rng: &mut R,
     ) -> Result<Payment, PayError> {
-        let vault = vault_address(shares.first().ok_or(PayError::Signing(SigningError::BelowThreshold))?.1);
-        let nonce_pk = super::pubkey(nonce_account).ok_or(PayError::Rpc(SolanaError::Malformed("nonce account")))?;
-        let accounts = VaultAccounts { vault, nonce_account: nonce_pk };
+        let vault = vault_address(
+            shares
+                .first()
+                .ok_or(PayError::Signing(SigningError::BelowThreshold))?
+                .1,
+        );
+        let nonce_pk = super::pubkey(nonce_account)
+            .ok_or(PayError::Rpc(SolanaError::Malformed("nonce account")))?;
+        let accounts = VaultAccounts {
+            vault,
+            nonce_account: nonce_pk,
+        };
         let nonce = rpc.nonce_value(nonce_account).map_err(PayError::Rpc)?;
         let message = settle::message(accounts, nonce, payouts).map_err(PayError::Settlement)?;
         let signature = sign(shares, threshold, &message, rng)?;
         let transaction = settle::transaction(&message, &signature);
-        Ok(Payment { message, signature, transaction, payouts: payouts.to_vec() })
+        Ok(Payment {
+            message,
+            signature,
+            transaction,
+            payouts: payouts.to_vec(),
+        })
     }
 
     /// [`prepare`] with the shares held elsewhere. The vault address comes
@@ -1056,17 +1266,27 @@ pub mod custody {
         now: u64,
     ) -> Result<Payment, PayError> {
         let vault = vault_address_of(public);
-        let nonce_pk = super::pubkey(nonce_account).ok_or(PayError::Rpc(SolanaError::Malformed("nonce account")))?;
-        let accounts = VaultAccounts { vault, nonce_account: nonce_pk };
+        let nonce_pk = super::pubkey(nonce_account)
+            .ok_or(PayError::Rpc(SolanaError::Malformed("nonce account")))?;
+        let accounts = VaultAccounts {
+            vault,
+            nonce_account: nonce_pk,
+        };
         let nonce = rpc.nonce_value(nonce_account).map_err(PayError::Rpc)?;
         let message = settle::message(accounts, nonce, payouts).map_err(PayError::Settlement)?;
         let signature = sign_with(quorum, threshold, public, &message, now)?;
         let transaction = settle::transaction(&message, &signature);
-        Ok(Payment { message, signature, transaction, payouts: payouts.to_vec() })
+        Ok(Payment {
+            message,
+            signature,
+            transaction,
+            payouts: payouts.to_vec(),
+        })
     }
 
     pub fn broadcast(rpc: &Rpc, payment: &Payment) -> Result<String, PayError> {
-        rpc.send_transaction(&payment.transaction).map_err(PayError::Rpc)
+        rpc.send_transaction(&payment.transaction)
+            .map_err(PayError::Rpc)
     }
 }
 
@@ -1085,7 +1305,10 @@ mod custody_tests {
             pubkey("SysvarRecentB1ockHashes11111111111111111111"),
             Some(zyn_bridge::solana::RECENT_BLOCKHASHES_SYSVAR)
         );
-        assert_eq!(pubkey(MEMO_PROGRAM).map(|p| base58_encode(&p)).as_deref(), Some(MEMO_PROGRAM));
+        assert_eq!(
+            pubkey(MEMO_PROGRAM).map(|p| base58_encode(&p)).as_deref(),
+            Some(MEMO_PROGRAM)
+        );
         for b in [vec![0u8], vec![0, 0, 1], vec![255; 64], vec![1, 2, 3]] {
             assert_eq!(base58_decode(&base58_encode(&b)), Some(b.clone()));
         }
@@ -1107,16 +1330,32 @@ mod custody_tests {
         let vault = vault_address(&keys[0].1);
         let sig = sign(&quorum, t, b"settle", &mut OsRng).unwrap();
         assert!(verify(&vault, b"settle", &sig).is_ok());
-        assert!(verify(&vault, b"settle!", &sig).is_err(), "another message verified");
-        let other = vault_address(&ceremony(2, 3, &mut OsRng).unwrap().into_iter().next().unwrap().1);
-        assert!(verify(&other, b"settle", &sig).is_err(), "another vault verified");
+        assert!(
+            verify(&vault, b"settle!", &sig).is_err(),
+            "another message verified"
+        );
+        let other = vault_address(
+            &ceremony(2, 3, &mut OsRng)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+                .1,
+        );
+        assert!(
+            verify(&other, b"settle", &sig).is_err(),
+            "another vault verified"
+        );
     }
 
     #[test]
     fn below_the_threshold_there_is_no_signature() {
         let (keys, t) = shares();
         let one: Vec<(Id, &Keys)> = keys.iter().take(1).map(|(i, k)| (*i, k)).collect();
-        assert!(matches!(sign(&one, t, b"x", &mut OsRng), Err(PayError::Signing(SigningError::BelowThreshold))));
+        assert!(matches!(
+            sign(&one, t, b"x", &mut OsRng),
+            Err(PayError::Signing(SigningError::BelowThreshold))
+        ));
     }
 
     /// End to end short of the network: a real settlement message, signed by
@@ -1125,8 +1364,16 @@ mod custody_tests {
     fn a_settlement_message_signs_and_verifies() {
         let (keys, t) = shares();
         let vault = vault_address(&keys[0].1);
-        let accounts = VaultAccounts { vault, nonce_account: [9u8; 32] };
-        let m = message(accounts, [3u8; 32], &[SolPayout::native([1u8; 32], 500_000_000)]).unwrap();
+        let accounts = VaultAccounts {
+            vault,
+            nonce_account: [9u8; 32],
+        };
+        let m = message(
+            accounts,
+            [3u8; 32],
+            &[SolPayout::native([1u8; 32], 500_000_000)],
+        )
+        .unwrap();
         let quorum: Vec<(Id, &Keys)> = keys.iter().skip(1).map(|(i, k)| (*i, k)).collect();
         let sig = sign(&quorum, t, &m, &mut OsRng).unwrap();
         let tx = zyn_bridge::solana::transaction(&m, &sig);
@@ -1155,19 +1402,26 @@ impl Rpc {
             "getSignatureStatuses",
             serde_json::json!([[signature], {"searchTransactionHistory": true}]),
         )?;
-        let entry = v.get("value").and_then(Value::as_array).and_then(|a| a.first());
-        let Some(entry) = entry else { return Ok(TxStatus::Unknown) };
+        let entry = v
+            .get("value")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first());
+        let Some(entry) = entry else {
+            return Ok(TxStatus::Unknown);
+        };
         if entry.is_null() {
             return Ok(TxStatus::Unknown);
         }
         if entry.get("err").map(|e| !e.is_null()).unwrap_or(false) {
             return Ok(TxStatus::Failed);
         }
-        Ok(match entry.get("confirmationStatus").and_then(Value::as_str) {
-            Some("finalized") => TxStatus::Finalized,
-            Some("confirmed") | Some("processed") => TxStatus::Confirmed,
-            _ => TxStatus::Unknown,
-        })
+        Ok(
+            match entry.get("confirmationStatus").and_then(Value::as_str) {
+                Some("finalized") => TxStatus::Finalized,
+                Some("confirmed") | Some("processed") => TxStatus::Confirmed,
+                _ => TxStatus::Unknown,
+            },
+        )
     }
 }
 

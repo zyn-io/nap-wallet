@@ -49,7 +49,10 @@ impl Book {
         let mut accounts = Vec::new();
         if let Ok(bytes) = std::fs::read(&path) {
             if bytes.len() < MAGIC.len() || &bytes[..MAGIC.len()] != MAGIC {
-                return Err(format!("{} is not a deposit address register", path.display()));
+                return Err(format!(
+                    "{} is not a deposit address register",
+                    path.display()
+                ));
             }
             let body = &bytes[MAGIC.len()..];
             if body.len() % 32 != 0 {
@@ -65,7 +68,12 @@ impl Book {
         for a in &accounts {
             index.insert(*deposit_index(a).as_bytes(), *a);
         }
-        Ok(Book { path, network, accounts, index: Arc::new(Mutex::new(index)) })
+        Ok(Book {
+            path,
+            network,
+            accounts,
+            index: Arc::new(Mutex::new(index)),
+        })
     }
 
     /// The register the scanner reads.
@@ -87,14 +95,21 @@ impl Book {
     /// returns the same one and writes nothing the second time.
     pub fn address_for(&mut self, keys: &VaultKeys, account: &AccountId) -> Result<String, String> {
         let idx = *deposit_index(account).as_bytes();
-        let known = self.index.lock().map_err(|_| "address register poisoned".to_string())?.contains_key(&idx);
+        let known = self
+            .index
+            .lock()
+            .map_err(|_| "address register poisoned".to_string())?
+            .contains_key(&idx);
         if !known {
             // Recorded before it is handed out. A crash between the two would
             // otherwise leave a depositor paying an address the scanner does
             // not know to look for, and that money would look unattributable.
             self.accounts.push(*account);
             self.append(account)?;
-            self.index.lock().map_err(|_| "address register poisoned".to_string())?.insert(idx, *account);
+            self.index
+                .lock()
+                .map_err(|_| "address register poisoned".to_string())?
+                .insert(idx, *account);
         }
         Ok(keys.deposit_address(account, self.network))
     }
@@ -120,7 +135,9 @@ mod tests {
     use orchard::keys::{FullViewingKey, SpendingKey};
 
     fn keys() -> VaultKeys {
-        VaultKeys::from_full_viewing_key(FullViewingKey::from(&SpendingKey::from_bytes([3u8; 32]).unwrap()))
+        VaultKeys::from_full_viewing_key(FullViewingKey::from(
+            &SpendingKey::from_bytes([3u8; 32]).unwrap(),
+        ))
     }
 
     fn tmp(name: &str) -> PathBuf {

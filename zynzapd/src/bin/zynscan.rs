@@ -27,7 +27,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
-use zynzapd::client::{hex, AnchorView, Node, Status};
+use zynzapd::client::{hex, AnchorView, CurveView, Node, Status};
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
@@ -39,6 +39,7 @@ fn env(k: &str, d: &str) -> String {
 struct Snapshot {
     status: Option<Status>,
     anchors: Vec<AnchorView>,
+    curves: Vec<CurveView>,
     /// Why the last read failed, if it did. Shown rather than swallowed: a
     /// scan that silently serves stale data is worse than one that says so.
     error: Option<String>,
@@ -46,7 +47,10 @@ struct Snapshot {
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn main() {
@@ -55,57 +59,88 @@ fn main() {
     let chain: u32 = env("ZYN_CHAIN_ID", "11").parse().unwrap_or(11);
     let limit: u32 = env("ZYN_SCAN_LIMIT", "200").parse().unwrap_or(200);
     let refresh: u64 = env("ZYN_SCAN_REFRESH", "15").parse().unwrap_or(15).max(2);
-    let explorer = env("ZYN_SCAN_EXPLORER", "https://testnet.zcashexplorer.app/transactions/");
+    let explorer = env(
+        "ZYN_SCAN_EXPLORER",
+        "https://testnet.zcashexplorer.app/transactions/",
+    );
 
     let snap = Arc::new(Mutex::new(Snapshot::default()));
     {
         let (snap, addr) = (Arc::clone(&snap), addr.clone());
         std::thread::spawn(move || loop {
             let node = Node::new(&addr, chain);
-            let got = node.status().and_then(|s| node.anchors(limit).map(|a| (s, a)));
+            let got = node.status().and_then(|s| {
+                node.anchors(limit)
+                    .and_then(|a| node.curves().map(|c| (s, a, c)))
+            });
             if let Ok(mut w) = snap.lock() {
                 match got {
-                    Ok((s, mut a)) => {
+                    Ok((s, mut a, c)) => {
                         // Newest first: a reader wants the most recent
                         // settlement, not the chain's first one.
                         a.sort_by(|x, y| y.epoch.cmp(&x.epoch));
-                        *w = Snapshot { status: Some(s), anchors: a, error: None, at: now() };
+                        *w = Snapshot {
+                            status: Some(s),
+                            anchors: a,
+                            curves: c,
+                            error: None,
+                            at: now(),
+                        };
                     }
                     // Keep what was last proved and say the read failed. The
                     // page then shows real anchors and an honest banner.
-                    Err(e) => { w.error = Some(e); }
+                    Err(e) => {
+                        w.error = Some(e);
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_secs(refresh));
         });
     }
 
-    let listener = TcpListener::bind(&listen).unwrap_or_else(|e| { eprintln!("zynscan: cannot bind {}: {}", listen, e); std::process::exit(1) });
-    eprintln!("zynscan: chain {} reading {} — http://{}/", chain, addr, listen);
+    let listener = TcpListener::bind(&listen).unwrap_or_else(|e| {
+        eprintln!("zynscan: cannot bind {}: {}", listen, e);
+        std::process::exit(1)
+    });
+    eprintln!(
+        "zynscan: chain {} reading {} — http://{}/",
+        chain, addr, listen
+    );
     let cfg = Arc::new((chain, addr, explorer));
     for stream in listener.incoming().flatten() {
         let (snap, cfg) = (Arc::clone(&snap), Arc::clone(&cfg));
-        std::thread::spawn(move || { let _ = handle(&snap, &cfg, stream); });
+        std::thread::spawn(move || {
+            let _ = handle(&snap, &cfg, stream);
+        });
     }
 }
 
 fn read_path(s: &mut TcpStream) -> Option<String> {
-    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .ok();
     let mut buf = Vec::new();
     let mut tmp = [0u8; 2048];
     loop {
         let n = s.read(&mut tmp).ok()?;
-        if n == 0 { return None }
+        if n == 0 {
+            return None;
+        }
         buf.extend_from_slice(&tmp[..n]);
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") { break }
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
         // A read-only GET server needs no body at all; anything this long is
         // not a request we serve.
-        if buf.len() > 8 << 10 { return None }
+        if buf.len() > 8 << 10 {
+            return None;
+        }
     }
     let head = String::from_utf8_lossy(&buf).to_string();
     let mut req = head.lines().next()?.split_whitespace();
     let method = req.next()?;
-    if method != "GET" && method != "HEAD" { return None }
+    if method != "GET" && method != "HEAD" {
+        return None;
+    }
     Some(req.next()?.to_string())
 }
 
@@ -116,82 +151,192 @@ fn respond(s: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> std::io
          X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
          Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\n\
          Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
-        status, ctype, body.len()
+        status,
+        ctype,
+        body.len()
     )?;
     s.write_all(body)?;
     s.flush()
 }
 
-fn handle(snap: &Arc<Mutex<Snapshot>>, cfg: &Arc<(u32, String, String)>, mut s: TcpStream) -> std::io::Result<()> {
-    let Some(path) = read_path(&mut s) else { return Ok(()) };
+fn handle(
+    snap: &Arc<Mutex<Snapshot>>,
+    cfg: &Arc<(u32, String, String)>,
+    mut s: TcpStream,
+) -> std::io::Result<()> {
+    let Some(path) = read_path(&mut s) else {
+        return Ok(());
+    };
     let route = path.split('?').next().unwrap_or("/");
     let (chain, node, explorer) = (cfg.0, cfg.1.as_str(), cfg.2.as_str());
     let g = snap.lock().map_err(|_| std::io::Error::other("poisoned"))?;
     match route {
-        "/healthz" => respond(&mut s, "200 OK", "text/plain", if g.status.is_some() { b"ok" } else { b"no data" }),
-        "/api/status" => respond(&mut s, "200 OK", "application/json", status_json(&g, chain, node).as_bytes()),
-        "/api/anchors" => respond(&mut s, "200 OK", "application/json", anchors_json(&g).as_bytes()),
-        "/" => respond(&mut s, "200 OK", "text/html; charset=utf-8", page(&g, chain, node, explorer).as_bytes()),
+        "/healthz" => respond(
+            &mut s,
+            "200 OK",
+            "text/plain",
+            if g.status.is_some() {
+                b"ok"
+            } else {
+                b"no data"
+            },
+        ),
+        "/api/status" => respond(
+            &mut s,
+            "200 OK",
+            "application/json",
+            status_json(&g, chain, node).as_bytes(),
+        ),
+        "/api/anchors" => respond(
+            &mut s,
+            "200 OK",
+            "application/json",
+            anchors_json(&g).as_bytes(),
+        ),
+        "/api/curves" => respond(
+            &mut s,
+            "200 OK",
+            "application/json",
+            curves_json(&g).as_bytes(),
+        ),
+        "/" => respond(
+            &mut s,
+            "200 OK",
+            "text/html; charset=utf-8",
+            page(&g, chain, node, explorer).as_bytes(),
+        ),
         _ => respond(&mut s, "404 Not Found", "text/plain", b"not found"),
     }
 }
 
 fn status_json(g: &Snapshot, chain: u32, node: &str) -> String {
     let Some(st) = g.status.as_ref() else {
-        return format!(r#"{{"chain":{},"reading":"{}","ready":false,"error":{}}}"#, chain, esc_json(node), g.error.as_deref().map(esc_quoted).unwrap_or_else(|| "null".into()));
+        return format!(
+            r#"{{"chain":{},"reading":"{}","ready":false,"error":{}}}"#,
+            chain,
+            esc_json(node),
+            g.error
+                .as_deref()
+                .map(esc_quoted)
+                .unwrap_or_else(|| "null".into())
+        );
     };
     format!(
         r#"{{"chain":{},"reading":"{}","ready":true,"role":"{}","seq":{},"epoch":{},"root":"{}","anchored_epoch":{},"verified_height":{},"forced_pending":{},"censored":{},"accounts":{},"pools":{},"fetched_at":{},"error":{}}}"#,
-        chain, esc_json(node), if st.role == 1 { "replica" } else { "sequencer" },
-        st.seq, st.epoch, hex(&st.root), st.anchored_epoch, st.verified_height,
-        st.forced_pending, st.censored, st.accounts, st.pools, g.at,
-        g.error.as_deref().map(esc_quoted).unwrap_or_else(|| "null".into())
+        chain,
+        esc_json(node),
+        if st.role == 1 { "replica" } else { "sequencer" },
+        st.seq,
+        st.epoch,
+        hex(&st.root),
+        st.anchored_epoch,
+        st.verified_height,
+        st.forced_pending,
+        st.censored,
+        st.accounts,
+        st.pools,
+        g.at,
+        g.error
+            .as_deref()
+            .map(esc_quoted)
+            .unwrap_or_else(|| "null".into())
     )
 }
 
 fn anchors_json(g: &Snapshot) -> String {
-    let rows: Vec<String> = g.anchors.iter().map(|a| format!(
-        r#"{{"epoch":{},"root":"{}","anchor_id":"{}","txid":"{}","height":{}}}"#,
-        a.epoch, hex(&a.root), hex(&a.anchor_id), esc_json(&a.txid), a.height
-    )).collect();
+    let rows: Vec<String> = g
+        .anchors
+        .iter()
+        .map(|a| {
+            format!(
+                r#"{{"epoch":{},"root":"{}","anchor_id":"{}","txid":"{}","height":{}}}"#,
+                a.epoch,
+                hex(&a.root),
+                hex(&a.anchor_id),
+                esc_json(&a.txid),
+                a.height
+            )
+        })
+        .collect();
     format!(r#"{{"anchors":[{}]}}"#, rows.join(","))
 }
 
+fn curves_json(g: &Snapshot) -> String {
+    let rows: Vec<String> = g.curves.iter().map(|c| format!(
+        r#"{{"asset":"{}","creator":"{}","symbol":"{}","display_name":"{}","metadata_hash":"{}","fee_bps":{},"phase":"{}","sold":"{}","curve_reserve":"{}","market_zec":"{}","zec_per_token":"{}","creator_fees":"{}","graduation_fees":"{}","graduated_token_liquidity":"{}","graduated_zec_liquidity":"{}","graduation_overflow":"{}","graduated_locked_lp":"{}","pool":{}}}"#,
+        hex(&c.asset), hex(&c.creator), esc_json(&c.symbol), esc_json(&c.display_name), hex(&c.metadata_hash), c.fee_bps,
+        if c.pool.is_some() { "graduated" } else { "curve" }, c.sold, c.curve_reserve, c.market_zec, c.marginal_price,
+        c.creator_fees, c.graduation_fees, c.graduated_token_liquidity, c.graduated_zec_liquidity,
+        c.graduation_overflow, c.graduated_locked_lp,
+        c.pool.map(|p| format!("\"{}\"", hex(&p))).unwrap_or_else(|| "null".into()),
+    )).collect();
+    format!(r#"{{"curves":[{}]}}"#, rows.join(","))
+}
+
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 /// JSON string body: the values here are hex, hostnames and node error text,
 /// so quotes and backslashes are the whole risk.
 fn esc_json(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
 }
 fn esc_quoted(s: &str) -> String {
     format!("\"{}\"", esc_json(s))
 }
 fn short(s: &str, n: usize) -> String {
-    if s.len() > 2 * n { format!("{}…{}", &s[..n], &s[s.len() - 6..]) } else { s.to_string() }
+    if s.len() > 2 * n {
+        format!("{}…{}", &s[..n], &s[s.len() - 6..])
+    } else {
+        s.to_string()
+    }
 }
 
 fn page(g: &Snapshot, chain: u32, node: &str, explorer: &str) -> String {
     let (role, head) = match g.status.as_ref() {
         Some(st) => (
-            if st.role == 1 { "a verifying replica" } else { "the sequencer" },
+            if st.role == 1 {
+                "a verifying replica"
+            } else {
+                "the sequencer"
+            },
             format!(
                 r#"<div class="grid">
       <div class="stat"><span class="k">Chain</span><span class="v num">{chain}</span></div>
       <div class="stat"><span class="k">Epoch</span><span class="v num">{epoch}</span></div>
       <div class="stat"><span class="k">Last anchored epoch</span><span class="v num">{anch}</span></div>
       <div class="stat"><span class="k">Anchors listed</span><span class="v num">{n}</span></div>
+      <div class="stat"><span class="k">Cave launches</span><span class="v num">{curves}</span></div>
     </div>"#,
-                chain = chain, epoch = st.epoch, anch = st.anchored_epoch, n = g.anchors.len()
+                chain = chain,
+                epoch = st.epoch,
+                anch = st.anchored_epoch,
+                n = g.anchors.len(),
+                curves = g.curves.len()
             ),
         ),
-        None => ("a node", format!(r#"<div class="grid"><div class="stat"><span class="k">Chain</span><span class="v num">{}</span></div></div>"#, chain)),
+        None => (
+            "a node",
+            format!(
+                r#"<div class="grid"><div class="stat"><span class="k">Chain</span><span class="v num">{}</span></div></div>"#,
+                chain
+            ),
+        ),
     };
 
     let banner = match (g.status.as_ref(), g.error.as_deref()) {
-        (_, Some(e)) => format!(r#"<p class="warn">The last read of the node failed: {}. Anything below is what was last proved, not what is true now.</p>"#, esc(e)),
-        (None, None) => r#"<p class="warn">Waiting for the first read of the node.</p>"#.to_string(),
+        (_, Some(e)) => format!(
+            r#"<p class="warn">The last read of the node failed: {}. Anything below is what was last proved, not what is true now.</p>"#,
+            esc(e)
+        ),
+        (None, None) => {
+            r#"<p class="warn">Waiting for the first read of the node.</p>"#.to_string()
+        }
         _ => String::new(),
     };
 
@@ -213,6 +358,20 @@ fn page(g: &Snapshot, chain: u32, node: &str, explorer: &str) -> String {
                 height = if a.height == 0 { "<span class=\"pending\">broadcast</span>".to_string() } else { a.height.to_string() },
             )
         }).collect::<Vec<_>>().join("\n")
+    };
+
+    let curve_rows = if g.curves.is_empty() {
+        r#"<tr><td colspan="8" class="empty">No Cave launches are committed in this snapshot.</td></tr>"#.to_string()
+    } else {
+        g.curves.iter().map(|c| format!(
+            r#"<tr><td><strong>{name}</strong><br><span class="mono">{symbol}</span></td><td>{phase}</td><td class="num">{price}</td><td class="num">{reserve}</td><td class="num">{creator_fee}</td><td class="num">{graduation_fee}</td><td class="num">{overflow}</td><td class="mono" title="{asset}">{asset_s}<br><span title="{pool}">{pool_s}</span></td></tr>"#,
+            name = esc(&c.display_name), symbol = esc(&c.symbol), phase = if c.pool.is_some() { "ZynZap" } else { "curve" },
+            price = c.marginal_price, reserve = c.market_zec, creator_fee = c.creator_fees,
+            graduation_fee = c.graduation_fees, overflow = c.graduation_overflow,
+            asset = hex(&c.asset), asset_s = short(&hex(&c.asset), 8),
+            pool = c.pool.map(|p| hex(&p)).unwrap_or_default(),
+            pool_s = c.pool.map(|p| format!("pool {}", short(&hex(&p), 8))).unwrap_or_else(|| "not graduated".into()),
+        )).collect::<Vec<_>>().join("\n")
     };
 
     format!(
@@ -274,6 +433,15 @@ footer {{ margin-top:26px; font-size:12.5px; color:var(--ink-3) }}
     This page cannot write: it holds no key and serves no submit route.</p>
   </div>
   <div class="card">
+    <h2>Cave launch evidence</h2>
+    <p class="lede">Prices are explicitly ZEC.zy per token. Active reserve, fee pots, graduation overflow and the locked-LP amount come from the same replica snapshot as the state root.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Stone</th><th>Venue</th><th class="r">ZEC.zy / token</th><th class="r">Active ZEC.zy</th><th class="r">Creator fees</th><th class="r">Graduation fees</th><th class="r">POL overflow</th><th>Asset / pool</th></tr></thead>
+      <tbody>{curve_rows}</tbody>
+    </table></div>
+    <p class="src">Full fields, including immutable opening liquidity and locked LP: <a href="/api/curves">/api/curves</a>.</p>
+  </div>
+  <div class="card">
     <div class="scroll"><table>
       <thead><tr><th>Epoch</th><th>State root</th><th>Zcash transaction</th><th class="r">Height</th></tr></thead>
       <tbody>
@@ -281,7 +449,7 @@ footer {{ margin-top:26px; font-size:12.5px; color:var(--ink-3) }}
       </tbody>
     </table></div>
   </div>
-  <footer>Also as JSON: <a href="/api/anchors">/api/anchors</a> · <a href="/api/status">/api/status</a></footer>
+  <footer>Also as JSON: <a href="/api/curves">/api/curves</a> · <a href="/api/anchors">/api/anchors</a> · <a href="/api/status">/api/status</a></footer>
 </div></body></html>"#,
         banner = banner,
         head = head,
@@ -289,5 +457,6 @@ footer {{ margin-top:26px; font-size:12.5px; color:var(--ink-3) }}
         node = esc(node),
         age = now().saturating_sub(g.at.max(1)).min(99_999),
         rows = rows,
+        curve_rows = curve_rows,
     )
 }

@@ -51,7 +51,12 @@ pub enum Intent {
     },
 
     /// Move any asset between two accounts on the chain.
-    Transfer { from: AccountId, to: AccountId, asset: AssetId, amount: Fixed },
+    Transfer {
+        from: AccountId,
+        to: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+    },
 
     /// Swap two assets between two accounts, atomically, at an agreed price.
     ///
@@ -164,7 +169,19 @@ pub enum Intent {
         /// Basis points taken from each side of a trade in this collection.
         fee_bps: u16,
     },
-    /// Mint one item into a collection, to `to`.
+    /// Historical sequential collection mint (wire tag 31).
+    ///
+    /// Retained so existing journals replay byte-for-byte. New callers use
+    /// [`Intent::MintCollectionItem`], whose explicit serial is bound to an
+    /// allocation receipt.
+    MintCollectionItemLegacy {
+        creator: AccountId,
+        collection: CollectionId,
+        to: AccountId,
+        symbol: Symbol,
+        content: [u8; 32],
+    },
+    /// Mint one explicitly identified item into a collection, to `to`.
     ///
     /// Each item is its own indivisible asset with its own content hash, so
     /// the art is per-item. It posts no bond: the collection's pool is what
@@ -173,6 +190,10 @@ pub enum Intent {
         /// Who authorises it. Only the collection's creator may mint into it.
         creator: AccountId,
         collection: CollectionId,
+        /// Manifest serial selected by the allocation receipt. It may be minted
+        /// in any order, but must be below the immutable collection cap and may
+        /// only be minted once.
+        serial: u32,
         to: AccountId,
         symbol: Symbol,
         content: [u8; 32],
@@ -183,7 +204,11 @@ pub enum Intent {
     /// side effect of minting, because the mint proceeds, a trade fee and a
     /// gift are the same thing to the holders: xZEC that is now behind their
     /// items.
-    FundCollection { from: AccountId, collection: CollectionId, amount: Fixed },
+    FundCollection {
+        from: AccountId,
+        collection: CollectionId,
+        amount: Fixed,
+    },
     /// Move a collection to the next phase of its life.
     ///
     /// `Depositing → Minting → Closed → Live`: the sale runs, then claiming
@@ -193,7 +218,11 @@ pub enum Intent {
     ///
     /// `to` names the destination rather than saying "next", so submitting it
     /// twice cannot skip a phase. Creator only, and forward only.
-    AdvanceCollection { creator: AccountId, collection: CollectionId, to: u8 },
+    AdvanceCollection {
+        creator: AccountId,
+        collection: CollectionId,
+        to: u8,
+    },
     /// Destroy one collection item and take its share of the pool.
     ///
     /// The counterpart of `BurnItem` for something backed collectively.
@@ -211,6 +240,32 @@ pub enum Intent {
     /// This is what makes the bond a deposit rather than a fee, and it is the
     /// only operation on this chain that makes the state *smaller*.
     BurnItem { holder: AccountId, asset: AssetId },
+
+    /// Create a Cave fixed-supply token and its reversible launch curve.
+    /// `dev_buy` executes atomically after creation and may be zero.
+    LaunchCurve {
+        creator: AccountId,
+        symbol: Symbol,
+        display_name: Vec<u8>,
+        metadata_hash: [u8; 32],
+        fee_bps: u16,
+        dev_buy: Fixed,
+        max_zec: Fixed,
+    },
+    /// Buy an exact token quantity from a live Cave curve.
+    BuyCurve {
+        buyer: AccountId,
+        asset: AssetId,
+        tokens: Fixed,
+        max_zec: Fixed,
+    },
+    /// Return an exact token quantity to a live Cave curve.
+    SellCurve {
+        seller: AccountId,
+        asset: AssetId,
+        tokens: Fixed,
+        min_zec: Fixed,
+    },
 
     /// Create a Zyn-native token **and open its xZEC market**, atomically.
     ///
@@ -327,11 +382,23 @@ pub enum Intent {
     /// Bring a bridged asset into existence: a token with a vault on `origin`
     /// and no supply until deposits arrive. Operator-only — it names no
     /// account, so no signature can authorise it (`intent_authorities`).
-    CreateBridgedAsset { symbol: Symbol, origin: ChainOrigin },
+    CreateBridgedAsset {
+        symbol: Symbol,
+        /// Custody routing code (Zcash, Solana, EVM, …).
+        origin: ChainOrigin,
+        /// Canonical public network seed, e.g. `solana` or `eip155:1`.
+        origin_network: Vec<u8>,
+        /// Raw origin contract/mint bytes; empty for a network's native coin.
+        origin_asset: Vec<u8>,
+    },
     /// A mirrored item: an indivisible asset backed one-for-one by a token the
     /// vault custodies on `origin`. `content` identifies it there — on Solana
     /// the mint itself. Operator-only, like `CreateBridgedAsset`.
-    CreateBridgedItem { symbol: Symbol, origin: ChainOrigin, content: [u8; 32] },
+    CreateBridgedItem {
+        symbol: Symbol,
+        origin: ChainOrigin,
+        content: [u8; 32],
+    },
 
     /// The custodying chain confirmed that exit: burn the units and release the
     /// backing.
@@ -339,7 +406,11 @@ pub enum Intent {
     /// Emitted by the settlement signers after the vault transaction has the
     /// required confirmations. Until it arrives the units are still liabilities
     /// of the chain, which is why the request alone does not burn them.
-    ConfirmWithdrawal { account: AccountId, asset: AssetId, amount: Fixed },
+    ConfirmWithdrawal {
+        account: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+    },
 
     /// Report what the vault on the custodying chain holds.
     ///
@@ -379,7 +450,10 @@ pub enum Intent {
     /// means a stolen key can trade a position but cannot send the proceeds
     /// anywhere new without giving the owner a window to notice and empty the
     /// account first.
-    BindWithdrawal { account: AccountId, destination: [u8; 32] },
+    BindWithdrawal {
+        account: AccountId,
+        destination: [u8; 32],
+    },
 
     /// Take back an exit the custodying chain never settled.
     ///
@@ -563,6 +637,16 @@ pub enum Reject {
     /// A checked arithmetic operation failed. The intent is discarded whole and
     /// the batch containing it is abandoned.
     ArithmeticFailure,
+    /// Display metadata is malformed, too long, or contains invisible
+    /// whitespace/control characters.
+    InvalidMetadata,
+    /// The requested creator allocation exceeds 5% or is not a legal unit.
+    InvalidDevBuy,
+    /// This creator already launched twice in the rolling 60-epoch window.
+    LaunchRateLimited,
+    NoSuchCurve,
+    CurveGraduated,
+    InsufficientCurveInventory,
 }
 
 /// One leg of a routed swap, as executed.
@@ -573,14 +657,21 @@ pub struct Hop {
     pub asset_out: AssetId,
     pub amount_in: Fixed,
     pub amount_out: Fixed,
-    /// The portion of this hop's input that did not enter the curve. Derived
-    /// from the curve rather than recomputed from the rate, so it always
-    /// describes the reserves that actually moved — this is the figure a UI
-    /// shows as "LP fee".
+    /// Asset in which this hop charged its fee. Ordinary pools charge the
+    /// input asset. A graduated Cave pool always charges ZEC.zy: input on a
+    /// buy, gross output on a sell.
+    pub fee_asset: AssetId,
+    /// Total fee charged in `fee_asset`.
     pub fee: Fixed,
-    /// The slice of `fee` routed to the treasury rather than left in the pool.
-    /// Zero under V1 parameters. LPs keep `fee - protocol_fee`.
+    /// Fee retained by the pool.
+    pub pool_fee: Fixed,
+    /// Total fee leaving the pool. For a graduated Cave pool this equals
+    /// `creator_fee + pol_fee`; for an ordinary pool it is the treasury cut.
     pub protocol_fee: Fixed,
+    /// Graduated Cave creator share; zero for an ordinary pool.
+    pub creator_fee: Fixed,
+    /// Graduated Cave future-ZYN-POL share; zero for an ordinary pool.
+    pub pol_fee: Fixed,
 }
 
 /// What the VM did.
@@ -597,7 +688,12 @@ pub enum Receipt {
         index: u64,
         external_ref: [u8; 32],
     },
-    Transferred { from: AccountId, to: AccountId, asset: AssetId, amount: Fixed },
+    Transferred {
+        from: AccountId,
+        to: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+    },
     OfferAccepted {
         maker: AccountId,
         taker: AccountId,
@@ -606,25 +702,139 @@ pub enum Receipt {
         want_asset: AssetId,
         want_amount: Fixed,
     },
-    ItemMinted { asset: AssetId, creator: AccountId, symbol: Symbol, supply: Fixed, bond: Fixed },
-    CollectionCreated { collection: CollectionId, creator: AccountId, symbol: Symbol, cap: u32, fee_bps: u16 },
-    CollectionItemMinted { collection: CollectionId, asset: AssetId, to: AccountId, minted: u32, outstanding: u32 },
+    ItemMinted {
+        asset: AssetId,
+        creator: AccountId,
+        symbol: Symbol,
+        supply: Fixed,
+        bond: Fixed,
+    },
+    CollectionCreated {
+        collection: CollectionId,
+        creator: AccountId,
+        symbol: Symbol,
+        cap: u32,
+        fee_bps: u16,
+    },
+    CollectionItemMinted {
+        collection: CollectionId,
+        asset: AssetId,
+        to: AccountId,
+        minted: u32,
+        outstanding: u32,
+    },
     /// The pool grew, so the floor did. `redeem_price` is what one item is
     /// worth after this — the number the whole design exists to publish.
-    CollectionFunded { collection: CollectionId, amount: Fixed, pool: Fixed, redeem_price: Fixed },
-    CollectionItemRedeemed { collection: CollectionId, asset: AssetId, holder: AccountId, paid: Fixed, outstanding: u32 },
-    /// A trade in a collection paid its fee: half into the pool, where it
-    /// raises the floor for every holder, half to the creator.
-    CollectionFeeTaken { collection: CollectionId, taken: Fixed, to_pool: Fixed, to_creator: Fixed, pool: Fixed, redeem_price: Fixed },
-    OfferPlaced { offer: OfferId, maker: AccountId, offer_asset: AssetId, offer_amount: Fixed, want_asset: AssetId, want_amount: Fixed, expires_at_epoch: u64 },
-    OfferTaken { offer: OfferId, maker: AccountId, taker: AccountId, offer_asset: AssetId, offer_amount: Fixed, want_asset: AssetId, want_amount: Fixed },
-    OfferCancelled { offer: OfferId, maker: AccountId, offer_asset: AssetId, offer_amount: Fixed },
+    CollectionFunded {
+        collection: CollectionId,
+        amount: Fixed,
+        pool: Fixed,
+        redeem_price: Fixed,
+    },
+    CollectionItemRedeemed {
+        collection: CollectionId,
+        asset: AssetId,
+        holder: AccountId,
+        paid: Fixed,
+        outstanding: u32,
+    },
+    /// A trade in a collection paid its fee: 50% to future ZYN POL, 40% into
+    /// the redemption pool, and 10% to the creator. Atomic dust goes to POL.
+    CollectionFeeTaken {
+        collection: CollectionId,
+        taken: Fixed,
+        to_pol: Fixed,
+        to_pool: Fixed,
+        to_creator: Fixed,
+        pool: Fixed,
+        redeem_price: Fixed,
+    },
+    OfferPlaced {
+        offer: OfferId,
+        maker: AccountId,
+        offer_asset: AssetId,
+        offer_amount: Fixed,
+        want_asset: AssetId,
+        want_amount: Fixed,
+        expires_at_epoch: u64,
+    },
+    OfferTaken {
+        offer: OfferId,
+        maker: AccountId,
+        taker: AccountId,
+        offer_asset: AssetId,
+        offer_amount: Fixed,
+        want_asset: AssetId,
+        want_amount: Fixed,
+    },
+    OfferCancelled {
+        offer: OfferId,
+        maker: AccountId,
+        offer_asset: AssetId,
+        offer_amount: Fixed,
+    },
     /// The collection moved on in its life. `redeem_price` is what an item is
     /// worth once redemption is open, and zero before.
-    CollectionPhaseChanged { collection: CollectionId, phase: u8, outstanding: u32, pool: Fixed, redeem_price: Fixed },
-    ItemBurned { asset: AssetId, holder: AccountId, supply: Fixed, refunded: Fixed },
-    BridgedAssetCreated { asset: AssetId, symbol: Symbol, origin: ChainOrigin },
-    Reblinded { account: AccountId },
+    CollectionPhaseChanged {
+        collection: CollectionId,
+        phase: u8,
+        outstanding: u32,
+        pool: Fixed,
+        redeem_price: Fixed,
+    },
+    ItemBurned {
+        asset: AssetId,
+        holder: AccountId,
+        supply: Fixed,
+        refunded: Fixed,
+    },
+    CurveCreated {
+        asset: AssetId,
+        creator: AccountId,
+        symbol: Symbol,
+        supply: Fixed,
+        fee_bps: u16,
+        pair_seed: Fixed,
+    },
+    CurveBought {
+        asset: AssetId,
+        buyer: AccountId,
+        tokens: Fixed,
+        principal: Fixed,
+        fee: Fixed,
+        total: Fixed,
+        sold: Fixed,
+        price: Fixed,
+    },
+    CurveSold {
+        asset: AssetId,
+        seller: AccountId,
+        tokens: Fixed,
+        principal: Fixed,
+        fee: Fixed,
+        received: Fixed,
+        sold: Fixed,
+        price: Fixed,
+    },
+    CurveGraduated {
+        asset: AssetId,
+        pool: PoolId,
+        lp_asset: AssetId,
+        token_liquidity: Fixed,
+        zec_liquidity: Fixed,
+        overflow_to_pol: Fixed,
+        locked_lp: Fixed,
+    },
+    BridgedAssetCreated {
+        asset: AssetId,
+        symbol: Symbol,
+        origin: ChainOrigin,
+        origin_network: Vec<u8>,
+        origin_asset: Vec<u8>,
+    },
+    Reblinded {
+        account: AccountId,
+    },
     TokenCreated {
         asset: AssetId,
         creator: AccountId,
@@ -668,39 +878,120 @@ pub enum Receipt {
         pending: Fixed,
         destination: [u8; 32],
     },
-    WithdrawalBound { account: AccountId, destination: [u8; 32], effective: bool },
-    WithdrawalConfirmed { account: AccountId, asset: AssetId, amount: Fixed, backing: Fixed },
-    WithdrawalCancelled { account: AccountId, asset: AssetId, amount: Fixed, waited: u64 },
-    AnchorConfirmed { epoch: u64 },
-    VaultAttested { asset: AssetId, observed: Fixed, headroom: Fixed },
+    WithdrawalBound {
+        account: AccountId,
+        destination: [u8; 32],
+        effective: bool,
+    },
+    WithdrawalConfirmed {
+        account: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+        backing: Fixed,
+    },
+    WithdrawalCancelled {
+        account: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+        waited: u64,
+    },
+    AnchorConfirmed {
+        epoch: u64,
+    },
+    VaultAttested {
+        asset: AssetId,
+        observed: Fixed,
+        headroom: Fixed,
+    },
     /// A swap recorded for the next seal rather than executed.
-    SwapQueued { account: AccountId, pool: PoolId, asset_in: AssetId, amount_in: Fixed, min_out: Fixed, seq: u64 },
+    SwapQueued {
+        account: AccountId,
+        pool: PoolId,
+        asset_in: AssetId,
+        amount_in: Fixed,
+        min_out: Fixed,
+        seq: u64,
+    },
     /// An order that could not fill at the seal: its limit was not met, or
     /// the account could no longer pay. Nothing moved.
-    SwapUnfilled { account: AccountId, pool: PoolId, asset_in: AssetId, amount_in: Fixed, reason: Reject },
-    ClearingSet { on: bool },
+    SwapUnfilled {
+        account: AccountId,
+        pool: PoolId,
+        asset_in: AssetId,
+        amount_in: Fixed,
+        reason: Reject,
+    },
+    ClearingSet {
+        on: bool,
+    },
     LaunchSet,
-    HeightObserved { height: u64 },
-    Graduated { pool: PoolId, zyn: AssetId, pot: Fixed, price: Fixed, contributors: u32 },
-    Minted { amount: Fixed, height: u64, to_lp: Fixed, to_bridge: Fixed, to_pol: Fixed },
-    LpRewardsPaid { amount: Fixed },
-    RebatesPaid { amount: Fixed },
-    Burned { zyn: Fixed, zec: Fixed },
-    LiquidityPaired { amount0: Fixed, amount1: Fixed },
+    HeightObserved {
+        height: u64,
+    },
+    Graduated {
+        pool: PoolId,
+        zyn: AssetId,
+        pot: Fixed,
+        price: Fixed,
+        contributors: u32,
+    },
+    Minted {
+        amount: Fixed,
+        height: u64,
+        to_lp: Fixed,
+        to_bridge: Fixed,
+        to_pol: Fixed,
+    },
+    LpRewardsPaid {
+        amount: Fixed,
+    },
+    RebatesPaid {
+        amount: Fixed,
+    },
+    Burned {
+        zyn: Fixed,
+        zec: Fixed,
+    },
+    LiquidityPaired {
+        amount0: Fixed,
+        amount1: Fixed,
+    },
     /// The launch's seal step could not complete this epoch; nothing of it
     /// was kept. The seal itself went ahead.
-    LaunchSkipped { reason: Reject },
-    AssetReferenceUpdated { asset: AssetId, price: Fixed },
+    LaunchSkipped {
+        reason: Reject,
+    },
+    AssetReferenceUpdated {
+        asset: AssetId,
+        price: Fixed,
+    },
     /// A bridged asset got a market of its own, owned by the protocol.
-    MarketOpened { asset: AssetId, pool: PoolId, zec: Fixed, amount: Fixed, price: Fixed, grant: Fixed },
-    DepositClaimed { account: AccountId, asset: AssetId, amount: Fixed },
+    MarketOpened {
+        asset: AssetId,
+        pool: PoolId,
+        zec: Fixed,
+        amount: Fixed,
+        price: Fixed,
+        grant: Fixed,
+    },
+    DepositClaimed {
+        account: AccountId,
+        asset: AssetId,
+        amount: Fixed,
+    },
     /// An epoch was sealed. Carries the full commitment, which is what the
     /// settlement signers sign and what lands in the Zcash checkpoint
     /// transaction.
     Checkpointed(crate::state::Checkpoint),
-    ReferenceUpdated { pool: PoolId, price: Fixed, fee_bps: u16 },
+    ReferenceUpdated {
+        pool: PoolId,
+        price: Fixed,
+        fee_bps: u16,
+    },
     ParamsUpdated,
-    Rejected { reason: Reject },
+    Rejected {
+        reason: Reject,
+    },
 }
 
 impl Receipt {

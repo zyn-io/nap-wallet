@@ -106,7 +106,10 @@ impl Ceremony {
         if u32::from(threshold) * 2 <= u32::from(participants) {
             return Err(CeremonyError::ThresholdNotAMajority);
         }
-        Ok(Ceremony { threshold, participants })
+        Ok(Ceremony {
+            threshold,
+            participants,
+        })
     }
 
     pub fn threshold(&self) -> u16 {
@@ -142,9 +145,8 @@ impl Ceremony {
         let mut r1_secret = BTreeMap::new();
         let mut r1_public = BTreeMap::new();
         for id in &ids {
-            let (secret, package) =
-                dkg::part1(*id, self.participants, self.threshold, &mut *rng)
-                    .map_err(|_| CeremonyError::Crypto)?;
+            let (secret, package) = dkg::part1(*id, self.participants, self.threshold, &mut *rng)
+                .map_err(|_| CeremonyError::Crypto)?;
             r1_secret.insert(*id, secret);
             r1_public.insert(*id, package);
         }
@@ -156,8 +158,11 @@ impl Ceremony {
             BTreeMap<IdentifierFor<C>, dkg::round2::Package<C>>,
         > = BTreeMap::new();
         for id in &ids {
-            let others: BTreeMap<_, _> =
-                r1_public.iter().filter(|(k, _)| *k != id).map(|(k, v)| (*k, v.clone())).collect();
+            let others: BTreeMap<_, _> = r1_public
+                .iter()
+                .filter(|(k, _)| *k != id)
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
             let secret = r1_secret.remove(id).ok_or(CeremonyError::Incomplete)?;
             let (s2, p2) = dkg::part2(secret, &others).map_err(|_| CeremonyError::Crypto)?;
             r2_secret.insert(*id, s2);
@@ -167,8 +172,11 @@ impl Ceremony {
         // Round 3: each participant assembles its share.
         let mut out = BTreeMap::new();
         for id in &ids {
-            let r1_from_others: BTreeMap<_, _> =
-                r1_public.iter().filter(|(k, _)| *k != id).map(|(k, v)| (*k, v.clone())).collect();
+            let r1_from_others: BTreeMap<_, _> = r1_public
+                .iter()
+                .filter(|(k, _)| *k != id)
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
             // The round-2 packages addressed to *this* participant.
             let mut r2_for_me = BTreeMap::new();
             for (from, packages) in &r2_public {
@@ -179,10 +187,15 @@ impl Ceremony {
                 r2_for_me.insert(*from, p.clone());
             }
             let secret = r2_secret.remove(id).ok_or(CeremonyError::Incomplete)?;
-            let (key_package, public_package) =
-                dkg::part3(&secret, &r1_from_others, &r2_for_me)
-                    .map_err(|_| CeremonyError::Crypto)?;
-            out.insert(*id, ThresholdKeys { key_package, public_package });
+            let (key_package, public_package) = dkg::part3(&secret, &r1_from_others, &r2_for_me)
+                .map_err(|_| CeremonyError::Crypto)?;
+            out.insert(
+                *id,
+                ThresholdKeys {
+                    key_package,
+                    public_package,
+                },
+            );
         }
 
         // Every participant must have derived the same vault. Disagreement
@@ -218,10 +231,22 @@ mod tests {
     /// things, and both would verify.
     #[test]
     fn a_threshold_must_be_a_real_majority() {
-        assert_eq!(Ceremony::new(5, 10).unwrap_err(), CeremonyError::ThresholdNotAMajority);
-        assert_eq!(Ceremony::new(0, 10).unwrap_err(), CeremonyError::ThresholdNotAMajority);
-        assert_eq!(Ceremony::new(11, 10).unwrap_err(), CeremonyError::ThresholdNotAMajority);
-        assert_eq!(Ceremony::new(1, 1).unwrap_err(), CeremonyError::TooFewParticipants);
+        assert_eq!(
+            Ceremony::new(5, 10).unwrap_err(),
+            CeremonyError::ThresholdNotAMajority
+        );
+        assert_eq!(
+            Ceremony::new(0, 10).unwrap_err(),
+            CeremonyError::ThresholdNotAMajority
+        );
+        assert_eq!(
+            Ceremony::new(11, 10).unwrap_err(),
+            CeremonyError::ThresholdNotAMajority
+        );
+        assert_eq!(
+            Ceremony::new(1, 1).unwrap_err(),
+            CeremonyError::TooFewParticipants
+        );
         assert!(Ceremony::new(6, 10).is_ok());
         assert!(Ceremony::new(2, 3).is_ok());
     }
@@ -275,7 +300,10 @@ mod orchard_identity_tests {
 
     #[test]
     fn the_vaults_address_is_the_threshold_key() {
-        let keys = Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap();
+        let keys = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap();
         let group = keys.values().next().unwrap().group_key();
 
         // `nk` and `rivk` are chosen, not derived. Not every pair is valid —
@@ -300,7 +328,10 @@ mod orchard_identity_tests {
         }
 
         // And a different ceremony is a different vault.
-        let other = Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap();
+        let other = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap();
         let other_group = other.values().next().unwrap().group_key();
         let other_fvk = (0u8..64)
             .find_map(|n| orchard_viewing_key(&other_group, [n; 32], [n; 32]))

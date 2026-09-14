@@ -58,14 +58,22 @@ fn cipher(secret: &StaticSecret, peer: &[u8; 32]) -> ChaCha20Poly1305 {
 
 /// Seal a round-two package to `recipient_public`. A fixed nonce is safe: the
 /// key is unique to this (sender, recipient, ceremony) triple and used once.
-pub fn seal(sender: &SealKey, recipient_public: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, CeremonyError> {
+pub fn seal(
+    sender: &SealKey,
+    recipient_public: &[u8; 32],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CeremonyError> {
     cipher(&sender.secret, recipient_public)
         .encrypt(Nonce::from_slice(&[0u8; 12]), plaintext)
         .map_err(|_| CeremonyError::Crypto)
 }
 
 /// Open a round-two package sealed by `sender_public`.
-pub fn open(recipient: &SealKey, sender_public: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, CeremonyError> {
+pub fn open(
+    recipient: &SealKey,
+    sender_public: &[u8; 32],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, CeremonyError> {
     cipher(&recipient.secret, sender_public)
         .decrypt(Nonce::from_slice(&[0u8; 12]), ciphertext)
         .map_err(|_| CeremonyError::Crypto)
@@ -102,9 +110,14 @@ impl<C: Ciphersuite> DkgParticipant<C> {
         participants: u16,
         rng: &mut R,
     ) -> Result<(DkgParticipant<C>, Round1Broadcast<C>), CeremonyError> {
-        let (secret, package) = dkg::part1(id, participants, threshold, &mut *rng).map_err(|_| CeremonyError::Crypto)?;
+        let (secret, package) = dkg::part1(id, participants, threshold, &mut *rng)
+            .map_err(|_| CeremonyError::Crypto)?;
         let seal = SealKey::new(rng);
-        let broadcast = Round1Broadcast { id, package: package.clone(), seal_public: seal.public };
+        let broadcast = Round1Broadcast {
+            id,
+            package: package.clone(),
+            seal_public: seal.public,
+        };
         let mut p = DkgParticipant {
             id,
             threshold,
@@ -135,7 +148,12 @@ impl<C: Ciphersuite> DkgParticipant<C> {
             return Err(CeremonyError::Incomplete);
         }
         let secret = self.r1_secret.take().ok_or(CeremonyError::Incomplete)?;
-        let r1_others: BTreeMap<_, _> = self.r1_all.iter().filter(|(k, _)| **k != self.id).map(|(k, v)| (*k, v.clone())).collect();
+        let r1_others: BTreeMap<_, _> = self
+            .r1_all
+            .iter()
+            .filter(|(k, _)| **k != self.id)
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
         let (s2, p2) = dkg::part2(secret, &r1_others).map_err(|_| CeremonyError::Crypto)?;
         self.r2_secret = Some(s2);
         let mut sealed = BTreeMap::new();
@@ -154,16 +172,29 @@ impl<C: Ciphersuite> DkgParticipant<C> {
         sealed_for_me: &BTreeMap<IdentifierFor<C>, Vec<u8>>,
     ) -> Result<ThresholdKeys<C>, CeremonyError> {
         let secret = self.r2_secret.take().ok_or(CeremonyError::Incomplete)?;
-        let r1_others: BTreeMap<_, _> = self.r1_all.iter().filter(|(k, _)| **k != self.id).map(|(k, v)| (*k, v.clone())).collect();
+        let r1_others: BTreeMap<_, _> = self
+            .r1_all
+            .iter()
+            .filter(|(k, _)| **k != self.id)
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
         let mut r2_for_me = BTreeMap::new();
         for (from, ct) in sealed_for_me {
             let peer = self.seal_pubs.get(from).ok_or(CeremonyError::Incomplete)?;
             let bytes = open(&self.seal, peer, ct)?;
-            r2_for_me.insert(*from, dkg::round2::Package::<C>::deserialize(&bytes).map_err(|_| CeremonyError::Crypto)?);
+            r2_for_me.insert(
+                *from,
+                dkg::round2::Package::<C>::deserialize(&bytes)
+                    .map_err(|_| CeremonyError::Crypto)?,
+            );
         }
-        let (key_package, public_package) = dkg::part3(&secret, &r1_others, &r2_for_me).map_err(|_| CeremonyError::Crypto)?;
+        let (key_package, public_package) =
+            dkg::part3(&secret, &r1_others, &r2_for_me).map_err(|_| CeremonyError::Crypto)?;
         let _ = self.threshold;
-        Ok(ThresholdKeys { key_package, public_package })
+        Ok(ThresholdKeys {
+            key_package,
+            public_package,
+        })
     }
 
     pub fn id(&self) -> IdentifierFor<C> {
@@ -176,9 +207,14 @@ impl<C: Ciphersuite> DkgParticipant<C> {
 
 /// A distributed DKG for Zcash, driven in memory over the same steps a network
 /// coordinator relays — the test harness, and the reference for the tool.
-pub fn run_in_memory(threshold: u16, participants: u16) -> Result<BTreeMap<IdentifierFor<Zcash>, ThresholdKeys<Zcash>>, CeremonyError> {
+pub fn run_in_memory(
+    threshold: u16,
+    participants: u16,
+) -> Result<BTreeMap<IdentifierFor<Zcash>, ThresholdKeys<Zcash>>, CeremonyError> {
     let mut rng = rand::rngs::OsRng;
-    let ids: Vec<IdentifierFor<Zcash>> = (1..=participants).map(|i| IdentifierFor::<Zcash>::try_from(i).map_err(|_| CeremonyError::Crypto)).collect::<Result<_, _>>()?;
+    let ids: Vec<IdentifierFor<Zcash>> = (1..=participants)
+        .map(|i| IdentifierFor::<Zcash>::try_from(i).map_err(|_| CeremonyError::Crypto))
+        .collect::<Result<_, _>>()?;
     let mut parts = BTreeMap::new();
     let mut broadcasts = Vec::new();
     for id in &ids {
@@ -188,7 +224,8 @@ pub fn run_in_memory(threshold: u16, participants: u16) -> Result<BTreeMap<Ident
     }
     // Round two: each seals a package to every other; the relay collects them
     // by (from -> to -> ciphertext).
-    let mut relayed: BTreeMap<IdentifierFor<Zcash>, BTreeMap<IdentifierFor<Zcash>, Vec<u8>>> = BTreeMap::new();
+    let mut relayed: BTreeMap<IdentifierFor<Zcash>, BTreeMap<IdentifierFor<Zcash>, Vec<u8>>> =
+        BTreeMap::new();
     for id in &ids {
         let others: Vec<_> = broadcasts.iter().filter(|b| b.id != *id).cloned().collect();
         let sealed = parts.get_mut(id).unwrap().part2(&others)?;
@@ -218,24 +255,38 @@ mod tests {
         assert_eq!(keys.len(), 3);
         let group = keys.values().next().unwrap().public_package.verifying_key();
         for k in keys.values() {
-            assert_eq!(k.public_package.verifying_key(), group, "every share must agree on the group key");
+            assert_eq!(
+                k.public_package.verifying_key(),
+                group,
+                "every share must agree on the group key"
+            );
         }
         // And a threshold can sign under it — the whole point.
         let vaultkeys: Vec<_> = keys.values().cloned().collect();
         let public = vaultkeys[0].public_package.clone();
         let mut q = LocalQuorum::new(vaultkeys);
         let sighash = [0x24u8; 32];
-        let mut b = [0u8; 32]; b[0] = 7;
+        let mut b = [0u8; 32];
+        b[0] = 7;
         let alpha = crate::signing::orchard::Randomizer::deserialize(&b).unwrap();
         let r1 = q.round1(1, sighash, &[alpha], 0);
         assert!(r1.len() >= 2);
         let chosen: Vec<_> = r1.keys().take(2).copied().collect();
-        let pkg = frost_core::SigningPackage::new(chosen.iter().map(|id| (*id, r1[id][0])).collect(), &sighash);
+        let pkg = frost_core::SigningPackage::new(
+            chosen.iter().map(|id| (*id, r1[id][0])).collect(),
+            &sighash,
+        );
         let r2 = q.round2(1, &chosen, &[pkg.clone()]);
         let shares = chosen.iter().map(|id| (*id, r2[id][0].clone())).collect();
         let params = crate::signing::orchard::params_for(group, alpha);
         let sig = crate::signing::orchard::aggregate(&pkg, &shares, &public, &params).unwrap();
-        assert!(params.randomized_verifying_key().verify(&sighash, &sig).is_ok(), "the distributed-DKG vault could not sign");
+        assert!(
+            params
+                .randomized_verifying_key()
+                .verify(&sighash, &sig)
+                .is_ok(),
+            "the distributed-DKG vault could not sign"
+        );
     }
 
     #[test]
@@ -247,9 +298,16 @@ mod tests {
         assert_eq!(open(&b, &a.public, &ct).unwrap(), b"round-two secret");
         // A relay (neither key) cannot open it; a tampered byte is rejected.
         let c = SealKey::new(&mut rng);
-        assert!(open(&c, &a.public, &ct).is_err(), "a third party opened a sealed package");
-        let mut bad = ct.clone(); *bad.last_mut().unwrap() ^= 1;
-        assert!(open(&b, &a.public, &bad).is_err(), "a tampered package was accepted");
+        assert!(
+            open(&c, &a.public, &ct).is_err(),
+            "a third party opened a sealed package"
+        );
+        let mut bad = ct.clone();
+        *bad.last_mut().unwrap() ^= 1;
+        assert!(
+            open(&b, &a.public, &bad).is_err(),
+            "a tampered package was accepted"
+        );
     }
 }
 
@@ -276,16 +334,38 @@ pub mod net {
         o.extend_from_slice(&(b.len() as u32).to_be_bytes());
         o.extend_from_slice(b);
     }
-    struct R<'a> { b: &'a [u8], p: usize }
+    struct R<'a> {
+        b: &'a [u8],
+        p: usize,
+    }
     impl<'a> R<'a> {
-        fn new(b: &'a [u8]) -> R<'a> { R { b, p: 0 } }
-        fn u8(&mut self) -> Option<u8> { let v = *self.b.get(self.p)?; self.p += 1; Some(v) }
-        fn u32(&mut self) -> Option<usize> { let s = self.b.get(self.p..self.p+4)?; self.p += 4; Some(u32::from_be_bytes(s.try_into().ok()?) as usize) }
-        fn bytes(&mut self) -> Option<&'a [u8]> { let n = self.u32()?; let s = self.b.get(self.p..self.p+n)?; self.p += n; Some(s) }
+        fn new(b: &'a [u8]) -> R<'a> {
+            R { b, p: 0 }
+        }
+        fn u8(&mut self) -> Option<u8> {
+            let v = *self.b.get(self.p)?;
+            self.p += 1;
+            Some(v)
+        }
+        fn u32(&mut self) -> Option<usize> {
+            let s = self.b.get(self.p..self.p + 4)?;
+            self.p += 4;
+            Some(u32::from_be_bytes(s.try_into().ok()?) as usize)
+        }
+        fn bytes(&mut self) -> Option<&'a [u8]> {
+            let n = self.u32()?;
+            let s = self.b.get(self.p..self.p + n)?;
+            self.p += n;
+            Some(s)
+        }
     }
 
-    fn id_bytes(id: &IdentifierFor<Zcash>) -> Vec<u8> { AsRef::<[u8]>::as_ref(&id.serialize()).to_vec() }
-    fn id_from(b: &[u8]) -> Option<IdentifierFor<Zcash>> { IdentifierFor::<Zcash>::deserialize(b).ok() }
+    fn id_bytes(id: &IdentifierFor<Zcash>) -> Vec<u8> {
+        AsRef::<[u8]>::as_ref(&id.serialize()).to_vec()
+    }
+    fn id_from(b: &[u8]) -> Option<IdentifierFor<Zcash>> {
+        IdentifierFor::<Zcash>::deserialize(b).ok()
+    }
 
     /// The relay's collected state for one ceremony.
     #[derive(Default)]
@@ -299,7 +379,10 @@ pub mod net {
     pub fn encode_broadcast(b: &Round1Broadcast<Zcash>) -> Result<Vec<u8>, CeremonyError> {
         let mut o = Vec::new();
         pb(&mut o, &id_bytes(&b.id));
-        pb(&mut o, &b.package.serialize().map_err(|_| CeremonyError::Crypto)?);
+        pb(
+            &mut o,
+            &b.package.serialize().map_err(|_| CeremonyError::Crypto)?,
+        );
         pb(&mut o, &b.seal_public);
         Ok(o)
     }
@@ -308,48 +391,84 @@ pub mod net {
         let id = id_from(r.bytes()?)?;
         let package = dkg::round1::Package::<Zcash>::deserialize(r.bytes()?).ok()?;
         let seal_public: [u8; 32] = r.bytes()?.try_into().ok()?;
-        Some(Round1Broadcast { id, package, seal_public })
+        Some(Round1Broadcast {
+            id,
+            package,
+            seal_public,
+        })
     }
 
     impl Relay {
-        pub fn new(expected: usize) -> Relay { Relay { expected, ..Default::default() } }
+        pub fn new(expected: usize) -> Relay {
+            Relay {
+                expected,
+                ..Default::default()
+            }
+        }
 
         pub fn handle(&mut self, frame: &[u8]) -> (u8, Vec<u8>) {
             let mut r = R::new(frame);
             match r.u8() {
                 Some(OP_POST_R1) => {
-                    let Some(b) = r.bytes() else { return (S_ERR, b"malformed".to_vec()) };
-                    let Some(bc) = decode_broadcast(b) else { return (S_ERR, b"bad broadcast".to_vec()) };
+                    let Some(b) = r.bytes() else {
+                        return (S_ERR, b"malformed".to_vec());
+                    };
+                    let Some(bc) = decode_broadcast(b) else {
+                        return (S_ERR, b"bad broadcast".to_vec());
+                    };
                     self.r1.insert(id_bytes(&bc.id), b.to_vec());
                     (S_OK, Vec::new())
                 }
                 Some(OP_GET_R1) => {
-                    if self.r1.len() < self.expected { return (S_WAIT, Vec::new()); }
+                    if self.r1.len() < self.expected {
+                        return (S_WAIT, Vec::new());
+                    }
                     let mut o = Vec::new();
                     o.extend_from_slice(&(self.r1.len() as u32).to_be_bytes());
-                    for v in self.r1.values() { pb(&mut o, v); }
+                    for v in self.r1.values() {
+                        pb(&mut o, v);
+                    }
                     (S_OK, o)
                 }
                 Some(OP_POST_R2) => {
                     // from ‖ n ‖ (to ‖ ct)*
-                    let Some(from) = r.bytes().map(|x| x.to_vec()) else { return (S_ERR, b"from".to_vec()) };
-                    let Some(n) = r.u32() else { return (S_ERR, b"n".to_vec()) };
+                    let Some(from) = r.bytes().map(|x| x.to_vec()) else {
+                        return (S_ERR, b"from".to_vec());
+                    };
+                    let Some(n) = r.u32() else {
+                        return (S_ERR, b"n".to_vec());
+                    };
                     let mut map = std::collections::BTreeMap::new();
                     for _ in 0..n {
-                        let (Some(to), Some(ct)) = (r.bytes().map(|x| x.to_vec()), r.bytes().map(|x| x.to_vec())) else { return (S_ERR, b"pkg".to_vec()) };
+                        let (Some(to), Some(ct)) =
+                            (r.bytes().map(|x| x.to_vec()), r.bytes().map(|x| x.to_vec()))
+                        else {
+                            return (S_ERR, b"pkg".to_vec());
+                        };
                         map.insert(to, ct);
                     }
                     self.r2.insert(from, map);
                     (S_OK, Vec::new())
                 }
                 Some(OP_GET_R2) => {
-                    let Some(me) = r.bytes().map(|x| x.to_vec()) else { return (S_ERR, b"me".to_vec()) };
-                    if self.r2.len() < self.expected { return (S_WAIT, Vec::new()); }
+                    let Some(me) = r.bytes().map(|x| x.to_vec()) else {
+                        return (S_ERR, b"me".to_vec());
+                    };
+                    if self.r2.len() < self.expected {
+                        return (S_WAIT, Vec::new());
+                    }
                     // Everything addressed to `me`, tagged by sender.
                     let mut o = Vec::new();
-                    let entries: Vec<(&Vec<u8>, &Vec<u8>)> = self.r2.iter().filter_map(|(from, m)| m.get(&me).map(|ct| (from, ct))).collect();
+                    let entries: Vec<(&Vec<u8>, &Vec<u8>)> = self
+                        .r2
+                        .iter()
+                        .filter_map(|(from, m)| m.get(&me).map(|ct| (from, ct)))
+                        .collect();
                     o.extend_from_slice(&(entries.len() as u32).to_be_bytes());
-                    for (from, ct) in entries { pb(&mut o, from); pb(&mut o, ct); }
+                    for (from, ct) in entries {
+                        pb(&mut o, from);
+                        pb(&mut o, ct);
+                    }
                     (S_OK, o)
                 }
                 _ => (S_ERR, b"op".to_vec()),
@@ -366,9 +485,13 @@ pub mod net {
     }
     fn read(s: &mut TcpStream) -> std::io::Result<Option<Vec<u8>>> {
         let mut l = [0u8; 4];
-        if s.read_exact(&mut l).is_err() { return Ok(None); }
+        if s.read_exact(&mut l).is_err() {
+            return Ok(None);
+        }
         let n = u32::from_be_bytes(l) as usize;
-        if n == 0 || n > MAX { return Ok(None); }
+        if n == 0 || n > MAX {
+            return Ok(None);
+        }
         let mut b = vec![0u8; n];
         s.read_exact(&mut b)?;
         Ok(Some(b))
@@ -382,7 +505,10 @@ pub mod net {
             let relay = Arc::clone(&relay);
             std::thread::spawn(move || {
                 if let Ok(Some(frame_in)) = read(&mut s) {
-                    let (st, body) = relay.lock().map(|mut r| r.handle(&frame_in)).unwrap_or((S_ERR, b"poisoned".to_vec()));
+                    let (st, body) = relay
+                        .lock()
+                        .map(|mut r| r.handle(&frame_in))
+                        .unwrap_or((S_ERR, b"poisoned".to_vec()));
                     let _ = frame(&mut s, st, &body);
                 }
             });
@@ -391,8 +517,11 @@ pub mod net {
 
     fn call(addr: &str, req: &[u8]) -> Result<(u8, Vec<u8>), String> {
         let mut s = TcpStream::connect(addr).map_err(|e| format!("{}: {}", addr, e))?;
-        s.set_read_timeout(Some(std::time::Duration::from_secs(30))).ok();
-        s.write_all(&(req.len() as u32).to_be_bytes()).and_then(|_| s.write_all(req)).map_err(|e| e.to_string())?;
+        s.set_read_timeout(Some(std::time::Duration::from_secs(30)))
+            .ok();
+        s.write_all(&(req.len() as u32).to_be_bytes())
+            .and_then(|_| s.write_all(req))
+            .map_err(|e| e.to_string())?;
         let mut l = [0u8; 4];
         s.read_exact(&mut l).map_err(|_| "no reply".to_string())?;
         let mut b = vec![0u8; u32::from_be_bytes(l) as usize];
@@ -415,12 +544,22 @@ pub mod net {
     /// return this participant's share. The share is produced locally in
     /// round three and never leaves; the relay only ever saw a public
     /// broadcast and ciphertext.
-    pub fn participate(addr: &str, id_index: u16, threshold: u16, participants: u16) -> Result<ThresholdKeys<Zcash>, String> {
+    pub fn participate(
+        addr: &str,
+        id_index: u16,
+        threshold: u16,
+        participants: u16,
+    ) -> Result<ThresholdKeys<Zcash>, String> {
         let id = IdentifierFor::<Zcash>::try_from(id_index).map_err(|_| "bad id".to_string())?;
-        let (mut me, broadcast) = DkgParticipant::<Zcash>::part1(id, threshold, participants, &mut rand::rngs::OsRng).map_err(|e| format!("part1: {:?}", e))?;
+        let (mut me, broadcast) =
+            DkgParticipant::<Zcash>::part1(id, threshold, participants, &mut rand::rngs::OsRng)
+                .map_err(|e| format!("part1: {:?}", e))?;
 
         let mut req = vec![OP_POST_R1];
-        pb(&mut req, &encode_broadcast(&broadcast).map_err(|e| format!("{:?}", e))?);
+        pb(
+            &mut req,
+            &encode_broadcast(&broadcast).map_err(|e| format!("{:?}", e))?,
+        );
         call(addr, &req)?;
         let all = poll(addr, &[OP_GET_R1])?;
         let mut r = R::new(&all);
@@ -428,14 +567,19 @@ pub mod net {
         let mut others = Vec::new();
         for _ in 0..n {
             let bc = decode_broadcast(r.bytes().ok_or("r1 pkg")?).ok_or("r1 decode")?;
-            if bc.id != id { others.push(bc); }
+            if bc.id != id {
+                others.push(bc);
+            }
         }
 
         let sealed = me.part2(&others).map_err(|e| format!("part2: {:?}", e))?;
         let mut req = vec![OP_POST_R2];
         pb(&mut req, &id_bytes(&id));
         req.extend_from_slice(&(sealed.len() as u32).to_be_bytes());
-        for (to, ct) in &sealed { pb(&mut req, &id_bytes(to)); pb(&mut req, ct); }
+        for (to, ct) in &sealed {
+            pb(&mut req, &id_bytes(to));
+            pb(&mut req, ct);
+        }
         call(addr, &req)?;
 
         let mut req = vec![OP_GET_R2];
@@ -467,14 +611,21 @@ mod net_tests {
             let relay = Arc::clone(&relay);
             std::thread::spawn(move || net::serve(relay, listener));
         }
-        let handles: Vec<_> = (1..=3u16).map(|i| {
-            let addr = addr.clone();
-            std::thread::spawn(move || net::participate(&addr, i, 2, 3).unwrap())
-        }).collect();
-        let keys: Vec<ThresholdKeys<Zcash>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let handles: Vec<_> = (1..=3u16)
+            .map(|i| {
+                let addr = addr.clone();
+                std::thread::spawn(move || net::participate(&addr, i, 2, 3).unwrap())
+            })
+            .collect();
+        let keys: Vec<ThresholdKeys<Zcash>> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
         let group = keys[0].public_package.verifying_key();
         for k in &keys {
-            assert_eq!(k.public_package.verifying_key(), group, "all shares agree on the group key");
+            assert_eq!(
+                k.public_package.verifying_key(),
+                group,
+                "all shares agree on the group key"
+            );
         }
         // The relay stored round-two ciphertext it could not open: it holds
         // packages but no seal key, so it cannot reconstruct a share. (Proven

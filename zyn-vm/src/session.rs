@@ -89,13 +89,8 @@ pub const CAP_PRIVACY: u32 = 1 << 8;
 ///
 /// Kept as an explicit aggregate for callers that deliberately want the old
 /// warm-key authority. It is no longer a bit and is never the session default.
-pub const CAP_OPERATE: u32 = CAP_SWAP
-    | CAP_OFFER
-    | CAP_LIQUIDITY
-    | CAP_TRANSFER
-    | CAP_ITEM
-    | CAP_COLLECTION
-    | CAP_PRIVACY;
+pub const CAP_OPERATE: u32 =
+    CAP_SWAP | CAP_OFFER | CAP_LIQUIDITY | CAP_TRANSFER | CAP_ITEM | CAP_COLLECTION | CAP_PRIVACY;
 
 /// What a session may do unless told otherwise.
 ///
@@ -113,7 +108,7 @@ pub const MAX_POLICY_ITEMS: usize = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AssetLimit {
-    pub asset: u32,
+    pub asset: [u8; 32],
     pub amount: crate::fixed::Fixed,
 }
 
@@ -140,8 +135,8 @@ pub struct Delegation {
     pub capabilities: u32,
     /// Empty lists describe an ordinary capability-only session. Agent
     /// mandates populate all three and SwapVM enforces them at execution.
-    pub allowed_assets: Vec<u32>,
-    pub allowed_pools: Vec<u32>,
+    pub allowed_assets: Vec<[u8; 32]>,
+    pub allowed_pools: Vec<[u8; 32]>,
     pub max_per_action: Vec<AssetLimit>,
     pub max_slippage_bps: u16,
     pub valid_from_epoch: u64,
@@ -205,11 +200,17 @@ impl Delegation {
         {
             return false;
         }
-        let sorted_unique = |values: &[u32]| values.windows(2).all(|w| w[0] < w[1]);
+        let sorted_unique = |values: &[[u8; 32]]| values.windows(2).all(|w| w[0] < w[1]);
         sorted_unique(&self.allowed_assets)
             && sorted_unique(&self.allowed_pools)
-            && self.max_per_action.iter().all(|limit| limit.amount.is_positive())
-            && self.max_per_action.windows(2).all(|w| w[0].asset < w[1].asset)
+            && self
+                .max_per_action
+                .iter()
+                .all(|limit| limit.amount.is_positive())
+            && self
+                .max_per_action
+                .windows(2)
+                .all(|w| w[0].asset < w[1].asset)
             && (!self.constrained()
                 || (!self.allowed_assets.is_empty()
                     && !self.allowed_pools.is_empty()
@@ -218,11 +219,17 @@ impl Delegation {
 
     fn encode_policy(&self, e: &mut Encoder) {
         e.u8(self.allowed_assets.len() as u8);
-        for asset in &self.allowed_assets { e.u32(*asset); }
+        for asset in &self.allowed_assets {
+            e.bytes(asset);
+        }
         e.u8(self.allowed_pools.len() as u8);
-        for pool in &self.allowed_pools { e.u32(*pool); }
+        for pool in &self.allowed_pools {
+            e.bytes(pool);
+        }
         e.u8(self.max_per_action.len() as u8);
-        for limit in &self.max_per_action { e.u32(limit.asset).fixed(limit.amount); }
+        for limit in &self.max_per_action {
+            e.bytes(&limit.asset).fixed(limit.amount);
+        }
         e.u16(self.max_slippage_bps)
             .u64(self.valid_from_epoch)
             .bytes(&self.salt);
@@ -267,8 +274,8 @@ impl Delegation {
     /// user hands over the ability to trade — so it names the powers granted
     /// in words rather than as a number nobody reads.
     pub fn typed(&self) -> crate::eip712::TypedData {
-        use alloc::string::String;
         use crate::eip712::{TypedData, Value};
+        use alloc::string::String;
 
         let mut granted = String::new();
         for (bit, name) in [
@@ -348,9 +355,15 @@ mod tests {
             CAP_WITHDRAW,
             CAP_DELEGATE,
         ] {
-            assert!(!s.permits(denied), "default session permits capability {denied:#x}");
+            assert!(
+                !s.permits(denied),
+                "default session permits capability {denied:#x}"
+            );
         }
-        assert!(!s.permits(CAP_SWAP | CAP_WITHDRAW), "a mixed intent slipped through");
+        assert!(
+            !s.permits(CAP_SWAP | CAP_WITHDRAW),
+            "a mixed intent slipped through"
+        );
     }
 
     /// The rule that keeps a leaked session from becoming a permanent one.
@@ -365,7 +378,10 @@ mod tests {
 
     #[test]
     fn an_intent_requiring_nothing_is_not_thereby_permitted() {
-        assert!(!d(SESSION_DEFAULT).permits(0), "an unclassified intent was allowed");
+        assert!(
+            !d(SESSION_DEFAULT).permits(0),
+            "an unclassified intent was allowed"
+        );
     }
 
     /// Every field is bound, so a delegation cannot be widened in flight.
@@ -381,37 +397,59 @@ mod tests {
         let mut other_key = base.clone();
         other_key.session_key = [3u8; 32];
         let mut policy = base.clone();
-        policy.allowed_assets = alloc::vec![0, 1];
-        policy.allowed_pools = alloc::vec![4];
-        policy.max_per_action = alloc::vec![AssetLimit { asset: 0, amount: crate::fixed::Fixed::whole(5) }];
+        policy.allowed_assets = alloc::vec![asset(0), asset(1)];
+        policy.allowed_pools = alloc::vec![asset(4)];
+        policy.max_per_action = alloc::vec![AssetLimit {
+            asset: asset(0),
+            amount: crate::fixed::Fixed::whole(5)
+        }];
         policy.max_slippage_bps = 50;
         policy.salt = [8u8; 32];
         for changed in [caps, longer, other_key, policy] {
             assert_ne!(p, changed.payload(1, &vm));
         }
         assert_ne!(p, base.payload(2, &vm), "a delegation crossed chains");
-        assert_ne!(p, base.payload(1, &[8u8; 32]), "a delegation crossed programs");
+        assert_ne!(
+            p,
+            base.payload(1, &[8u8; 32]),
+            "a delegation crossed programs"
+        );
     }
 
     #[test]
     fn malformed_agent_policies_fail_closed() {
         let mut policy = d(SESSION_DEFAULT);
-        policy.allowed_assets = alloc::vec![0, 1];
-        policy.allowed_pools = alloc::vec![4];
-        policy.max_per_action = alloc::vec![AssetLimit { asset: 0, amount: crate::fixed::Fixed::whole(5) }];
+        policy.allowed_assets = alloc::vec![asset(0), asset(1)];
+        policy.allowed_pools = alloc::vec![asset(4)];
+        policy.max_per_action = alloc::vec![AssetLimit {
+            asset: asset(0),
+            amount: crate::fixed::Fixed::whole(5)
+        }];
         assert!(policy.policy_is_well_formed());
-        policy.allowed_assets = alloc::vec![1, 0];
-        assert!(!policy.policy_is_well_formed(), "non-canonical lists were accepted");
-        policy.allowed_assets = alloc::vec![0, 1];
+        policy.allowed_assets = alloc::vec![asset(1), asset(0)];
+        assert!(
+            !policy.policy_is_well_formed(),
+            "non-canonical lists were accepted"
+        );
+        policy.allowed_assets = alloc::vec![asset(0), asset(1)];
         policy.max_slippage_bps = 2_001;
-        assert!(!policy.policy_is_well_formed(), "an unbounded slippage grant was accepted");
+        assert!(
+            !policy.policy_is_well_formed(),
+            "an unbounded slippage grant was accepted"
+        );
     }
 
     /// A delegation payload must not be readable as an intent payload: one
     /// grants authority, the other spends it.
     #[test]
     fn a_delegation_is_not_an_intent() {
-        assert!(d(SESSION_DEFAULT).payload(1, &[9u8; 32]).starts_with(DELEGATION_DOMAIN));
+        assert!(d(SESSION_DEFAULT)
+            .payload(1, &[9u8; 32])
+            .starts_with(DELEGATION_DOMAIN));
         assert_ne!(DELEGATION_DOMAIN, b"zyn.auth.v1");
     }
+}
+#[cfg(test)]
+fn asset(n: u8) -> [u8; 32] {
+    [n; 32]
 }

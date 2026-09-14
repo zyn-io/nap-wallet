@@ -107,7 +107,13 @@ impl Saved {
         if p + n != b.len() {
             return Err(StoreError::Trailing(b.len() - (p + n)));
         }
-        Ok(Saved { chain_id, epoch, seq, root, blob })
+        Ok(Saved {
+            chain_id,
+            epoch,
+            seq,
+            root,
+            blob,
+        })
     }
 
     /// Rebuild the state, refusing a blob that does not commit to the recorded
@@ -165,7 +171,9 @@ impl FileStore {
     /// continue from nothing, which no outside verifier can accept.
     pub fn save_ledger(&self, l: &Ledger) -> Result<(), StoreError> {
         let final_path = self.ledger_path(l.chain_id());
-        let tmp_path = self.dir.join(format!(".chain-{}.anchors.tmp", l.chain_id()));
+        let tmp_path = self
+            .dir
+            .join(format!(".chain-{}.anchors.tmp", l.chain_id()));
         let mut out = Vec::new();
         out.extend_from_slice(LEDGER_MAGIC);
         out.extend_from_slice(&l.chain_id().to_be_bytes());
@@ -223,7 +231,9 @@ impl FileStore {
         if p != b.len() {
             return Err(StoreError::Trailing(b.len() - p));
         }
-        Ledger::restore(chain_id, entries).map(Some).map_err(|_| StoreError::RootMismatch)
+        Ledger::restore(chain_id, entries)
+            .map(Some)
+            .map_err(|_| StoreError::RootMismatch)
     }
 
     fn write_atomic(&self, name: &str, bytes: &[u8]) -> Result<(), StoreError> {
@@ -244,8 +254,15 @@ impl FileStore {
     /// Persist the sealed-but-unanchored epochs, and drop files for epochs no
     /// longer pending. With manual anchoring these are what an exit needs
     /// while the anchor is on its way to Zcash.
-    pub fn save_pending<V: MicrochainVm>(&self, chain_id: u32, pending: &[Sealed<V>]) -> Result<(), StoreError> {
-        let keep: Vec<String> = pending.iter().map(|s| Self::sealed_name(chain_id, s.checkpoint.epoch)).collect();
+    pub fn save_pending<V: MicrochainVm>(
+        &self,
+        chain_id: u32,
+        pending: &[Sealed<V>],
+    ) -> Result<(), StoreError> {
+        let keep: Vec<String> = pending
+            .iter()
+            .map(|s| Self::sealed_name(chain_id, s.checkpoint.epoch))
+            .collect();
         for s in pending {
             let mut e = Encoder::new();
             e.bytes(SEALED_MAGIC);
@@ -267,7 +284,10 @@ impl FileStore {
     }
 
     /// The pending epochs on disk, in epoch order.
-    pub fn load_pending<V: MicrochainVm>(&self, chain_id: u32) -> Result<Vec<Sealed<V>>, StoreError> {
+    pub fn load_pending<V: MicrochainVm>(
+        &self,
+        chain_id: u32,
+    ) -> Result<Vec<Sealed<V>>, StoreError> {
         let prefix = format!("pending-{}-", chain_id);
         let mut out = Vec::new();
         for entry in fs::read_dir(&self.dir)? {
@@ -278,20 +298,28 @@ impl FileStore {
             }
             let b = fs::read(entry.path())?;
             let mut d = Decoder::new(&b);
-            if d.take_bytes(SEALED_MAGIC.len()).map_err(|_| StoreError::Truncated)? != SEALED_MAGIC {
+            if d.take_bytes(SEALED_MAGIC.len())
+                .map_err(|_| StoreError::Truncated)?
+                != SEALED_MAGIC
+            {
                 return Err(StoreError::NotAState);
             }
             let checkpoint = decode_checkpoint(&mut d).ok_or(StoreError::Decode)?;
             let actions = d.u64().map_err(|_| StoreError::Truncated)?;
             let n = d.u32().map_err(|_| StoreError::Truncated)? as usize;
-            let snap = Snapshot::<V>::decode(d.take_bytes(n).map_err(|_| StoreError::Truncated)?).ok_or(StoreError::Decode)?;
+            let snap = Snapshot::<V>::decode(d.take_bytes(n).map_err(|_| StoreError::Truncated)?)
+                .ok_or(StoreError::Decode)?;
             if d.remaining() != 0 {
                 return Err(StoreError::Trailing(d.remaining()));
             }
             if snap.root != checkpoint.state_root || snap.verify().is_err() {
                 return Err(StoreError::RootMismatch);
             }
-            out.push(Sealed { checkpoint, actions, snapshot: snap });
+            out.push(Sealed {
+                checkpoint,
+                actions,
+                snapshot: snap,
+            });
         }
         out.sort_by_key(|s| s.checkpoint.epoch);
         Ok(out)
@@ -302,7 +330,12 @@ impl FileStore {
     }
 
     /// The anchor in flight and how many pending epochs it covers.
-    pub fn save_proposal(&self, chain_id: u32, a: &Anchor, covered: usize) -> Result<(), StoreError> {
+    pub fn save_proposal(
+        &self,
+        chain_id: u32,
+        a: &Anchor,
+        covered: usize,
+    ) -> Result<(), StoreError> {
         let mut out = Vec::new();
         out.extend_from_slice(PROPOSAL_MAGIC);
         out.extend_from_slice(&(covered as u32).to_be_bytes());
@@ -358,7 +391,13 @@ mod tests {
             let at = s.seq;
             let intent =
                 Intent::next_deposit(&s, [n; 32], XZEC, Fixed::whole(100 * n as i64), [0u8; 32]);
-            vm::apply(&mut s, &SequencedIntent { seq: at + 1, intent });
+            vm::apply(
+                &mut s,
+                &SequencedIntent {
+                    seq: at + 1,
+                    intent,
+                },
+            );
         }
         s
     }
@@ -401,7 +440,10 @@ mod tests {
     fn a_blob_that_does_not_match_its_root_is_refused() {
         let mut saved = Saved::of(&chain());
         saved.root = [0xAB; 32];
-        assert!(matches!(saved.restore::<SwapState>(), Err(StoreError::RootMismatch)));
+        assert!(matches!(
+            saved.restore::<SwapState>(),
+            Err(StoreError::RootMismatch)
+        ));
     }
 
     #[test]
@@ -409,7 +451,10 @@ mod tests {
         let mut saved = Saved::of(&chain());
         let n = saved.blob.len();
         saved.blob[n - 1] ^= 0xFF;
-        assert!(saved.restore::<SwapState>().is_err(), "a corrupted state was resumed");
+        assert!(
+            saved.restore::<SwapState>().is_err(),
+            "a corrupted state was resumed"
+        );
     }
 
     #[test]
@@ -420,23 +465,36 @@ mod tests {
 
         let bytes = saved.encode();
         for cut in MAGIC.len()..bytes.len() {
-            assert!(Saved::decode(&bytes[..cut]).is_err(), "truncation at {} decoded", cut);
+            assert!(
+                Saved::decode(&bytes[..cut]).is_err(),
+                "truncation at {} decoded",
+                cut
+            );
         }
         let mut extra = saved.encode();
         extra.push(0);
-        assert!(matches!(Saved::decode(&extra), Err(StoreError::Trailing(1))));
+        assert!(matches!(
+            Saved::decode(&extra),
+            Err(StoreError::Trailing(1))
+        ));
     }
 
     #[test]
     fn a_file_store_round_trips_and_reports_a_first_launch() {
         let dir = tmpdir("roundtrip");
         let store = FileStore::new(&dir).unwrap();
-        assert!(store.load(11).unwrap().is_none(), "an empty store was not a first launch");
+        assert!(
+            store.load(11).unwrap().is_none(),
+            "an empty store was not a first launch"
+        );
 
         let s = chain();
         store.save(&Saved::of(&s)).unwrap();
         let loaded = store.load(11).unwrap().expect("saved state should load");
-        assert_eq!(loaded.restore::<SwapState>().unwrap().state_root(), s.state_root());
+        assert_eq!(
+            loaded.restore::<SwapState>().unwrap().state_root(),
+            s.state_root()
+        );
 
         // Saving again replaces in place rather than accumulating.
         let mut s2 = s.clone();
@@ -450,7 +508,13 @@ mod tests {
         );
         store.save(&Saved::of(&s2)).unwrap();
         assert_eq!(
-            store.load(11).unwrap().unwrap().restore::<SwapState>().unwrap().state_root(),
+            store
+                .load(11)
+                .unwrap()
+                .unwrap()
+                .restore::<SwapState>()
+                .unwrap()
+                .state_root(),
             s2.state_root()
         );
         let _ = fs::remove_dir_all(&dir);
@@ -464,7 +528,16 @@ mod tests {
         let mut b = SwapState::new(22, Params::v1());
         let observed = b.backing_of(XZEC).add(Fixed::whole(5)).unwrap();
         let at = b.seq;
-        vm::apply(&mut b, &SequencedIntent { seq: at + 1, intent: Intent::AttestVaultBalance { asset: XZEC, observed } });
+        vm::apply(
+            &mut b,
+            &SequencedIntent {
+                seq: at + 1,
+                intent: Intent::AttestVaultBalance {
+                    asset: XZEC,
+                    observed,
+                },
+            },
+        );
         let intent = Intent::next_deposit(&b, [7u8; 32], XZEC, Fixed::whole(5), [0u8; 32]);
         vm::apply(&mut b, &SequencedIntent { seq: 1, intent });
         store.save(&Saved::of(&a)).unwrap();
@@ -480,10 +553,22 @@ mod tests {
         use zyn_vm::Checkpoint;
         let dir = tmpdir("ledger");
         let store = FileStore::new(&dir).unwrap();
-        assert!(store.load_ledger(7).unwrap().is_none(), "a first launch has no ledger");
+        assert!(
+            store.load_ledger(7).unwrap().is_none(),
+            "a first launch has no ledger"
+        );
         let mut l = Ledger::new(7);
         let a = Anchor {
-            checkpoint: Checkpoint { chain_id: 7, epoch: 7, parent_root: [0u8; 32], state_root: [9u8; 32], intent_root: [1u8; 32], seq: 700, intents: 100, gross_volume: Fixed::ZERO },
+            checkpoint: Checkpoint {
+                chain_id: 7,
+                epoch: 7,
+                parent_root: [0u8; 32],
+                state_root: [9u8; 32],
+                intent_root: [1u8; 32],
+                seq: 700,
+                intents: 100,
+                gross_volume: Fixed::ZERO,
+            },
             previous_root: [0u8; 32],
             epochs: 7,
             actions: 700,
@@ -494,7 +579,10 @@ mod tests {
         assert_eq!(back.head_root(), l.head_root());
         assert_eq!(back.certificates().len(), 1);
         fs::write(dir.join("chain-7.anchors"), b"garbage").unwrap();
-        assert!(store.load_ledger(7).is_err(), "junk must not load as a ledger");
+        assert!(
+            store.load_ledger(7).is_err(),
+            "junk must not load as a ledger"
+        );
     }
 
     #[test]
@@ -503,8 +591,14 @@ mod tests {
         use crate::node::Node;
         let dir = tmpdir("pending");
         let store = FileStore::new(&dir).unwrap();
-        let policy = EpochPolicy { intents_per_epoch: 2, epochs_per_anchor: 100, max_seconds_per_epoch: 0, max_seconds_per_anchor: 0 };
-        let mut n: Node<SwapState> = Node::resume(chain(), policy, Economics::flat(1), 0).with_manual_anchoring();
+        let policy = EpochPolicy {
+            intents_per_epoch: 2,
+            epochs_per_anchor: 100,
+            max_seconds_per_epoch: 0,
+            max_seconds_per_anchor: 0,
+        };
+        let mut n: Node<SwapState> =
+            Node::resume(chain(), policy, Economics::flat(1), 0).with_manual_anchoring();
         for i in 0..4u8 {
             let d = Intent::next_deposit(n.state(), [10 + i; 32], XZEC, Fixed::whole(1), [0u8; 32]);
             n.submit_operator(d, 0);

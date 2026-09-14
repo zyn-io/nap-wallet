@@ -13,7 +13,10 @@ use zyn::node::Node;
 use zyn_vm::spec::MicrochainVm;
 
 fn main() {
-    let n: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(10_000);
+    let n: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
 
     // A plausible production policy: seal every 256 actions, anchor every 30
     // epochs. One Zcash transaction should therefore carry ~7,680 actions.
@@ -30,7 +33,13 @@ fn main() {
     let who = [1u8; 32];
     let amount = Fixed::whole(1_000_000);
     let observed = node.state().backing_of(XZEC).add(amount).unwrap();
-    node.submit_operator(Intent::AttestVaultBalance { asset: XZEC, observed }, 0);
+    node.submit_operator(
+        Intent::AttestVaultBalance {
+            asset: XZEC,
+            observed,
+        },
+        0,
+    );
     let d = Intent::next_deposit(node.state(), who, XZEC, amount, [0u8; 32]);
     node.submit_operator(d, 0);
     let e = node.state().epoch();
@@ -61,7 +70,10 @@ fn main() {
     println!("{} actions submitted\n", n);
     println!("  epochs sealed        {}", r.compression.epochs);
     println!("  anchors produced     {}", r.compression.anchors);
-    println!("  (observed: {} seals, {} anchors)", seals_seen, anchors_seen);
+    println!(
+        "  (observed: {} seals, {} anchors)",
+        seals_seen, anchors_seen
+    );
     println!("  epochs still pending {}", node.pending().len());
     println!();
     match r.ratio {
@@ -76,9 +88,17 @@ fn main() {
         }
     }
     println!();
-    println!("  final seq {}  epoch {}", node.state().seq(), node.state().epoch());
+    println!(
+        "  final seq {}  epoch {}",
+        node.state().seq(),
+        node.state().epoch()
+    );
     println!(
         "  a snapshot is {}",
-        if node.publishable().is_some() { "available to publish" } else { "NOT available" }
+        if node.publishable().is_some() {
+            "available to publish"
+        } else {
+            "NOT available"
+        }
     );
 }

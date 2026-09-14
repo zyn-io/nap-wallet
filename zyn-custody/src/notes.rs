@@ -137,17 +137,28 @@ impl NoteStore {
     /// commitment after it is appended by the scan. The root then equals the
     /// chain's, which `root_bytes` lets a caller check against the node.
     pub fn from_frontier(final_state: &[u8], height: u64) -> Result<NoteStore, NoteError> {
-        let tree = zcash_primitives::merkle_tree::read_commitment_tree::<MerkleHashOrchard, _, DEPTH>(
-            final_state,
-        )
-        .map_err(|_| NoteError::BadFrontier)?;
+        let tree =
+            zcash_primitives::merkle_tree::read_commitment_tree::<MerkleHashOrchard, _, DEPTH>(
+                final_state,
+            )
+            .map_err(|_| NoteError::BadFrontier)?;
         let frontier = tree.to_frontier();
-        let appended = frontier.value().map(|f| u64::from(f.position()) + 1).unwrap_or(0);
+        let appended = frontier
+            .value()
+            .map(|f| u64::from(f.position()) + 1)
+            .unwrap_or(0);
         let tree = match frontier.take() {
             Some(f) => BridgeTree::from_frontier(CHECKPOINT_DEPTH, f),
             None => BridgeTree::new(CHECKPOINT_DEPTH),
         };
-        Ok(NoteStore { tree, held: BTreeMap::new(), in_flight: BTreeMap::new(), spent: Default::default(), appended, synced_to: Some(height) })
+        Ok(NoteStore {
+            tree,
+            held: BTreeMap::new(),
+            in_flight: BTreeMap::new(),
+            spent: Default::default(),
+            appended,
+            synced_to: Some(height),
+        })
     }
 
     /// The current root, in `MerkleHashOrchard` byte order.
@@ -195,7 +206,15 @@ impl NoteStore {
 
     /// Record a note we decrypted at a position we appended.
     pub fn hold(&mut self, note: Note, position: Position, height: u64, txid: [u8; 32]) {
-        self.held.insert(position.into(), HeldNote { note, position, height, txid });
+        self.held.insert(
+            position.into(),
+            HeldNote {
+                note,
+                position,
+                height,
+                txid,
+            },
+        );
     }
 
     /// Mark the **start** of a block, before appending any of its
@@ -237,7 +256,10 @@ impl NoteStore {
 
     /// The authentication path for one held note.
     pub fn witness(&self, position: Position) -> Result<MerklePath, NoteError> {
-        let path = self.tree.witness(position, 0).map_err(|_| NoteError::NoWitness)?;
+        let path = self
+            .tree
+            .witness(position, 0)
+            .map_err(|_| NoteError::NoWitness)?;
         let auth: [MerkleHashOrchard; DEPTH as usize] =
             path.try_into().map_err(|_| NoteError::NoWitness)?;
         Ok(MerklePath::from_parts(u64::from(position) as u32, auth))
@@ -279,7 +301,10 @@ impl NoteStore {
             chosen.push(n.clone());
         }
         if total < amount {
-            return Err(NoteError::Insufficient { held: total, needed: amount });
+            return Err(NoteError::Insufficient {
+                held: total,
+                needed: amount,
+            });
         }
         Ok(chosen)
     }
@@ -287,11 +312,24 @@ impl NoteStore {
     /// Forget a note that has been spent.
     /// Forget the held note whose nullifier this is, if any. A wallet learns
     /// its own spends this way — the chain reveals nullifiers, not notes.
-    pub fn spend_nullifier(&mut self, nf: &orchard::note::Nullifier, fvk: &orchard::keys::FullViewingKey) -> Option<HeldNote> {
-        let gone = if let Some(pos) = self.in_flight.values().find(|h| h.note.nullifier(fvk) == *nf).map(|h| h.position) {
+    pub fn spend_nullifier(
+        &mut self,
+        nf: &orchard::note::Nullifier,
+        fvk: &orchard::keys::FullViewingKey,
+    ) -> Option<HeldNote> {
+        let gone = if let Some(pos) = self
+            .in_flight
+            .values()
+            .find(|h| h.note.nullifier(fvk) == *nf)
+            .map(|h| h.position)
+        {
             self.in_flight.remove(&u64::from(pos))
         } else {
-            let pos = self.held.values().find(|h| h.note.nullifier(fvk) == *nf).map(|h| h.position)?;
+            let pos = self
+                .held
+                .values()
+                .find(|h| h.note.nullifier(fvk) == *nf)
+                .map(|h| h.position)?;
             self.held.remove(&u64::from(pos))
         };
         if gone.is_some() {
@@ -303,8 +341,17 @@ impl NoteStore {
     /// Whether this nullifier is one of ours — a note held, spent by us and
     /// not yet seen on the chain, or already seen spent. In every case the
     /// transaction revealing it is one this wallet sent.
-    pub fn holds_nullifier(&self, nf: &orchard::note::Nullifier, fvk: &orchard::keys::FullViewingKey) -> bool {
-        self.spent.contains(&nf.to_bytes()) || self.held.values().chain(self.in_flight.values()).any(|h| h.note.nullifier(fvk) == *nf)
+    pub fn holds_nullifier(
+        &self,
+        nf: &orchard::note::Nullifier,
+        fvk: &orchard::keys::FullViewingKey,
+    ) -> bool {
+        self.spent.contains(&nf.to_bytes())
+            || self
+                .held
+                .values()
+                .chain(self.in_flight.values())
+                .any(|h| h.note.nullifier(fvk) == *nf)
     }
 
     /// Forget a note we have just spent. It stays known as *in flight*
@@ -345,8 +392,14 @@ mod tests {
         })
         .unwrap();
         let rseed = RandomSeed::from_bytes([seed ^ 0xAA; 32], &rho).unwrap();
-        Note::from_parts(recipient, NoteValue::from_raw(value), rho, rseed, NoteVersion::V2)
-            .unwrap()
+        Note::from_parts(
+            recipient,
+            NoteValue::from_raw(value),
+            rho,
+            rseed,
+            NoteVersion::V2,
+        )
+        .unwrap()
     }
 
     pub(crate) fn cmx(n: &Note) -> ExtractedNoteCommitment {
@@ -428,7 +481,13 @@ mod tests {
         let n = note(3, 10);
         let p = s.append(&cmx(&n), true).unwrap();
         s.hold(n, p, 1, [0u8; 32]);
-        assert_eq!(s.select(99), Err(NoteError::Insufficient { held: 10, needed: 99 }));
+        assert_eq!(
+            s.select(99),
+            Err(NoteError::Insufficient {
+                held: 10,
+                needed: 99
+            })
+        );
     }
 
     /// A note credited from a block that was reorganised away is not a note.
@@ -461,7 +520,10 @@ mod tests {
         assert!(s.anchor().is_ok(), "the empty tree has a root");
         assert!(s.is_empty());
         assert_eq!(s.balance(), 0);
-        assert!(matches!(s.select(1), Err(NoteError::Insufficient { held: 0, needed: 1 })));
+        assert!(matches!(
+            s.select(1),
+            Err(NoteError::Insufficient { held: 0, needed: 1 })
+        ));
     }
 
     /// An unmarked position is somebody else's note, and we cannot witness it.
@@ -470,7 +532,10 @@ mod tests {
         let mut s = NoteStore::new();
         s.begin_block(1);
         s.append(&cmx(&note(50, 1)), false);
-        assert!(matches!(s.witness(Position::from(0)), Err(NoteError::NoWitness)));
+        assert!(matches!(
+            s.witness(Position::from(0)),
+            Err(NoteError::NoWitness)
+        ));
     }
 }
 
@@ -494,25 +559,51 @@ mod disk {
 
     struct W(Vec<u8>);
     impl W {
-        fn u8(&mut self, v: u8) { self.0.push(v); }
-        fn u32(&mut self, v: u32) { self.0.extend_from_slice(&v.to_le_bytes()); }
-        fn u64(&mut self, v: u64) { self.0.extend_from_slice(&v.to_le_bytes()); }
-        fn bytes(&mut self, b: &[u8]) { self.0.extend_from_slice(b); }
-        fn hash(&mut self, h: &MerkleHashOrchard) { self.bytes(&h.to_bytes()); }
-        fn opt_u64(&mut self, v: Option<u64>) { self.u8(v.is_some() as u8); self.u64(v.unwrap_or(0)); }
-        fn address(&mut self, a: &Address) { self.u8(u8::from(a.level())); self.u64(a.index()); }
-        fn frontier(&mut self, f: &incrementalmerkletree::frontier::NonEmptyFrontier<MerkleHashOrchard>) {
+        fn u8(&mut self, v: u8) {
+            self.0.push(v);
+        }
+        fn u32(&mut self, v: u32) {
+            self.0.extend_from_slice(&v.to_le_bytes());
+        }
+        fn u64(&mut self, v: u64) {
+            self.0.extend_from_slice(&v.to_le_bytes());
+        }
+        fn bytes(&mut self, b: &[u8]) {
+            self.0.extend_from_slice(b);
+        }
+        fn hash(&mut self, h: &MerkleHashOrchard) {
+            self.bytes(&h.to_bytes());
+        }
+        fn opt_u64(&mut self, v: Option<u64>) {
+            self.u8(v.is_some() as u8);
+            self.u64(v.unwrap_or(0));
+        }
+        fn address(&mut self, a: &Address) {
+            self.u8(u8::from(a.level()));
+            self.u64(a.index());
+        }
+        fn frontier(
+            &mut self,
+            f: &incrementalmerkletree::frontier::NonEmptyFrontier<MerkleHashOrchard>,
+        ) {
             self.u64(u64::from(f.position()));
             self.hash(f.leaf());
             self.u32(f.ommers().len() as u32);
-            for o in f.ommers() { self.hash(o); }
+            for o in f.ommers() {
+                self.hash(o);
+            }
         }
         fn bridge(&mut self, b: &MerkleBridge<MerkleHashOrchard>) {
             self.opt_u64(b.prior_position().map(u64::from));
             self.u32(b.tracking().len() as u32);
-            for a in b.tracking() { self.address(a); }
+            for a in b.tracking() {
+                self.address(a);
+            }
             self.u32(b.ommers().len() as u32);
-            for (a, h) in b.ommers() { self.address(a); self.hash(h); }
+            for (a, h) in b.ommers() {
+                self.address(a);
+                self.hash(h);
+            }
             self.frontier(b.frontier());
         }
     }
@@ -524,29 +615,56 @@ mod disk {
             self.1 += n;
             Some(s)
         }
-        fn u8(&mut self) -> Option<u8> { Some(self.take(1)?[0]) }
-        fn u32(&mut self) -> Option<u32> { Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?)) }
-        fn u64(&mut self) -> Option<u64> { Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?)) }
-        fn arr32(&mut self) -> Option<[u8; 32]> { self.take(32)?.try_into().ok() }
-        fn hash(&mut self) -> Option<MerkleHashOrchard> { Option::from(MerkleHashOrchard::from_bytes(&self.arr32()?)) }
-        fn opt_u64(&mut self) -> Option<Option<u64>> { let has = self.u8()? != 0; let v = self.u64()?; Some(has.then_some(v)) }
-        fn address(&mut self) -> Option<Address> { let l = self.u8()?; let i = self.u64()?; Some(Address::from_parts(Level::from(l), i)) }
-        fn frontier(&mut self) -> Option<incrementalmerkletree::frontier::NonEmptyFrontier<MerkleHashOrchard>> {
+        fn u8(&mut self) -> Option<u8> {
+            Some(self.take(1)?[0])
+        }
+        fn u32(&mut self) -> Option<u32> {
+            Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+        }
+        fn u64(&mut self) -> Option<u64> {
+            Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+        }
+        fn arr32(&mut self) -> Option<[u8; 32]> {
+            self.take(32)?.try_into().ok()
+        }
+        fn hash(&mut self) -> Option<MerkleHashOrchard> {
+            Option::from(MerkleHashOrchard::from_bytes(&self.arr32()?))
+        }
+        fn opt_u64(&mut self) -> Option<Option<u64>> {
+            let has = self.u8()? != 0;
+            let v = self.u64()?;
+            Some(has.then_some(v))
+        }
+        fn address(&mut self) -> Option<Address> {
+            let l = self.u8()?;
+            let i = self.u64()?;
+            Some(Address::from_parts(Level::from(l), i))
+        }
+        fn frontier(
+            &mut self,
+        ) -> Option<incrementalmerkletree::frontier::NonEmptyFrontier<MerkleHashOrchard>> {
             let pos = Position::from(self.u64()?);
             let leaf = self.hash()?;
             let n = self.u32()? as usize;
             let mut ommers = Vec::with_capacity(n);
-            for _ in 0..n { ommers.push(self.hash()?); }
+            for _ in 0..n {
+                ommers.push(self.hash()?);
+            }
             incrementalmerkletree::frontier::NonEmptyFrontier::from_parts(pos, leaf, ommers).ok()
         }
         fn bridge(&mut self) -> Option<MerkleBridge<MerkleHashOrchard>> {
             let prior = self.opt_u64()?.map(Position::from);
             let n = self.u32()? as usize;
             let mut tracking = std::collections::BTreeSet::new();
-            for _ in 0..n { tracking.insert(self.address()?); }
+            for _ in 0..n {
+                tracking.insert(self.address()?);
+            }
             let n = self.u32()? as usize;
             let mut ommers = BTreeMap::new();
-            for _ in 0..n { let a = self.address()?; ommers.insert(a, self.hash()?); }
+            for _ in 0..n {
+                let a = self.address()?;
+                ommers.insert(a, self.hash()?);
+            }
             let frontier = self.frontier()?;
             Some(MerkleBridge::from_parts(prior, tracking, ommers, frontier))
         }
@@ -561,7 +679,10 @@ mod disk {
             self.u64(h.note.value().inner());
             self.bytes(&h.note.rho().to_bytes());
             self.bytes(h.note.rseed().as_bytes());
-            self.u8(match h.note.version() { NoteVersion::V2 => 2, _ => 3 });
+            self.u8(match h.note.version() {
+                NoteVersion::V2 => 2,
+                _ => 3,
+            });
         }
     }
 
@@ -571,14 +692,25 @@ mod disk {
             let height = self.u64()?;
             let txid = self.arr32()?;
             let raw: [u8; 43] = self.take(43)?.try_into().ok()?;
-            let recipient: Option<orchard::Address> = orchard::Address::from_raw_address_bytes(&raw).into();
+            let recipient: Option<orchard::Address> =
+                orchard::Address::from_raw_address_bytes(&raw).into();
             let value = NoteValue::from_raw(self.u64()?);
             let rho: Option<Rho> = Rho::from_bytes(&self.arr32()?).into();
             let rho = rho?;
             let rseed: Option<RandomSeed> = RandomSeed::from_bytes(self.arr32()?, &rho).into();
-            let version = match self.u8()? { 2 => NoteVersion::V2, 3 => NoteVersion::V3, _ => return None };
-            let note: Option<Note> = Note::from_parts(recipient?, value, rho, rseed?, version).into();
-            Some(HeldNote { note: note?, position, height, txid })
+            let version = match self.u8()? {
+                2 => NoteVersion::V2,
+                3 => NoteVersion::V3,
+                _ => return None,
+            };
+            let note: Option<Note> =
+                Note::from_parts(recipient?, value, rho, rseed?, version).into();
+            Some(HeldNote {
+                note: note?,
+                position,
+                height,
+                txid,
+            })
         }
     }
 
@@ -591,44 +723,72 @@ mod disk {
             let t = &self.tree;
             w.u32(t.max_checkpoints() as u32);
             w.u32(t.prior_bridges().len() as u32);
-            for b in t.prior_bridges() { w.bridge(b); }
+            for b in t.prior_bridges() {
+                w.bridge(b);
+            }
             w.u8(t.current_bridge().is_some() as u8);
-            if let Some(b) = t.current_bridge() { w.bridge(b); }
+            if let Some(b) = t.current_bridge() {
+                w.bridge(b);
+            }
             w.u32(t.marked_indices().len() as u32);
-            for (p, i) in t.marked_indices() { w.u64(u64::from(*p)); w.u64(*i as u64); }
+            for (p, i) in t.marked_indices() {
+                w.u64(u64::from(*p));
+                w.u64(*i as u64);
+            }
             w.u32(t.checkpoints().len() as u32);
             for c in t.checkpoints() {
                 w.u32(*c.id());
                 w.u64(c.bridges_len() as u64);
                 w.u32(c.marked().len() as u32);
-                for p in c.marked() { w.u64(u64::from(*p)); }
+                for p in c.marked() {
+                    w.u64(u64::from(*p));
+                }
                 w.u32(c.forgotten().len() as u32);
-                for p in c.forgotten() { w.u64(u64::from(*p)); }
+                for p in c.forgotten() {
+                    w.u64(u64::from(*p));
+                }
             }
             w.u32(self.held.len() as u32);
-            for h in self.held.values() { w.held(h); }
+            for h in self.held.values() {
+                w.held(h);
+            }
             // Appended after the original layout, so a file written before
             // in-flight notes existed still reads (as having none).
             w.u32(self.in_flight.len() as u32);
-            for h in self.in_flight.values() { w.held(h); }
+            for h in self.in_flight.values() {
+                w.held(h);
+            }
             w.u32(self.spent.len() as u32);
-            for nf in &self.spent { w.bytes(nf); }
+            for nf in &self.spent {
+                w.bytes(nf);
+            }
             w.0
         }
 
         pub fn decode(buf: &[u8]) -> Option<NoteStore> {
             let mut r = R(buf, 0);
-            if r.take(8)? != MAGIC { return None; }
+            if r.take(8)? != MAGIC {
+                return None;
+            }
             let appended = r.u64()?;
             let synced_to = r.opt_u64()?;
             let max_checkpoints = r.u32()? as usize;
             let n = r.u32()? as usize;
             let mut prior = Vec::with_capacity(n);
-            for _ in 0..n { prior.push(r.bridge()?); }
-            let current = if r.u8()? != 0 { Some(r.bridge()?) } else { None };
+            for _ in 0..n {
+                prior.push(r.bridge()?);
+            }
+            let current = if r.u8()? != 0 {
+                Some(r.bridge()?)
+            } else {
+                None
+            };
             let n = r.u32()? as usize;
             let mut saved = BTreeMap::new();
-            for _ in 0..n { let p = Position::from(r.u64()?); saved.insert(p, r.u64()? as usize); }
+            for _ in 0..n {
+                let p = Position::from(r.u64()?);
+                saved.insert(p, r.u64()? as usize);
+            }
             let n = r.u32()? as usize;
             let mut checkpoints = std::collections::VecDeque::with_capacity(n);
             for _ in 0..n {
@@ -636,28 +796,50 @@ mod disk {
                 let bridges_len = r.u64()? as usize;
                 let m = r.u32()? as usize;
                 let mut marked = std::collections::BTreeSet::new();
-                for _ in 0..m { marked.insert(Position::from(r.u64()?)); }
+                for _ in 0..m {
+                    marked.insert(Position::from(r.u64()?));
+                }
                 let m = r.u32()? as usize;
                 let mut forgotten = std::collections::BTreeSet::new();
-                for _ in 0..m { forgotten.insert(Position::from(r.u64()?)); }
+                for _ in 0..m {
+                    forgotten.insert(Position::from(r.u64()?));
+                }
                 checkpoints.push_back(Checkpoint::from_parts(id, bridges_len, marked, forgotten));
             }
-            let tree = BridgeTree::from_parts(prior, current, saved, checkpoints, max_checkpoints).ok()?;
+            let tree =
+                BridgeTree::from_parts(prior, current, saved, checkpoints, max_checkpoints).ok()?;
             let n = r.u32()? as usize;
             let mut held = BTreeMap::new();
-            for _ in 0..n { let h = r.held()?; held.insert(u64::from(h.position), h); }
+            for _ in 0..n {
+                let h = r.held()?;
+                held.insert(u64::from(h.position), h);
+            }
             let mut in_flight = BTreeMap::new();
             let mut spent = std::collections::BTreeSet::new();
             if r.1 != buf.len() {
                 let n = r.u32()? as usize;
-                for _ in 0..n { let h = r.held()?; in_flight.insert(u64::from(h.position), h); }
+                for _ in 0..n {
+                    let h = r.held()?;
+                    in_flight.insert(u64::from(h.position), h);
+                }
             }
             if r.1 != buf.len() {
                 let n = r.u32()? as usize;
-                for _ in 0..n { spent.insert(r.arr32()?); }
+                for _ in 0..n {
+                    spent.insert(r.arr32()?);
+                }
             }
-            if r.1 != buf.len() { return None; }
-            Some(NoteStore { tree, held, in_flight, spent, appended, synced_to })
+            if r.1 != buf.len() {
+                return None;
+            }
+            Some(NoteStore {
+                tree,
+                held,
+                in_flight,
+                spent,
+                appended,
+                synced_to,
+            })
         }
     }
 }
@@ -679,7 +861,14 @@ mod disk_tests {
         let addr = fvk.address_at(0u32, Scope::External);
         let rho = Rho::from_bytes(&[1u8; 32]).unwrap();
         let rseed = RandomSeed::from_bytes([2u8; 32], &rho).unwrap();
-        let note: Option<Note> = Note::from_parts(addr, NoteValue::from_raw(5_000), rho, rseed, NoteVersion::V3).into();
+        let note: Option<Note> = Note::from_parts(
+            addr,
+            NoteValue::from_raw(5_000),
+            rho,
+            rseed,
+            NoteVersion::V3,
+        )
+        .into();
         let note = note.unwrap();
         let nf = note.nullifier(&fvk);
 
@@ -692,7 +881,10 @@ mod disk_tests {
         assert!(s.spend(pos).is_some());
         assert_eq!(s.balance(), 0);
         assert_eq!(s.in_flight(), 1);
-        assert!(s.holds_nullifier(&nf, &fvk), "the scanner must still recognise our own spend");
+        assert!(
+            s.holds_nullifier(&nf, &fvk),
+            "the scanner must still recognise our own spend"
+        );
 
         // Across a restart, too.
         let mut s = NoteStore::decode(&s.encode()).expect("round trip");
@@ -702,12 +894,18 @@ mod disk_tests {
         // stays known as ours — a second reader of this store classifying
         // the same block must still see the spend as our own.
         assert!(s.spend_nullifier(&nf, &fvk).is_some());
-        assert!(s.holds_nullifier(&nf, &fvk), "a spent nullifier must still read as ours");
+        assert!(
+            s.holds_nullifier(&nf, &fvk),
+            "a spent nullifier must still read as ours"
+        );
         assert_eq!(s.in_flight(), 0);
         assert_eq!(s.balance(), 0);
         let s = NoteStore::decode(&s.encode()).unwrap();
         assert_eq!(s.in_flight(), 0);
-        assert!(s.holds_nullifier(&nf, &fvk), "and that memory survives a save");
+        assert!(
+            s.holds_nullifier(&nf, &fvk),
+            "and that memory survives a save"
+        );
     }
 
     fn note(seed: u8, to: orchard::Address, version: NoteVersion) -> Note {
@@ -719,8 +917,20 @@ mod disk_tests {
         let mut rs = [0u8; 32];
         rs[0] = seed;
         rs[2] = 1;
-        let rseed = (0u8..=255).find_map(|k| { rs[3] = k; Option::<RandomSeed>::from(RandomSeed::from_bytes(rs, &rho)) }).unwrap();
-        Note::from_parts(to, NoteValue::from_raw(1000 + seed as u64), rho, rseed, version).unwrap()
+        let rseed = (0u8..=255)
+            .find_map(|k| {
+                rs[3] = k;
+                Option::<RandomSeed>::from(RandomSeed::from_bytes(rs, &rho))
+            })
+            .unwrap();
+        Note::from_parts(
+            to,
+            NoteValue::from_raw(1000 + seed as u64),
+            rho,
+            rseed,
+            version,
+        )
+        .unwrap()
     }
 
     /// The property that matters: a store written to disk and read back
@@ -730,16 +940,25 @@ mod disk_tests {
     fn a_store_survives_disk_and_keeps_witnessing() {
         let fvk = FullViewingKey::from(&SpendingKey::from_bytes([1u8; 32]).unwrap());
         let ours = fvk.address_at(0u32, Scope::External);
-        let theirs = FullViewingKey::from(&SpendingKey::from_bytes([2u8; 32]).unwrap()).address_at(0u32, Scope::External);
+        let theirs = FullViewingKey::from(&SpendingKey::from_bytes([2u8; 32]).unwrap())
+            .address_at(0u32, Scope::External);
         let mut a = NoteStore::new();
         let mut held_pos = Vec::new();
         for h in 1..=40u64 {
             a.begin_block(h);
             for k in 0..3u8 {
                 let mine = (h % 7 == 0) && k == 1;
-                let n = note((h as u8) * 3 + k, if mine { ours } else { theirs }, NoteVersion::V3);
+                let n = note(
+                    (h as u8) * 3 + k,
+                    if mine { ours } else { theirs },
+                    NoteVersion::V3,
+                );
                 let pos = a.append(&ExtractedNoteCommitment::from(n.commitment()), mine);
-                if mine { let pos = pos.expect("marked"); a.hold(n, pos, h, [h as u8; 32]); held_pos.push(pos); }
+                if mine {
+                    let pos = pos.expect("marked");
+                    a.hold(n, pos, h, [h as u8; 32]);
+                    held_pos.push(pos);
+                }
             }
             a.finish_block(h);
         }
@@ -749,7 +968,10 @@ mod disk_tests {
         assert_eq!(b.synced_to(), Some(40));
         assert_eq!(b.balance(), a.balance());
         for p in &held_pos {
-            assert_eq!(b.witness(*p).unwrap().auth_path().to_vec(), a.witness(*p).unwrap().auth_path().to_vec());
+            assert_eq!(
+                b.witness(*p).unwrap().auth_path().to_vec(),
+                a.witness(*p).unwrap().auth_path().to_vec()
+            );
         }
         // Keep going on both; they must stay identical.
         for h in 41..=60u64 {
@@ -762,7 +984,10 @@ mod disk_tests {
         }
         assert_eq!(b.root_bytes(), a.root_bytes());
         for p in &held_pos {
-            assert_eq!(b.witness(*p).unwrap().auth_path().to_vec(), a.witness(*p).unwrap().auth_path().to_vec());
+            assert_eq!(
+                b.witness(*p).unwrap().auth_path().to_vec(),
+                a.witness(*p).unwrap().auth_path().to_vec()
+            );
         }
         // Junk is not a store.
         assert!(NoteStore::decode(&bytes[..bytes.len() - 1]).is_none());

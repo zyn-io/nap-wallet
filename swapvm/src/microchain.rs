@@ -29,10 +29,15 @@ impl MicrochainVm for SwapState {
     type Params = Params;
 
     const VM_NAME: &'static str = "zynzap";
-    /// V2 commits the complete authorization record for every sequenced
-    /// action. This intentionally changes the VM id and invalidates signatures
-    /// made for the bare-intent commitment path.
-    const VM_VERSION: u16 = 2;
+    /// V2 committed the complete authorization record for every sequenced
+    /// action. V3 added the graduated-pool ZEC-leg fee contract and expanded
+    /// hop receipt. V4 moves current Cave/NFT POL credits from the placeholder
+    /// account to the pinned `zyn-pol` derived address and removes wallet
+    /// authority from legacy immediate-pool `CreateToken`. These are
+    /// consensus/authorization changes, so old signatures and executions must
+    /// not silently cross the boundary. Persistent addresses remain under the
+    /// separately frozen `ADDRESS_SCOPE_V1`.
+    const VM_VERSION: u16 = 4;
 
     fn genesis(chain_id: u32, params: Params) -> Self {
         SwapState::new(chain_id, params)
@@ -49,15 +54,16 @@ impl MicrochainVm for SwapState {
     }
 
     fn apply(&mut self, seq: u64, intent: &Intent) -> Vec<Receipt> {
-        crate::vm::apply(self, &SequencedIntent { seq, intent: intent.clone() })
+        crate::vm::apply(
+            self,
+            &SequencedIntent {
+                seq,
+                intent: intent.clone(),
+            },
+        )
     }
 
-    fn apply_committed(
-        &mut self,
-        seq: u64,
-        intent: &Intent,
-        committed: &[u8],
-    ) -> Vec<Receipt> {
+    fn apply_committed(&mut self, seq: u64, intent: &Intent, committed: &[u8]) -> Vec<Receipt> {
         crate::vm::apply_committed(
             self,
             &SequencedIntent {
@@ -126,6 +132,10 @@ impl MicrochainVm for SwapState {
             | Intent::BindWithdrawal { account, .. }
             | Intent::Reblind { account, .. } => vec![*account],
 
+            Intent::LaunchCurve { creator, .. } => vec![*creator],
+            Intent::BuyCurve { buyer, .. } => vec![*buyer],
+            Intent::SellCurve { seller, .. } => vec![*seller],
+
             Intent::Transfer { from, .. } => vec![*from],
             Intent::BurnItem { holder, .. } => vec![*holder],
             // Redeeming needs no counterparty: the holder burns their own item
@@ -135,10 +145,15 @@ impl MicrochainVm for SwapState {
             Intent::FundCollection { from, .. } => vec![*from],
             Intent::CreateCollection { creator, .. }
             | Intent::MintCollectionItem { creator, .. }
+            | Intent::MintCollectionItemLegacy { creator, .. }
             | Intent::AdvanceCollection { creator, .. } => vec![*creator],
-            Intent::CreatePool { creator, .. }
-            | Intent::CreateToken { creator, .. }
-            | Intent::MintItem { creator, .. } => vec![*creator],
+            Intent::CreatePool { creator, .. } | Intent::MintItem { creator, .. } => vec![*creator],
+
+            // Historical immediate-pool token creation is retained in the
+            // codec/VM so old journals replay, but no wallet signature can
+            // authorize a new one. Permissionless fungible launches must use
+            // Cave's fixed LaunchCurve template and atomic graduation path.
+            Intent::CreateToken { .. } => Vec::new(),
 
             // Both sides, or it is not an agreement.
             Intent::AcceptOffer { maker, taker, .. } => vec![*maker, *taker],
@@ -165,8 +180,8 @@ impl MicrochainVm for SwapState {
     /// by a check someone could forget.
     fn intent_capability(intent: &Intent) -> u32 {
         use zyn_vm::session::{
-            CAP_COLLECTION, CAP_DELEGATE, CAP_ITEM, CAP_LIQUIDITY, CAP_OFFER,
-            CAP_PRIVACY, CAP_SWAP, CAP_TRANSFER, CAP_WITHDRAW,
+            CAP_COLLECTION, CAP_DELEGATE, CAP_ITEM, CAP_LIQUIDITY, CAP_OFFER, CAP_PRIVACY,
+            CAP_SWAP, CAP_TRANSFER, CAP_WITHDRAW,
         };
         match intent {
             Intent::SwapExactIn { .. } | Intent::SwapExactOut { .. } => CAP_SWAP,
@@ -182,12 +197,20 @@ impl MicrochainVm for SwapState {
             | Intent::RemoveLiquidity { .. }
             | Intent::CreatePool { .. } => CAP_LIQUIDITY,
 
-            Intent::CreateToken { .. }
-            | Intent::MintItem { .. }
-            | Intent::BurnItem { .. } => CAP_ITEM,
+            Intent::MintItem { .. } | Intent::BurnItem { .. } | Intent::LaunchCurve { .. } => {
+                CAP_ITEM
+            }
+
+            // Deliberately impossible for a delegated or ordinary wallet
+            // signature. The operator path exists only for historical replay
+            // and controlled test setup; it is not a public launch API.
+            Intent::CreateToken { .. } => CAP_DELEGATE,
+
+            Intent::BuyCurve { .. } | Intent::SellCurve { .. } => CAP_SWAP,
 
             Intent::CreateCollection { .. }
             | Intent::MintCollectionItem { .. }
+            | Intent::MintCollectionItemLegacy { .. }
             | Intent::AdvanceCollection { .. }
             | Intent::FundCollection { .. }
             | Intent::RedeemCollectionItem { .. } => CAP_COLLECTION,
@@ -216,13 +239,23 @@ impl MicrochainVm for SwapState {
         if !delegation.constrained() {
             return Ok(());
         }
-        let Intent::SwapExactIn { asset_in, path, amount_in, min_out, .. } = intent else {
+        let Intent::SwapExactIn {
+            asset_in,
+            path,
+            amount_in,
+            min_out,
+            ..
+        } = intent
+        else {
             return Err(E::UnsupportedIntent);
         };
         if !delegation.allowed_assets.contains(asset_in) {
             return Err(E::WrongAsset);
         }
-        if path.iter().any(|pool| !delegation.allowed_pools.contains(pool)) {
+        if path
+            .iter()
+            .any(|pool| !delegation.allowed_pools.contains(pool))
+        {
             return Err(E::WrongPool);
         }
         let max = delegation
@@ -331,14 +364,39 @@ mod tests {
         let mut s = SwapState::new(7, Params::v1());
         let go = |s: &mut SwapState, i: Intent| {
             let at = s.seq;
-            let r = crate::vm::apply(s, &SequencedIntent { seq: at + 1, intent: i });
-            assert!(!r.iter().any(|x| x.is_rejection()), "setup rejected: {:?}", r);
+            let r = crate::vm::apply(
+                s,
+                &SequencedIntent {
+                    seq: at + 1,
+                    intent: i,
+                },
+            );
+            assert!(
+                !r.iter().any(|x| x.is_rejection()),
+                "setup rejected: {:?}",
+                r
+            );
         };
         for n in 1..=4u8 {
             {
-                let observed = s.backing_of(XZEC).add(Fixed::whole(10_000 * n as i64)).unwrap();
-                go(&mut s, Intent::AttestVaultBalance { asset: XZEC, observed });
-                let i = Intent::next_deposit(&s, acct(n), XZEC, Fixed::whole(10_000 * n as i64), [0u8; 32]);
+                let observed = s
+                    .backing_of(XZEC)
+                    .add(Fixed::whole(10_000 * n as i64))
+                    .unwrap();
+                go(
+                    &mut s,
+                    Intent::AttestVaultBalance {
+                        asset: XZEC,
+                        observed,
+                    },
+                );
+                let i = Intent::next_deposit(
+                    &s,
+                    acct(n),
+                    XZEC,
+                    Fixed::whole(10_000 * n as i64),
+                    [0u8; 32],
+                );
                 go(&mut s, i);
             }
         }
@@ -347,23 +405,39 @@ mod tests {
         let at = s.epoch;
         go(&mut s, Intent::Checkpoint);
         go(&mut s, Intent::ConfirmAnchor { epoch: at });
-        go(&mut s, Intent::CreateToken {
-            creator: acct(1),
-            symbol: symbol(b"CAT"),
-            supply: Fixed::whole(1_000_000),
-            unit: Fixed::raw(1),
-            xzec_liquidity: Fixed::whole(1_000),
-            token_liquidity: Fixed::whole(500_000),
-            fee_bps: 30,
-        });
-        go(&mut s, Intent::SwapExactIn {
-            account: acct(2),
-            asset_in: XZEC,
-            path: alloc::vec![1],
-            amount_in: Fixed::whole(50),
-            min_out: Fixed::ZERO,
-        });
-        go(&mut s, Intent::RequestWithdrawal { account: acct(3), asset: XZEC, amount: Fixed::whole(100), destination: [0u8; 32] });
+        go(
+            &mut s,
+            Intent::CreateToken {
+                creator: acct(1),
+                symbol: symbol(b"CAT"),
+                supply: Fixed::whole(1_000_000),
+                unit: Fixed::raw(1),
+                xzec_liquidity: Fixed::whole(1_000),
+                token_liquidity: Fixed::whole(500_000),
+                fee_bps: 30,
+            },
+        );
+        let cat = zyn_vm::asset_address(crate::types::ADDRESS_SCOPE_V1, &acct(1), b"CAT");
+        let cat_pool = zyn_vm::pool_address(crate::types::ADDRESS_SCOPE_V1, &XZEC, &cat);
+        go(
+            &mut s,
+            Intent::SwapExactIn {
+                account: acct(2),
+                asset_in: XZEC,
+                path: alloc::vec![cat_pool],
+                amount_in: Fixed::whole(50),
+                min_out: Fixed::ZERO,
+            },
+        );
+        go(
+            &mut s,
+            Intent::RequestWithdrawal {
+                account: acct(3),
+                asset: XZEC,
+                amount: Fixed::whole(100),
+                destination: [0u8; 32],
+            },
+        );
 
         let accepted = Intent::next_deposit(&s, acct(5), XZEC, Fixed::whole(1), [0u8; 32]);
         Fixture {
@@ -383,7 +457,7 @@ mod tests {
                 Intent::SwapExactIn {
                     account: acct(1),
                     asset_in: XZEC,
-                    path: alloc::vec![1],
+                    path: alloc::vec![cat_pool],
                     amount_in: Fixed::whole(5),
                     min_out: Fixed::ZERO,
                 },
@@ -497,9 +571,13 @@ mod tests {
         let violations = check(Fixture {
             state: Broken(f.state),
             accepted: f.accepted,
-            rejected: f.rejected, sequence: Vec::new(),
+            rejected: f.rejected,
+            sequence: Vec::new(),
         });
-        assert!(!violations.is_empty(), "the suite passed a VM with mislabelled sections");
+        assert!(
+            !violations.is_empty(),
+            "the suite passed a VM with mislabelled sections"
+        );
         assert!(
             violations.iter().any(|v| v.rule == "S6"),
             "the section violation was not reported as S6: {:?}",
@@ -516,7 +594,11 @@ mod tests {
         for id in MicrochainVm::account_ids(&s) {
             let spec_path = Provable::account_proof(&s, &id).expect("spec path");
             let own_path = SwapState::account_proof(&s, &id).expect("swapvm path");
-            assert_eq!(spec_path, own_path, "the two exit paths disagree for {}", id[0]);
+            assert_eq!(
+                spec_path, own_path,
+                "the two exit paths disagree for {}",
+                id[0]
+            );
         }
     }
 
@@ -534,24 +616,35 @@ mod tests {
 
         // A conserving batch commits.
         let credit = Intent::next_deposit(&s, acct(6), XZEC, Fixed::whole(5), [0u8; 32]);
-        zvm::apply_batch(&mut s, &[(at + 1, credit)])
-        .expect("a conserving batch must commit");
+        zvm::apply_batch(&mut s, &[(at + 1, credit)]).expect("a conserving batch must commit");
         assert_ne!(MicrochainVm::state_root(&s), before);
 
         // Now break the backing behind the VM's back — the shape of a bug that
         // credits xZEC without recording the ZEC behind it — and confirm no
         // batch can commit from there.
         let mut drifted = s.clone();
-        let b = drifted.tokens.get_mut(&XZEC).unwrap().vault.as_mut().unwrap();
+        let b = drifted
+            .tokens
+            .get_mut(&XZEC)
+            .unwrap()
+            .vault
+            .as_mut()
+            .unwrap();
         b.confirmed = b.confirmed.sub(Fixed::whole(1)).unwrap();
-        assert!(drifted.conserved().is_err(), "unbacked xZEC passed conservation");
+        assert!(
+            drifted.conserved().is_err(),
+            "unbacked xZEC passed conservation"
+        );
 
         let stuck = MicrochainVm::state_root(&drifted);
         let at = drifted.seq;
         let credit = Intent::next_deposit(&drifted, acct(7), XZEC, Fixed::whole(1), [0u8; 32]);
         let batch = [(at + 1, credit)];
         assert!(
-            matches!(zvm::apply_batch(&mut drifted, &batch), Err(zvm::ZvmError::NotConserved(_))),
+            matches!(
+                zvm::apply_batch(&mut drifted, &batch),
+                Err(zvm::ZvmError::NotConserved(_))
+            ),
             "an unbacked state kept committing"
         );
         assert_eq!(MicrochainVm::state_root(&drifted), stuck);
@@ -573,36 +666,51 @@ mod tests {
 
         let s = fixture().state;
         let amount = Fixed::whole(5);
-        let quote = crate::vm::quote(&s, XZEC, &[1], amount).unwrap();
+        let cat = zyn_vm::asset_address(crate::types::ADDRESS_SCOPE_V1, &acct(1), b"CAT");
+        let pool = zyn_vm::pool_address(crate::types::ADDRESS_SCOPE_V1, &XZEC, &cat);
+        let quote = crate::vm::quote(&s, XZEC, &[pool], amount).unwrap();
         let floor = Fixed::raw(quote.amount_out.0 * 9_900 / 10_000);
         let intent = Intent::SwapExactIn {
             account: acct(1),
             asset_in: XZEC,
-            path: alloc::vec![1],
+            path: alloc::vec![pool],
             amount_in: amount,
             min_out: floor,
         };
         let mut mandate = Delegation::session(acct(1), [9u8; 32], s.epoch, 10);
         mandate.allowed_assets = alloc::vec![XZEC, quote.asset_out];
         mandate.allowed_assets.sort_unstable();
-        mandate.allowed_pools = alloc::vec![1];
-        mandate.max_per_action = alloc::vec![AssetLimit { asset: XZEC, amount }];
+        mandate.allowed_pools = alloc::vec![pool];
+        mandate.max_per_action = alloc::vec![AssetLimit {
+            asset: XZEC,
+            amount
+        }];
         mandate.max_slippage_bps = 100;
         mandate.salt = [7u8; 32];
         assert_eq!(s.delegation_policy(&mandate, &intent), Ok(()));
 
         let mut wrong_asset = mandate.clone();
         wrong_asset.allowed_assets.retain(|asset| *asset == XZEC);
-        assert_eq!(s.delegation_policy(&wrong_asset, &intent), Err(E::WrongAsset));
+        assert_eq!(
+            s.delegation_policy(&wrong_asset, &intent),
+            Err(E::WrongAsset)
+        );
         let mut wrong_pool = mandate.clone();
-        wrong_pool.allowed_pools = alloc::vec![2];
+        wrong_pool.allowed_pools = alloc::vec![crate::types::legacy_id(2)];
         assert_eq!(s.delegation_policy(&wrong_pool, &intent), Err(E::WrongPool));
         let mut over = intent.clone();
-        if let Intent::SwapExactIn { amount_in, .. } = &mut over { *amount_in = Fixed::whole(6); }
+        if let Intent::SwapExactIn { amount_in, .. } = &mut over {
+            *amount_in = Fixed::whole(6);
+        }
         assert_eq!(s.delegation_policy(&mandate, &over), Err(E::OverLimit));
         let mut loose = intent;
-        if let Intent::SwapExactIn { min_out, .. } = &mut loose { *min_out = Fixed::ZERO; }
-        assert_eq!(s.delegation_policy(&mandate, &loose), Err(E::ExcessiveSlippage));
+        if let Intent::SwapExactIn { min_out, .. } = &mut loose {
+            *min_out = Fixed::ZERO;
+        }
+        assert_eq!(
+            s.delegation_policy(&mandate, &loose),
+            Err(E::ExcessiveSlippage)
+        );
     }
 }
 
@@ -611,8 +719,8 @@ mod authority_tests {
     use super::*;
     use crate::tx::Intent;
     use zyn_vm::session::{
-        CAP_COLLECTION, CAP_DELEGATE, CAP_ITEM, CAP_LIQUIDITY, CAP_OFFER,
-        CAP_PRIVACY, CAP_SWAP, CAP_TRANSFER, CAP_WITHDRAW,
+        CAP_COLLECTION, CAP_DELEGATE, CAP_ITEM, CAP_LIQUIDITY, CAP_OFFER, CAP_PRIVACY, CAP_SWAP,
+        CAP_TRANSFER, CAP_WITHDRAW,
     };
 
     const A: zyn_vm::spec::AccountId = [1u8; 32];
@@ -622,21 +730,74 @@ mod authority_tests {
     /// something the holder holds — which is the opposite of the claim.
     #[test]
     fn a_holder_authorises_their_own_redemption() {
-        let i = Intent::RedeemCollectionItem { holder: A, asset: 7 };
-        assert_eq!(<SwapState as MicrochainVm>::intent_authorities(&i), alloc::vec![A]);
-        assert_eq!(<SwapState as MicrochainVm>::intent_capability(&i), CAP_COLLECTION);
+        let i = Intent::RedeemCollectionItem {
+            holder: A,
+            asset: crate::types::legacy_id(7),
+        };
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_authorities(&i),
+            alloc::vec![A]
+        );
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_capability(&i),
+            CAP_COLLECTION
+        );
+    }
+
+    #[test]
+    fn the_legacy_immediate_pool_launch_has_no_wallet_authority() {
+        let i = Intent::CreateToken {
+            creator: A,
+            symbol: crate::state::symbol(b"OLD\0\0\0\0\0"),
+            supply: crate::Fixed::whole(1_000_000),
+            unit: crate::Fixed::raw(1),
+            xzec_liquidity: crate::Fixed::whole(10),
+            token_liquidity: crate::Fixed::whole(500_000),
+            fee_bps: 100,
+        };
+        assert!(<SwapState as MicrochainVm>::intent_authorities(&i).is_empty());
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_capability(&i),
+            CAP_DELEGATE
+        );
     }
 
     /// Running a collection is the creator's, and each of these names them.
     #[test]
     fn running_a_collection_has_its_own_capability() {
         for i in [
-            Intent::CreateCollection { creator: A, symbol: *b"NAP\0\0\0\0\0", cap: 10, fee_bps: 100 },
-            Intent::MintCollectionItem { creator: A, collection: 1, to: [2u8; 32], symbol: *b"NAP\0\0\0\0\0", content: [3u8; 32] },
-            Intent::AdvanceCollection { creator: A, collection: 1, to: 1 },
+            Intent::CreateCollection {
+                creator: A,
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                cap: 10,
+                fee_bps: 100,
+            },
+            Intent::MintCollectionItem {
+                creator: A,
+                collection: crate::types::legacy_id(1),
+                serial: 0,
+                to: [2u8; 32],
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                content: [3u8; 32],
+            },
+            Intent::AdvanceCollection {
+                creator: A,
+                collection: crate::types::legacy_id(1),
+                to: 1,
+            },
         ] {
-            assert_eq!(<SwapState as MicrochainVm>::intent_authorities(&i), alloc::vec![A], "{:?}", i);
-            assert_eq!(<SwapState as MicrochainVm>::intent_capability(&i), CAP_COLLECTION, "{:?}", i);
+            assert_eq!(
+                <SwapState as MicrochainVm>::intent_authorities(&i),
+                alloc::vec![A],
+                "{:?}",
+                i
+            );
+            assert_eq!(
+                <SwapState as MicrochainVm>::intent_capability(&i),
+                CAP_COLLECTION,
+                "{:?}",
+                i
+            );
         }
     }
 
@@ -644,26 +805,114 @@ mod authority_tests {
     /// to do it even though a separately approved collection session can.
     #[test]
     fn funding_a_pool_needs_a_cold_key() {
-        let i = Intent::FundCollection { from: A, collection: 1, amount: crate::Fixed::whole(1) };
-        assert_eq!(<SwapState as MicrochainVm>::intent_authorities(&i), alloc::vec![A]);
-        assert_eq!(<SwapState as MicrochainVm>::intent_capability(&i), CAP_COLLECTION);
+        let i = Intent::FundCollection {
+            from: A,
+            collection: crate::types::legacy_id(1),
+            amount: crate::Fixed::whole(1),
+        };
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_authorities(&i),
+            alloc::vec![A]
+        );
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_capability(&i),
+            CAP_COLLECTION
+        );
     }
 
     #[test]
     fn every_user_effect_has_a_distinct_capability_class() {
         let cases = [
-            (Intent::SwapExactIn { account: A, asset_in: 0, path: alloc::vec![1], amount_in: crate::Fixed::whole(1), min_out: crate::Fixed::ZERO }, CAP_SWAP),
-            (Intent::Transfer { from: A, to: [2u8; 32], asset: 0, amount: crate::Fixed::whole(1) }, CAP_TRANSFER),
-            (Intent::PlaceOffer { maker: A, offer_asset: 0, offer_amount: crate::Fixed::whole(1), want_asset: 1, want_amount: crate::Fixed::whole(1), expires_at_epoch: 10 }, CAP_OFFER),
-            (Intent::AddLiquidity { account: A, pool: 1, max0: crate::Fixed::whole(1), max1: crate::Fixed::whole(1), min_shares: crate::Fixed::ZERO }, CAP_LIQUIDITY),
-            (Intent::MintItem { creator: A, symbol: *b"NAP\0\0\0\0\0", supply: crate::Fixed::whole(1), bond: crate::Fixed::whole(1), content: [3u8; 32] }, CAP_ITEM),
-            (Intent::CreateCollection { creator: A, symbol: *b"NAP\0\0\0\0\0", cap: 10, fee_bps: 100 }, CAP_COLLECTION),
-            (Intent::Reblind { account: A, blind: [4u8; 32] }, CAP_PRIVACY),
-            (Intent::RequestWithdrawal { account: A, asset: 0, amount: crate::Fixed::whole(1), destination: [5u8; 32] }, CAP_WITHDRAW),
-            (Intent::BindWithdrawal { account: A, destination: [6u8; 32] }, CAP_DELEGATE),
+            (
+                Intent::SwapExactIn {
+                    account: A,
+                    asset_in: crate::types::legacy_id(0),
+                    path: alloc::vec![crate::types::legacy_id(1)],
+                    amount_in: crate::Fixed::whole(1),
+                    min_out: crate::Fixed::ZERO,
+                },
+                CAP_SWAP,
+            ),
+            (
+                Intent::Transfer {
+                    from: A,
+                    to: [2u8; 32],
+                    asset: crate::types::legacy_id(0),
+                    amount: crate::Fixed::whole(1),
+                },
+                CAP_TRANSFER,
+            ),
+            (
+                Intent::PlaceOffer {
+                    maker: A,
+                    offer_asset: crate::types::legacy_id(0),
+                    offer_amount: crate::Fixed::whole(1),
+                    want_asset: crate::types::legacy_id(1),
+                    want_amount: crate::Fixed::whole(1),
+                    expires_at_epoch: 10,
+                },
+                CAP_OFFER,
+            ),
+            (
+                Intent::AddLiquidity {
+                    account: A,
+                    pool: crate::types::legacy_id(1),
+                    max0: crate::Fixed::whole(1),
+                    max1: crate::Fixed::whole(1),
+                    min_shares: crate::Fixed::ZERO,
+                },
+                CAP_LIQUIDITY,
+            ),
+            (
+                Intent::MintItem {
+                    creator: A,
+                    symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                    supply: crate::Fixed::whole(1),
+                    bond: crate::Fixed::whole(1),
+                    content: [3u8; 32],
+                },
+                CAP_ITEM,
+            ),
+            (
+                Intent::CreateCollection {
+                    creator: A,
+                    symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                    cap: 10,
+                    fee_bps: 100,
+                },
+                CAP_COLLECTION,
+            ),
+            (
+                Intent::Reblind {
+                    account: A,
+                    blind: [4u8; 32],
+                },
+                CAP_PRIVACY,
+            ),
+            (
+                Intent::RequestWithdrawal {
+                    account: A,
+                    asset: crate::types::legacy_id(0),
+                    amount: crate::Fixed::whole(1),
+                    destination: [5u8; 32],
+                },
+                CAP_WITHDRAW,
+            ),
+            (
+                Intent::BindWithdrawal {
+                    account: A,
+                    destination: [6u8; 32],
+                },
+                CAP_DELEGATE,
+            ),
         ];
         for (intent, expected) in cases {
-            assert_eq!(<SwapState as MicrochainVm>::intent_capability(&intent), expected, "{:?}", intent);
+            assert_eq!(
+                <SwapState as MicrochainVm>::intent_capability(&intent),
+                expected,
+                "{:?}",
+                intent
+            );
         }
     }
 }

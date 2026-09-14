@@ -9,8 +9,8 @@
 //! must produce the **same root the node reports**, or every witness it
 //! yields is a proof against a tree the chain does not have.
 
-use zyn_custody::notes::NoteStore;
 use orchard::ValuePool;
+use zyn_custody::notes::NoteStore;
 use zyn_custody::shielded::{PoolStores, Scanner, VaultKeys};
 use zyn_custody::zebra::{Network, Zebra};
 
@@ -29,10 +29,18 @@ fn the_vaults_tree_matches_the_chains_root() {
     let seed = |pool: ValuePool| {
         let ts = zebra.tree_state_of(start, pool).unwrap();
         let store = NoteStore::from_frontier(&ts.final_state, start).unwrap();
-        assert_eq!(store.root_bytes().unwrap(), ts.final_root, "{:?}: a tree seeded from the node's frontier has a different root", pool);
+        assert_eq!(
+            store.root_bytes().unwrap(),
+            ts.final_root,
+            "{:?}: a tree seeded from the node's frontier has a different root",
+            pool
+        );
         std::sync::Arc::new(std::sync::Mutex::new(store))
     };
-    let stores = PoolStores { orchard: seed(ValuePool::Orchard), ironwood: seed(ValuePool::Ironwood) };
+    let stores = PoolStores {
+        orchard: seed(ValuePool::Orchard),
+        ironwood: seed(ValuePool::Ironwood),
+    };
 
     // Feed twelve real blocks and compare again: this is the scan path the
     // daemon uses, appending every shielded commitment on the chain to the
@@ -47,7 +55,18 @@ fn the_vaults_tree_matches_the_chains_root() {
         let after = zebra.tree_state_of(end, pool).unwrap();
         let s = stores.of(pool).lock().unwrap();
         assert_eq!(s.synced_to(), Some(end));
-        assert_eq!(s.root_bytes().unwrap(), after.final_root, "{:?}: after {} appended commitments our root diverged from the chain's", pool, s.appended());
-        eprintln!("{:?} tree in step with testnet at {}: {} commitments total", pool, end, s.appended());
+        assert_eq!(
+            s.root_bytes().unwrap(),
+            after.final_root,
+            "{:?}: after {} appended commitments our root diverged from the chain's",
+            pool,
+            s.appended()
+        );
+        eprintln!(
+            "{:?} tree in step with testnet at {}: {} commitments total",
+            pool,
+            end,
+            s.appended()
+        );
     }
 }

@@ -82,15 +82,24 @@ pub fn is_evm(origin: ChainOrigin) -> bool {
 
 /// The chain id an origin settles on. `None` for a non-EVM or unregistered one.
 pub fn chain_id_of(origin: ChainOrigin) -> Option<ChainId> {
-    ORIGINS.iter().find(|(o, _, _)| *o == origin).map(|(_, id, _)| *id)
+    ORIGINS
+        .iter()
+        .find(|(o, _, _)| *o == origin)
+        .map(|(_, id, _)| *id)
 }
 
 pub fn origin_of_chain_id(id: ChainId) -> Option<ChainOrigin> {
-    ORIGINS.iter().find(|(_, c, _)| *c == id).map(|(o, _, _)| *o)
+    ORIGINS
+        .iter()
+        .find(|(_, c, _)| *c == id)
+        .map(|(o, _, _)| *o)
 }
 
 pub fn is_testnet(origin: ChainOrigin) -> Option<bool> {
-    ORIGINS.iter().find(|(o, _, _)| *o == origin).map(|(_, _, t)| *t)
+    ORIGINS
+        .iter()
+        .find(|(o, _, _)| *o == origin)
+        .map(|(_, _, t)| *t)
 }
 
 /// `keccak(address ‖ salt)` — the destination commitment for an EVM payout.
@@ -122,7 +131,7 @@ pub struct EvmPayout {
     /// Carrying the id rather than the token address is deliberate: it deletes
     /// the failure where two signers hold different asset tables, and moves the
     /// one copy that matters on-chain where it can be audited.
-    pub asset: u32,
+    pub asset: crate::settle::AssetId,
     /// WAD-scaled, exactly as the VM holds it.
     ///
     /// [`Fixed`] is scaled by 1e18 to match Solidity's convention, so an
@@ -160,7 +169,10 @@ pub fn resolve(
 ) -> Result<Vec<EvmPayout>, EvmError> {
     let mut out = Vec::with_capacity(payouts.len());
     for p in payouts {
-        let r = reveals.iter().find(|r| r.account == p.account).ok_or(EvmError::Undisclosed)?;
+        let r = reveals
+            .iter()
+            .find(|r| r.account == p.account)
+            .ok_or(EvmError::Undisclosed)?;
         let b = binding_of(p.account).ok_or(EvmError::Unbound)?;
         if !b.admits(commitment(&r.address, &r.salt)) {
             return Err(EvmError::WrongDestination);
@@ -168,7 +180,11 @@ pub fn resolve(
         if !p.amount.is_positive() {
             return Err(EvmError::AmountOutOfRange);
         }
-        out.push(EvmPayout { to: r.address, asset: p.asset, amount: p.amount });
+        out.push(EvmPayout {
+            to: r.address,
+            asset: p.asset,
+            amount: p.amount,
+        });
     }
     Ok(out)
 }
@@ -198,7 +214,7 @@ pub fn domain(vault: [u8; 20], chain_id: ChainId) -> Domain {
 ///
 /// ```text
 /// Withdrawal(uint256 nonce,uint256 epoch,Payout[] payouts)
-/// Payout(address to,uint256 asset,uint256 amount)
+/// Payout(address to,bytes32 asset,uint256 amount)
 /// ```
 ///
 /// `nonce` is the vault's own withdrawal counter, held on the EVM side and
@@ -217,14 +233,23 @@ pub fn withdrawal_digest(
         items.push(Value::Struct(
             TypedData::new("Payout")
                 .field("to", Value::Address(p.to))
-                .field("asset", Value::uint(p.asset as u64))
-                .field("amount", uint_i128(p.amount.0).ok_or(EvmError::AmountOutOfRange)?),
+                .field("asset", Value::Bytes32(p.asset))
+                .field(
+                    "amount",
+                    uint_i128(p.amount.0).ok_or(EvmError::AmountOutOfRange)?,
+                ),
         ));
     }
     let msg = TypedData::new("Withdrawal")
         .field("nonce", Value::uint(nonce))
         .field("epoch", Value::uint(epoch))
-        .field("payouts", Value::Array { elem_type: "Payout".into(), items });
+        .field(
+            "payouts",
+            Value::Array {
+                elem_type: "Payout".into(),
+                items,
+            },
+        );
     Ok(eip712::digest(&domain(vault, chain_id), &msg))
 }
 
@@ -254,6 +279,9 @@ mod tests {
     fn addr(n: u8) -> [u8; 20] {
         [n; 20]
     }
+    fn asset(n: u8) -> crate::settle::AssetId {
+        [n; 32]
+    }
     const SALT: [u8; 32] = [7u8; 32];
     const VAULT: [u8; 20] = [0xABu8; 20];
 
@@ -261,7 +289,11 @@ mod tests {
         Some(Binding::new(commitment(&addr(a[0]), &SALT)))
     }
     fn reveal(n: u8) -> Reveal {
-        Reveal { account: acct(n), address: addr(n), salt: SALT }
+        Reveal {
+            account: acct(n),
+            address: addr(n),
+            salt: SALT,
+        }
     }
 
     /// The hole that the same-address-on-every-chain deployment would open.
@@ -271,7 +303,11 @@ mod tests {
     fn no_two_origins_share_a_chain_id() {
         for (i, (o1, c1, _)) in ORIGINS.iter().enumerate() {
             for (o2, c2, _) in ORIGINS.iter().skip(i + 1) {
-                assert_ne!(c1, c2, "origins {:#x} and {:#x} share chain id {}", o1, o2, c1);
+                assert_ne!(
+                    c1, c2,
+                    "origins {:#x} and {:#x} share chain id {}",
+                    o1, o2, c1
+                );
                 assert_ne!(o1, o2);
             }
         }
@@ -296,7 +332,11 @@ mod tests {
     }
 
     fn one_payout() -> Vec<EvmPayout> {
-        vec![EvmPayout { to: addr(1), asset: 3, amount: Fixed::whole(5) }]
+        vec![EvmPayout {
+            to: addr(1),
+            asset: asset(3),
+            amount: Fixed::whole(5),
+        }]
     }
 
     /// The CREATE2 consequence, tested directly: identical withdrawal, two
@@ -328,9 +368,21 @@ mod tests {
     #[test]
     fn the_payouts_are_bound() {
         let base = withdrawal_digest(VAULT, 8453, 1, 10, &one_payout()).unwrap();
-        let moved = vec![EvmPayout { to: addr(2), asset: 3, amount: Fixed::whole(5) }];
-        let bigger = vec![EvmPayout { to: addr(1), asset: 3, amount: Fixed::whole(6) }];
-        let other = vec![EvmPayout { to: addr(1), asset: 4, amount: Fixed::whole(5) }];
+        let moved = vec![EvmPayout {
+            to: addr(2),
+            asset: asset(3),
+            amount: Fixed::whole(5),
+        }];
+        let bigger = vec![EvmPayout {
+            to: addr(1),
+            asset: asset(3),
+            amount: Fixed::whole(6),
+        }];
+        let other = vec![EvmPayout {
+            to: addr(1),
+            asset: asset(4),
+            amount: Fixed::whole(5),
+        }];
         for v in [moved, bigger, other] {
             assert_ne!(base, withdrawal_digest(VAULT, 8453, 1, 10, &v).unwrap());
         }
@@ -341,7 +393,10 @@ mod tests {
     #[test]
     fn an_amount_past_u64_survives_encoding() {
         let big = Fixed::whole(100);
-        assert!(big.0 > u64::MAX as i128, "the test is not testing what it says");
+        assert!(
+            big.0 > u64::MAX as i128,
+            "the test is not testing what it says"
+        );
         match uint_i128(big.0).unwrap() {
             Value::Uint256(w) => {
                 assert_eq!(&w[16..], &big.0.to_be_bytes()[..]);
@@ -355,7 +410,11 @@ mod tests {
             8453,
             1,
             10,
-            &[EvmPayout { to: addr(1), asset: 3, amount: big }],
+            &[EvmPayout {
+                to: addr(1),
+                asset: asset(3),
+                amount: big,
+            }],
         )
         .unwrap();
         assert_ne!(a, b);
@@ -363,11 +422,20 @@ mod tests {
 
     #[test]
     fn a_revealed_address_must_match_the_binding() {
-        let payouts = vec![Payout { account: acct(1), asset: 3, amount: Fixed::whole(5), since: 1 }];
+        let payouts = vec![Payout {
+            account: acct(1),
+            asset: asset(3),
+            amount: Fixed::whole(5),
+            since: 1,
+        }];
         assert!(resolve(&payouts, bound, &[reveal(1)]).is_ok());
 
         // The operator substitutes its own address, keeping the salt.
-        let substituted = Reveal { account: acct(1), address: addr(9), salt: SALT };
+        let substituted = Reveal {
+            account: acct(1),
+            address: addr(9),
+            salt: SALT,
+        };
         assert_eq!(
             resolve(&payouts, bound, &[substituted]),
             Err(EvmError::WrongDestination),
@@ -377,17 +445,25 @@ mod tests {
 
     #[test]
     fn an_undisclosed_or_unbound_account_is_refused() {
-        let payouts = vec![Payout { account: acct(1), asset: 3, amount: Fixed::whole(5), since: 1 }];
+        let payouts = vec![Payout {
+            account: acct(1),
+            asset: asset(3),
+            amount: Fixed::whole(5),
+            since: 1,
+        }];
         assert_eq!(resolve(&payouts, bound, &[]), Err(EvmError::Undisclosed));
-        assert_eq!(resolve(&payouts, |_| None, &[reveal(1)]), Err(EvmError::Unbound));
+        assert_eq!(
+            resolve(&payouts, |_| None, &[reveal(1)]),
+            Err(EvmError::Unbound)
+        );
     }
 
     /// `group` sorts oldest-first; the digest must inherit that rather than
     /// depend on the order the caller happened to hold the exits in.
     #[test]
     fn the_digest_follows_the_canonical_order() {
-        let a = (acct(1), 3u32, ORIGIN_BASE, Fixed::whole(5), 2u64);
-        let b = (acct(2), 3u32, ORIGIN_BASE, Fixed::whole(7), 1u64);
+        let a = (acct(1), asset(3), ORIGIN_BASE, Fixed::whole(5), 2u64);
+        let b = (acct(2), asset(3), ORIGIN_BASE, Fixed::whole(7), 1u64);
         let one = group(vec![a, b]);
         let two = group(vec![b, a]);
         assert_eq!(one, two);
@@ -417,7 +493,7 @@ mod tests {
                     items: vec![Value::Struct(
                         TypedData::new("Payout")
                             .field("to", Value::Address([0u8; 20]))
-                            .field("asset", Value::uint(0))
+                            .field("asset", Value::Bytes32([0u8; 32]))
                             .field("amount", Value::Uint256([0u8; 32])),
                     )],
                 },
@@ -425,7 +501,7 @@ mod tests {
         assert_eq!(
             msg.encode_type(),
             "Withdrawal(uint256 nonce,uint256 epoch,Payout[] payouts)\
-Payout(address to,uint256 asset,uint256 amount)"
+Payout(address to,bytes32 asset,uint256 amount)"
         );
         assert_eq!(
             domain([0u8; 20], 1).as_struct().encode_type(),
@@ -441,20 +517,37 @@ Payout(address to,uint256 asset,uint256 amount)"
         };
         // Printed so the Solidity constants can be copied rather than derived
         // twice. Run with --nocapture.
-        std::println!("WITHDRAWAL_TYPEHASH = {}", hex(eip712::keccak(&[msg.encode_type().as_bytes()])));
+        std::println!(
+            "WITHDRAWAL_TYPEHASH = {}",
+            hex(eip712::keccak(&[msg.encode_type().as_bytes()]))
+        );
         std::println!(
             "PAYOUT_TYPEHASH      = {}",
-            hex(eip712::keccak(&[b"Payout(address to,uint256 asset,uint256 amount)"]))
+            hex(eip712::keccak(&[
+                b"Payout(address to,bytes32 asset,uint256 amount)"
+            ]))
         );
         // A concrete vector, reproduced by the Solidity test. This is the only
         // check that the two implementations actually agree.
-        std::println!("VECTOR_DIGEST        = {}", hex(withdrawal_digest(VAULT, 8453, 1, 10, &one_payout()).unwrap()));
-        std::println!("VECTOR_DOMAIN        = {}", hex(domain(VAULT, 8453).separator()));
+        std::println!(
+            "VECTOR_DIGEST        = {}",
+            hex(withdrawal_digest(VAULT, 8453, 1, 10, &one_payout()).unwrap())
+        );
+        std::println!(
+            "VECTOR_DOMAIN        = {}",
+            hex(domain(VAULT, 8453).separator())
+        );
     }
 
     #[test]
     fn a_settlement_for_a_non_evm_chain_is_refused() {
-        let s = group(vec![(acct(1), 3u32, crate::vault::ORIGIN_ZCASH, Fixed::whole(5), 1u64)]);
+        let s = group(vec![(
+            acct(1),
+            asset(3),
+            crate::vault::ORIGIN_ZCASH,
+            Fixed::whole(5),
+            1u64,
+        )]);
         assert_eq!(
             settlement_digest(&s[0], VAULT, 1, 10, bound, &[reveal(1)]),
             Err(EvmError::NotEvm)

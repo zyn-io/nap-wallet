@@ -72,6 +72,14 @@ impl Encoder {
             None => self.u8(0).u32(0),
         }
     }
+    /// An optional opaque 32-byte identity as a presence byte plus a fixed
+    /// payload. The zero payload in the absent case keeps the shape fixed.
+    pub fn opt_hash(&mut self, v: Option<[u8; 32]>) -> &mut Self {
+        match v {
+            Some(x) => self.u8(1).bytes(&x),
+            None => self.u8(0).bytes(&[0u8; 32]),
+        }
+    }
     pub fn finish(&self) -> &[u8] {
         &self.buf
     }
@@ -145,9 +153,15 @@ pub fn merkle_proof(leaves: &[Hash], index: usize) -> Vec<ProofStep> {
         let mut i = 0;
         while i + 1 < level.len() {
             if idx == i {
-                path.push(ProofStep { sibling: level[i + 1], node_is_right: false });
+                path.push(ProofStep {
+                    sibling: level[i + 1],
+                    node_is_right: false,
+                });
             } else if idx == i + 1 {
-                path.push(ProofStep { sibling: level[i], node_is_right: true });
+                path.push(ProofStep {
+                    sibling: level[i],
+                    node_is_right: true,
+                });
             }
             next.push(hash_node(&level[i], &level[i + 1]));
             i += 2;
@@ -206,7 +220,10 @@ impl ProofIndex {
     }
 
     pub fn root(&self) -> Hash {
-        self.levels.last().and_then(|l| l.first().copied()).unwrap_or([0u8; 32])
+        self.levels
+            .last()
+            .and_then(|l| l.first().copied())
+            .unwrap_or([0u8; 32])
     }
     pub fn len(&self) -> usize {
         self.levels.first().map(|l| l.len()).unwrap_or(0)
@@ -278,13 +295,14 @@ pub fn fold_intent(acc: Hash, seq: u64, encoded_intent: &[u8]) -> Hash {
     h.finalize().into()
 }
 
-
 #[cfg(test)]
 mod index_tests {
     use super::*;
 
     fn leaves(n: usize) -> Vec<Hash> {
-        (0..n).map(|i| hash_leaf(&(i as u32).to_be_bytes())).collect()
+        (0..n)
+            .map(|i| hash_leaf(&(i as u32).to_be_bytes()))
+            .collect()
     }
 
     /// An index must agree with the one-shot path exactly, or a node serving
@@ -300,7 +318,10 @@ mod index_tests {
                 assert_eq!(from_index, merkle_proof(&ls, i), "size {} index {}", n, i);
                 assert!(verify_proof(ls[i], &from_index, idx.root()));
             }
-            assert!(idx.proof(n).is_none(), "an out-of-range index produced a proof");
+            assert!(
+                idx.proof(n).is_none(),
+                "an out-of-range index produced a proof"
+            );
         }
     }
 

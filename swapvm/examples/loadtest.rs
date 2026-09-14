@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use swapvm::state::{symbol, SwapState};
 use swapvm::tx::{Intent, SequencedIntent};
-use swapvm::types::{AccountId, Params, XZEC};
+use swapvm::types::{AccountId, AssetId, Params, PoolId, ADDRESS_SCOPE_V1, XZEC};
 use swapvm::{vm, Fixed};
 
 fn acct(n: u64) -> AccountId {
@@ -30,18 +30,39 @@ impl Chain {
     fn go(&mut self, intent: Intent) {
         let seq = self.state.seq + 1;
         let r = vm::apply(&mut self.state, &SequencedIntent { seq, intent });
-        assert!(!r.iter().any(|x| x.is_rejection()), "setup rejected: {:?}", r);
+        assert!(
+            !r.iter().any(|x| x.is_rejection()),
+            "setup rejected: {:?}",
+            r
+        );
     }
 }
 
 /// A market with `traders` funded accounts and one CAT/xZEC pool.
-fn market(traders: u64) -> (Chain, u32, u32) {
-    let mut c = Chain { state: SwapState::new(1, Params::v1()) };
+fn market(traders: u64) -> (Chain, AssetId, PoolId) {
+    let mut c = Chain {
+        state: SwapState::new(1, Params::v1()),
+    };
     let observed = Fixed::whole(10_000_000_000);
-    c.go(Intent::AttestVaultBalance { asset: XZEC, observed });
-    c.go(Intent::next_deposit(&c.state, acct(0), XZEC, Fixed::whole(10_000_000), [0u8; 32]));
+    c.go(Intent::AttestVaultBalance {
+        asset: XZEC,
+        observed,
+    });
+    c.go(Intent::next_deposit(
+        &c.state,
+        acct(0),
+        XZEC,
+        Fixed::whole(10_000_000),
+        [0u8; 32],
+    ));
     for n in 1..=traders {
-        c.go(Intent::next_deposit(&c.state, acct(n), XZEC, Fixed::whole(10_000), [0u8; 32]));
+        c.go(Intent::next_deposit(
+            &c.state,
+            acct(n),
+            XZEC,
+            Fixed::whole(10_000),
+            [0u8; 32],
+        ));
     }
     let at = c.state.epoch;
     c.go(Intent::Checkpoint);
@@ -56,7 +77,9 @@ fn market(traders: u64) -> (Chain, u32, u32) {
         token_liquidity: Fixed::whole(500_000_000),
         fee_bps: 30,
     });
-    (c, 2, 1)
+    let cat = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &acct(0), b"CAT");
+    let pool = zyn_vm::pool_address(ADDRESS_SCOPE_V1, &XZEC, &cat);
+    (c, cat, pool)
 }
 
 fn ms(d: std::time::Duration) -> f64 {
@@ -83,7 +106,10 @@ fn main() {
     println!("throughput");
     println!("  {} swaps in {:.0} ms", swaps, ms(d));
     println!("  {:.0} swaps/sec", swaps as f64 / d.as_secs_f64());
-    println!("  {:.1} us per swap\n", d.as_secs_f64() * 1e6 / swaps as f64);
+    println!(
+        "  {:.1} us per swap\n",
+        d.as_secs_f64() * 1e6 / swaps as f64
+    );
 
     // --- state root, by account count -------------------------------------
     println!("state root (the cost of sealing an epoch)");
@@ -177,7 +203,10 @@ indexed: build {:>5.1} ms, then {:>6.1} us each ({:>9.0}/s)   {} siblings",
     }
     let t = Instant::now();
     c.go(Intent::Checkpoint);
-    println!("sealing an epoch over 10,000 accounts: {:.1} ms", ms(t.elapsed()));
+    println!(
+        "sealing an epoch over 10,000 accounts: {:.1} ms",
+        ms(t.elapsed())
+    );
 
     let t = Instant::now();
     let blob = c.state.encode_state();
