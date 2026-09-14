@@ -19,6 +19,7 @@ use zyn::node::Node;
 use zyn_vm::auth::{account_of, eip712_digest, Authorization, Scheme};
 use zyn_vm::commit::Encoder;
 use zyn_vm::spec::MicrochainVm;
+use zynzapd::client::Node as RpcNode;
 
 const CHAIN: u32 = 9;
 const OP_SUBMIT: u8 = 10;
@@ -36,20 +37,25 @@ fn wallet_account() -> [u8; 32] {
 }
 
 /// A devnet with one funded account and one CAT market.
-fn market() -> (Node<SwapState>, u32) {
+fn market() -> (Node<SwapState>, swapvm::types::PoolId) {
     let policy = EpochPolicy {
         intents_per_epoch: 10_000,
         epochs_per_anchor: 10_000,
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let mut n: Node<SwapState> =
-        Node::new(CHAIN, Params::v1(), policy, Economics::flat(10_000));
+    let mut n: Node<SwapState> = Node::new(CHAIN, Params::v1(), policy, Economics::flat(10_000));
     let who = wallet_account();
 
     let amount = Fixed::whole(100_000);
     let observed = n.state().backing_of(XZEC).add(amount).unwrap();
-    n.submit_operator(Intent::AttestVaultBalance { asset: XZEC, observed }, 0);
+    n.submit_operator(
+        Intent::AttestVaultBalance {
+            asset: XZEC,
+            observed,
+        },
+        0,
+    );
     let d = Intent::next_deposit(n.state(), who, XZEC, amount, [0u8; 32]);
     n.submit_operator(d, 0);
     let epoch = n.state().epoch();
@@ -59,7 +65,7 @@ fn market() -> (Node<SwapState>, u32) {
     let step = n.submit_operator(
         Intent::CreateToken {
             creator: who,
-            symbol: *b"CAT\0\0\0\0\0",
+            symbol: swapvm::state::symbol(b"CAT"),
             supply: Fixed::whole(10_000_000),
             unit: Fixed::raw(1),
             xzec_liquidity: Fixed::whole(10_000),
@@ -85,9 +91,13 @@ fn start(node: Node<SwapState>) -> SocketAddr {
     let server = Arc::new(zynzapd::rpc::Server {
         node: Arc::new(Mutex::new(node)),
         chain_id: CHAIN,
-        now: || 0, health: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())), inbox: std::sync::Arc::new(std::sync::Mutex::new(zynzapd::rpc::Inbox::default())),
+        now: || 0,
+        health: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        inbox: std::sync::Arc::new(std::sync::Mutex::new(zynzapd::rpc::Inbox::default())),
         replica: None,
-        replay: Arc::new(Mutex::new(zyn::replay::ReplayIndex::default())), deposits: None, da_dir: None,
+        replay: Arc::new(Mutex::new(zyn::replay::ReplayIndex::default())),
+        deposits: None,
+        da_dir: None,
     });
     std::thread::spawn(move || zynzapd::rpc::serve(server, listener));
     addr
@@ -105,7 +115,7 @@ fn call(addr: SocketAddr, frame: &[u8]) -> (u8, Vec<u8>) {
     (body[0], body[1..].to_vec())
 }
 
-fn swap_intent(pool: u32, amount: i64, min_out: i64) -> Intent {
+fn swap_intent(pool: swapvm::types::PoolId, amount: i64, min_out: i64) -> Intent {
     Intent::SwapExactIn {
         account: wallet_account(),
         asset_in: XZEC,
@@ -173,7 +183,12 @@ fn a_quote_over_the_wire_matches_the_engine() {
     let addr = start(node);
 
     let mut e = Encoder::new();
-    e.u8(wire::OP_QUOTE).u32(CHAIN).u32(XZEC).u32(1).u32(pool).i128(Fixed::whole(10).0);
+    e.u8(wire::OP_QUOTE)
+        .u32(CHAIN)
+        .bytes(&XZEC)
+        .u32(1)
+        .bytes(&pool)
+        .i128(Fixed::whole(10).0);
     let (status, body) = call(addr, e.finish());
     assert_eq!(status, wire::STATUS_OK);
     let out = Fixed(i128::from_be_bytes(body[..16].try_into().unwrap()));
@@ -184,13 +199,38 @@ fn a_quote_over_the_wire_matches_the_engine() {
     assert!(best > out, "the wire quote carried no upper bound");
 }
 
+/// The application client must not discard the hop-level fee proof carried by
+/// the wire response. The public JSON and wallet APIs are built on this view.
+#[test]
+fn typed_quote_keeps_every_fee_component() {
+    let (node, pool) = market();
+    let addr = start(node);
+    let q = RpcNode::new(&addr.to_string(), CHAIN)
+        .quote(XZEC, &[pool], Fixed::whole(10))
+        .expect("typed quote");
+    assert_eq!(q.hops.len(), 1);
+    let h = q.hops[0];
+    assert_eq!(h.pool, pool);
+    assert_eq!(h.asset_in, XZEC);
+    assert_eq!(h.amount_in, Fixed::whole(10));
+    assert_eq!(h.pool_fee.add(h.protocol_fee), Some(h.fee));
+    assert_eq!(h.creator_fee, Fixed::ZERO);
+    assert_eq!(h.pol_fee, Fixed::ZERO);
+    assert_eq!(q.amount_out, h.amount_out);
+}
+
 /// A quote is a read: it must need no wallet at all.
 #[test]
 fn quoting_requires_no_signature() {
     let (node, pool) = market();
     let addr = start(node);
     let mut e = Encoder::new();
-    e.u8(wire::OP_QUOTE).u32(CHAIN).u32(XZEC).u32(1).u32(pool).i128(Fixed::whole(1).0);
+    e.u8(wire::OP_QUOTE)
+        .u32(CHAIN)
+        .bytes(&XZEC)
+        .u32(1)
+        .bytes(&pool)
+        .i128(Fixed::whole(1).0);
     assert_eq!(call(addr, e.finish()).0, wire::STATUS_OK);
 }
 
@@ -248,7 +288,11 @@ fn the_snapshot_endpoint_serves_an_anchored_root_or_nothing() {
     let mut e = Encoder::new();
     e.u8(wire::OP_SNAPSHOT).u32(CHAIN);
     let (status, body) = call(unanchored, e.finish());
-    assert_eq!(status, wire::STATUS_ERR, "a root nobody anchored was served as a snapshot");
+    assert_eq!(
+        status,
+        wire::STATUS_ERR,
+        "a root nobody anchored was served as a snapshot"
+    );
     assert!(String::from_utf8_lossy(&body).contains("no anchored snapshot"));
 
     // Drive it past an anchor.
@@ -261,9 +305,16 @@ fn the_snapshot_endpoint_serves_an_anchored_root_or_nothing() {
     let mut e = Encoder::new();
     e.u8(wire::OP_SNAPSHOT).u32(CHAIN);
     let (status, body) = call(addr, e.finish());
-    assert_eq!(status, wire::STATUS_OK, "an anchored chain refused to publish");
+    assert_eq!(
+        status,
+        wire::STATUS_OK,
+        "an anchored chain refused to publish"
+    );
     let served: [u8; 32] = body[8..40].try_into().unwrap();
-    assert_eq!(served, anchored_root, "the snapshot did not open the anchored root");
+    assert_eq!(
+        served, anchored_root,
+        "the snapshot did not open the anchored root"
+    );
 }
 
 fn start_with(state: SwapState, policy: EpochPolicy) -> SocketAddr {

@@ -84,6 +84,72 @@ pub const OP_ANCHORS: u8 = 22;
 /// Submit an intent under an owner-issued, expiring session delegation. The
 /// complete certificate and both signatures enter the committed journal.
 pub const OP_SUBMIT_DELEGATED: u8 = 23;
+/// Cave launch gallery and live curves. Public: clients need the exact
+/// on-chain state to render discovery, quotes, and graduation progress.
+pub const OP_CURVES: u8 = 24;
+/// Exact Cave buy/sell quote: `side[1] asset[32] tokens[i128]`.
+/// Side 0 buys and side 1 sells. Read-only and public.
+pub const OP_CURVE_QUOTE: u8 = 25;
+/// One Cave launch by immutable asset address: `asset[32]`.
+/// Returns `found[1]` followed by the same fields as one `OP_CURVES` row.
+pub const OP_CURVE: u8 = 26;
+
+fn curve_market(
+    state: &SwapState,
+    asset: swapvm::types::AssetId,
+    c: &swapvm::cave::CurveLaunch,
+) -> (Fixed, Fixed) {
+    match c.status {
+        swapvm::cave::CurveStatus::Trading => (
+            swapvm::cave::marginal_price(c.sold).unwrap_or(Fixed::ZERO),
+            swapvm::cave::reserve_for(c.sold).unwrap_or(Fixed::ZERO),
+        ),
+        swapvm::cave::CurveStatus::Graduated { pool } => state
+            .pools
+            .get(&pool)
+            .and_then(|p| {
+                let zec = p.reserve_of(swapvm::types::XZEC)?;
+                let token = p.reserve_of(asset)?;
+                Some((zec.div(token)?, zec))
+            })
+            .unwrap_or((Fixed::ZERO, Fixed::ZERO)),
+    }
+}
+
+fn encode_curve(
+    e: &mut Encoder,
+    asset: &swapvm::types::AssetId,
+    c: &swapvm::cave::CurveLaunch,
+    price: Fixed,
+    market_zec: Fixed,
+) {
+    e.bytes(asset)
+        .bytes(&c.creator)
+        .u8(c.symbol.as_bytes().len() as u8)
+        .bytes(c.symbol.as_bytes())
+        .u8(c.display_name.len() as u8)
+        .bytes(&c.display_name)
+        .bytes(&c.metadata_hash)
+        .u16(c.fee_bps)
+        .fixed(c.sold)
+        .fixed(swapvm::cave::reserve_for(c.sold).unwrap_or(Fixed::ZERO))
+        .fixed(market_zec)
+        .fixed(c.creator_fees)
+        .fixed(c.graduation_fees)
+        .fixed(c.graduated_token_liquidity)
+        .fixed(c.graduated_zec_liquidity)
+        .fixed(c.graduation_overflow)
+        .fixed(c.graduated_locked_lp)
+        .fixed(price);
+    match c.status {
+        swapvm::cave::CurveStatus::Trading => {
+            e.u8(0);
+        }
+        swapvm::cave::CurveStatus::Graduated { pool } => {
+            e.u8(1).bytes(&pool);
+        }
+    }
+}
 
 /// Reveals received over the wire, waiting for a settler to take them.
 #[derive(Default)]
@@ -148,7 +214,9 @@ pub struct Server {
 /// The key a credential is remembered under in the replay index.
 pub fn replay_key_of(c: &Credential) -> [u8; 32] {
     match c {
-        Credential::Ed25519 { signature, .. } | Credential::Solana { signature, .. } => replay::key(c.scheme().tag(), signature),
+        Credential::Ed25519 { signature, .. } | Credential::Solana { signature, .. } => {
+            replay::key(c.scheme().tag(), signature)
+        }
         Credential::Evm { signature } => replay::key(c.scheme().tag(), signature),
     }
 }
@@ -156,20 +224,31 @@ pub fn replay_key_of(c: &Credential) -> [u8; 32] {
 /// Decode one signed submission frame — the bytes after the op and chain id
 /// of an `OP_SUBMIT`, and exactly what a forced memo carries:
 /// `vm_id[32] ‖ valid_until u64 ‖ scheme u8 ‖ credential ‖ intent`.
-pub fn decode_frame(chain_id: u32, frame: &[u8]) -> Result<(Credential, Authorization, swapvm::tx::Intent), &'static str> {
+pub fn decode_frame(
+    chain_id: u32,
+    frame: &[u8],
+) -> Result<(Credential, Authorization, swapvm::tx::Intent), &'static str> {
     let mut d = Decoder::new(frame);
     let vm_id = d.array::<32>().map_err(|_| "missing program id")?;
     let valid_until_epoch = d.u64().map_err(|_| "missing expiry")?;
     let tag = d.u8().map_err(|_| "missing scheme")?;
     let scheme = Scheme::from_tag(tag).ok_or("unknown scheme")?;
     let cred = match scheme {
-        Scheme::Secp256k1Eip712 => Credential::Evm { signature: d.array::<65>().map_err(|_| "malformed signature")? },
+        Scheme::Secp256k1Eip712 => Credential::Evm {
+            signature: d.array::<65>().map_err(|_| "malformed signature")?,
+        },
         Scheme::Ed25519 | Scheme::Ed25519Solana => {
             let key = d.array::<32>().map_err(|_| "malformed credential")?;
             let sig = d.array::<64>().map_err(|_| "malformed credential")?;
             match scheme {
-                Scheme::Ed25519 => Credential::Ed25519 { key, signature: sig },
-                _ => Credential::Solana { key, signature: sig },
+                Scheme::Ed25519 => Credential::Ed25519 {
+                    key,
+                    signature: sig,
+                },
+                _ => Credential::Solana {
+                    key,
+                    signature: sig,
+                },
             }
         }
     };
@@ -177,7 +256,15 @@ pub fn decode_frame(chain_id: u32, frame: &[u8]) -> Result<(Credential, Authoriz
     if d.remaining() != 0 {
         return Err("trailing bytes");
     }
-    Ok((cred, Authorization { chain_id, vm_id, valid_until_epoch }, intent))
+    Ok((
+        cred,
+        Authorization {
+            chain_id,
+            vm_id,
+            valid_until_epoch,
+        },
+        intent,
+    ))
 }
 
 pub fn serve(server: Arc<Server>, listener: TcpListener) {
@@ -223,7 +310,9 @@ fn write_frame(stream: &mut TcpStream, body: &[u8]) -> std::io::Result<()> {
 
 fn error_frame(msg: &str) -> Vec<u8> {
     let mut e = Encoder::new();
-    e.u8(wire::STATUS_ERR).u16(msg.len() as u16).bytes(msg.as_bytes());
+    e.u8(wire::STATUS_ERR)
+        .u16(msg.len() as u16)
+        .bytes(msg.as_bytes());
     e.finish().to_vec()
 }
 
@@ -238,8 +327,12 @@ fn ok_frame(body: Vec<u8>) -> Vec<u8> {
 /// and never propagates a lock poisoning into a crash loop.
 pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
     let mut d = Decoder::new(frame);
-    let Ok(op) = d.u8() else { return error_frame("empty request") };
-    let Ok(chain_id) = d.u32() else { return error_frame("missing chain id") };
+    let Ok(op) = d.u8() else {
+        return error_frame("empty request");
+    };
+    let Ok(chain_id) = d.u32() else {
+        return error_frame("missing chain id");
+    };
     if chain_id != server.chain_id {
         return error_frame("wrong chain");
     }
@@ -254,7 +347,13 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             e.u32(health.len() as u32);
             for h in &health {
                 let err = h.last_error.clone().unwrap_or_default();
-                e.u16(h.name.len() as u16).bytes(h.name.as_bytes()).u64(h.scanned_to).u8(h.down as u8).u32(h.failures).u16(err.len() as u16).bytes(err.as_bytes());
+                e.u16(h.name.len() as u16)
+                    .bytes(h.name.as_bytes())
+                    .u64(h.scanned_to)
+                    .u8(h.down as u8)
+                    .u32(h.failures)
+                    .u16(err.len() as u16)
+                    .bytes(err.as_bytes());
             }
             // Appended after the health list: whether swaps queue for the seal.
             e.u8(n.state().batch_clearing as u8);
@@ -262,12 +361,20 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             // verified. A sequencer reports its ledger; a replica what it proved.
             match &server.replica {
                 None => {
-                    e.u8(0).u64(n.ledger().last().map(|a| a.checkpoint.epoch).unwrap_or(0)).u64(0).u32(0).u32(0);
+                    e.u8(0)
+                        .u64(n.ledger().last().map(|a| a.checkpoint.epoch).unwrap_or(0))
+                        .u64(0)
+                        .u32(0)
+                        .u32(0);
                 }
                 Some(r) => {
                     let (epoch, height) = r.verified.lock().map(|v| *v).unwrap_or((None, 0));
                     let (pending, censored) = r.forced.lock().map(|v| *v).unwrap_or((0, 0));
-                    e.u8(1).u64(epoch.unwrap_or(0)).u64(height).u32(pending).u32(censored);
+                    e.u8(1)
+                        .u64(epoch.unwrap_or(0))
+                        .u64(height)
+                        .u32(pending)
+                        .u32(censored);
                 }
             }
             body.extend_from_slice(e.finish());
@@ -277,16 +384,26 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
         OP_SUBMIT | OP_SUBMIT_MULTI | OP_SUBMIT_DELEGATED | OP_REVEAL
             if server.replica.is_some() =>
         {
-            let to = server.replica.as_ref().map(|r| r.sequencer.clone()).unwrap_or_default();
-            error_frame(&format!("read-only replica; submit to the sequencer at {}", to))
+            let to = server
+                .replica
+                .as_ref()
+                .map(|r| r.sequencer.clone())
+                .unwrap_or_default();
+            error_frame(&format!(
+                "read-only replica; submit to the sequencer at {}",
+                to
+            ))
         }
         OP_SUBMIT => submit(server, &mut d),
         OP_ACCOUNT => match signed_read(server, &mut d) {
             Err(e) => error_frame(e),
-            Ok(id) => with_node(server, |n| match zyn_vm::spec::MicrochainVm::account_record(n.state(), &id) {
-                Some(record) => ok_frame(record),
-                None => error_frame("no such account"),
-            }),
+            Ok(id) => with_node(
+                server,
+                |n| match zyn_vm::spec::MicrochainVm::account_record(n.state(), &id) {
+                    Some(record) => ok_frame(record),
+                    None => error_frame("no such account"),
+                },
+            ),
         },
         OP_SUBMIT_MULTI => submit_multi(server, &mut d),
         OP_SUBMIT_DELEGATED => submit_delegated(server, &mut d),
@@ -299,32 +416,69 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             let s = n.state();
             let mut e = Encoder::new();
             match &s.launch {
-                None => { e.u8(0); }
+                None => {
+                    e.u8(0);
+                }
                 Some(l) => {
                     use swapvm::launch::*;
                     e.u8(1);
                     swapvm::wire::encode_launch(&mut e, &l.params);
-                    e.u64(l.zcash_height).u64(l.graduated_at).u32(l.zyn).u32(l.genesis_pool).fixed(l.minted).u64(l.last_mint_height)
+                    e.u64(l.zcash_height)
+                        .u64(l.graduated_at)
+                        .bytes(&l.zyn)
+                        .bytes(&l.genesis_pool)
+                        .fixed(l.minted)
+                        .u64(l.last_mint_height)
                         .fixed(s.balance(&POT_GENESIS, swapvm::types::XZEC))
-                        .fixed(if l.zyn > 0 { s.balance(&POT_LP, l.zyn) } else { Fixed::ZERO })
-                        .fixed(if l.zyn > 0 { s.balance(&POT_BRIDGE, l.zyn) } else { Fixed::ZERO })
-                        .fixed(if l.zyn > 0 { s.balance(&POT_POL, l.zyn) } else { Fixed::ZERO })
+                        .fixed(if l.zyn != [0; 32] {
+                            s.balance(&POT_LP, l.zyn)
+                        } else {
+                            Fixed::ZERO
+                        })
+                        .fixed(if l.zyn != [0; 32] {
+                            s.balance(&POT_BRIDGE, l.zyn)
+                        } else {
+                            Fixed::ZERO
+                        })
+                        .fixed(if l.zyn != [0; 32] {
+                            s.balance(&POT_POL, l.zyn)
+                        } else {
+                            Fixed::ZERO
+                        })
                         .fixed(s.balance(&POT_POL, swapvm::types::XZEC))
                         .fixed(s.balance(&POT_FEES, swapvm::types::XZEC))
-                        .fixed(if l.zyn > 0 { s.tokens.get(&l.zyn).map(|t| t.supply).unwrap_or(Fixed::ZERO) } else { Fixed::ZERO })
+                        .fixed(if l.zyn != [0; 32] {
+                            s.tokens
+                                .get(&l.zyn)
+                                .map(|t| t.supply)
+                                .unwrap_or(Fixed::ZERO)
+                        } else {
+                            Fixed::ZERO
+                        })
                         .u32(l.contributions.len() as u32)
-                        .fixed(l.contributions.values().fold(Fixed::ZERO, |a, v| a.add(*v).unwrap_or(a)));
+                        .fixed(
+                            l.contributions
+                                .values()
+                                .fold(Fixed::ZERO, |a, v| a.add(*v).unwrap_or(a)),
+                        );
                     // Bridged assets on their way to a market of their own.
                     e.u32(l.assets.len() as u32);
                     for (id, a) in &l.assets {
-                        e.u32(*id)
+                        e.bytes(id)
                             .fixed(s.balance(&POT_ASSETS, *id))
                             .fixed(a.reference.map(|r| r.price).unwrap_or(Fixed::ZERO))
-                            .u64(a.opened_at).u32(a.pool).fixed(a.grant)
+                            .u64(a.opened_at)
+                            .bytes(&a.pool)
+                            .fixed(a.grant)
                             .u32(a.contributions.len() as u32)
-                            .fixed(a.contributions.values().fold(Fixed::ZERO, |x, v| x.add(*v).unwrap_or(x)));
+                            .fixed(
+                                a.contributions
+                                    .values()
+                                    .fold(Fixed::ZERO, |x, v| x.add(*v).unwrap_or(x)),
+                            );
                     }
-                    e.fixed(l.params.asset_threshold).u16(l.params.bootstrap_bps);
+                    e.fixed(l.params.asset_threshold)
+                        .u16(l.params.bootstrap_bps);
                 }
             }
             ok_frame(e.finish().to_vec())
@@ -335,21 +489,35 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
                 let s = n.state();
                 let mut e = Encoder::new();
                 match &s.launch {
-                    None => { e.u8(0); }
+                    None => {
+                        e.u8(0);
+                    }
                     Some(l) => {
                         e.u8(1);
                         e.fixed(l.contributions.get(&id).copied().unwrap_or(Fixed::ZERO));
                         e.fixed(l.epoch_bridge_fees.get(&id).copied().unwrap_or(Fixed::ZERO));
-                        let v = l.vesting.get(&(id, 0));
-                        e.fixed(v.map(|v| v.total).unwrap_or(Fixed::ZERO)).fixed(v.map(|v| v.released).unwrap_or(Fixed::ZERO)).u64(v.map(|v| v.end).unwrap_or(0));
+                        let v = l.vesting.get(&(id, [0; 32]));
+                        e.fixed(v.map(|v| v.total).unwrap_or(Fixed::ZERO))
+                            .fixed(v.map(|v| v.released).unwrap_or(Fixed::ZERO))
+                            .u64(v.map(|v| v.end).unwrap_or(0));
                         // Every market this account helped open: what it put
                         // in, and what is still vesting from the grant.
-                        let mine: Vec<_> = l.assets.iter().filter(|(k, a)| a.contributions.contains_key(&id) || l.vesting.contains_key(&(id, **k))).collect();
+                        let mine: Vec<_> = l
+                            .assets
+                            .iter()
+                            .filter(|(k, a)| {
+                                a.contributions.contains_key(&id)
+                                    || l.vesting.contains_key(&(id, **k))
+                            })
+                            .collect();
                         e.u32(mine.len() as u32);
                         for (k, a) in mine {
                             let v = l.vesting.get(&(id, *k));
-                            e.u32(*k).fixed(a.contributions.get(&id).copied().unwrap_or(Fixed::ZERO))
-                                .fixed(v.map(|v| v.total).unwrap_or(Fixed::ZERO)).fixed(v.map(|v| v.released).unwrap_or(Fixed::ZERO)).u64(v.map(|v| v.end).unwrap_or(0));
+                            e.bytes(k)
+                                .fixed(a.contributions.get(&id).copied().unwrap_or(Fixed::ZERO))
+                                .fixed(v.map(|v| v.total).unwrap_or(Fixed::ZERO))
+                                .fixed(v.map(|v| v.released).unwrap_or(Fixed::ZERO))
+                                .u64(v.map(|v| v.end).unwrap_or(0));
                         }
                     }
                 }
@@ -359,11 +527,20 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
         OP_ORDERS => match signed_read(server, &mut d) {
             Err(e) => error_frame(e),
             Ok(id) => with_node(server, |n| {
-                let mine: Vec<_> = n.state().orders.iter().filter(|o| o.account == id).collect();
+                let mine: Vec<_> = n
+                    .state()
+                    .orders
+                    .iter()
+                    .filter(|o| o.account == id)
+                    .collect();
                 let mut e = Encoder::new();
                 e.u32(mine.len() as u32);
                 for o in mine {
-                    e.u64(o.seq).u32(o.pool).u32(o.asset_in).fixed(o.amount_in).fixed(o.min_out);
+                    e.u64(o.seq)
+                        .bytes(&o.pool)
+                        .bytes(&o.asset_in)
+                        .fixed(o.amount_in)
+                        .fixed(o.min_out);
                 }
                 ok_frame(e.finish().to_vec())
             }),
@@ -373,20 +550,96 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             let mut e = Encoder::new();
             e.u32(s.tokens.len() as u32);
             for (id, t) in s.tokens.iter() {
-                e.u32(*id).bytes(&t.symbol).fixed(t.supply).u32(t.lp_of.unwrap_or(0));
+                e.bytes(id)
+                    .u8(t.symbol.as_bytes().len() as u8)
+                    .bytes(t.symbol.as_bytes())
+                    .fixed(t.supply)
+                    .opt_hash(t.lp_of);
                 // What makes an item an item: the content it was minted
                 // against, and the collection whose pool backs it. Without
                 // these a storefront cannot tell an artwork from a token.
-                e.u8(t.content.is_some() as u8).bytes(&t.content.unwrap_or([0u8; 32]));
-                e.u32(t.collection.unwrap_or(0));
+                e.u8(t.content.is_some() as u8)
+                    .bytes(&t.content.unwrap_or([0u8; 32]));
+                e.opt_hash(t.collection);
             }
             ok_frame(e.finish().to_vec())
+        }),
+        OP_CURVES => with_node(server, |n| {
+            let s = n.state();
+            let mut e = Encoder::new();
+            e.u32(s.curves.len() as u32);
+            for (asset, c) in &s.curves {
+                let (price, market_zec) = curve_market(s, *asset, c);
+                encode_curve(&mut e, asset, c, price, market_zec);
+            }
+            ok_frame(e.finish().to_vec())
+        }),
+        OP_CURVE => with_node(server, |n| {
+            let asset = match d.array::<32>() {
+                Ok(v) => v,
+                Err(_) => return error_frame("truncated curve asset"),
+            };
+            if d.remaining() != 0 {
+                return error_frame("trailing curve bytes");
+            }
+            let mut e = Encoder::new();
+            match n.state().curves.get(&asset) {
+                None => {
+                    e.u8(0);
+                }
+                Some(c) => {
+                    let (price, market_zec) = curve_market(n.state(), asset, c);
+                    e.u8(1);
+                    encode_curve(&mut e, &asset, c, price, market_zec);
+                }
+            }
+            ok_frame(e.finish().to_vec())
+        }),
+        OP_CURVE_QUOTE => with_node(server, |n| {
+            let side = match d.u8() {
+                Ok(v @ 0..=1) => v,
+                _ => return error_frame("curve quote side must be 0 (buy) or 1 (sell)"),
+            };
+            let asset = match d.array::<32>() {
+                Ok(v) => v,
+                Err(_) => return error_frame("truncated curve quote asset"),
+            };
+            let tokens = match d.fixed() {
+                Ok(v) => v,
+                Err(_) => return error_frame("truncated curve quote amount"),
+            };
+            if d.remaining() != 0 {
+                return error_frame("trailing curve quote bytes");
+            }
+            let Some(curve) = n.state().curves.get(&asset) else {
+                return error_frame("no such curve");
+            };
+            let quote = if side == 0 {
+                swapvm::cave::quote_buy(curve, tokens)
+            } else {
+                swapvm::cave::quote_sell(curve, tokens)
+            };
+            match quote {
+                Err(reason) => error_frame(&format!("curve quote rejected: {:?}", reason)),
+                Ok(q) => {
+                    let mut e = Encoder::new();
+                    e.fixed(q.principal)
+                        .fixed(q.fee)
+                        .fixed(q.settlement)
+                        .fixed(q.sold_after)
+                        .fixed(q.price_after)
+                        .u8(q.graduates as u8);
+                    ok_frame(e.finish().to_vec())
+                }
+            }
         }),
         wire::OP_ACCOUNT_PROOF => match signed_read(server, &mut d) {
             Err(e) => error_frame(e),
             Ok(id) => account_proof(server, &id),
         },
-        OP_ENDORSE if server.replica.is_some() => error_frame("this is a replica; endorse the sequencer"),
+        OP_ENDORSE if server.replica.is_some() => {
+            error_frame("this is a replica; endorse the sequencer")
+        }
         OP_ENDORSE => endorse(server, &mut d),
         OP_DEPOSIT_ADDRESS => deposit_address(server, &mut d),
         OP_COLLECTIONS => with_node(server, |n| {
@@ -394,9 +647,10 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             let mut e = Encoder::new();
             e.u32(s.collections.len() as u32);
             for (id, c) in s.collections.iter() {
-                e.u32(*id)
+                e.bytes(id)
                     .bytes(&c.creator)
-                    .bytes(&c.symbol)
+                    .u8(c.symbol.as_bytes().len() as u8)
+                    .bytes(c.symbol.as_bytes())
                     .u32(c.cap)
                     .u32(c.minted)
                     .u32(c.outstanding)
@@ -417,9 +671,9 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             for (id, o) in s.offers.iter() {
                 e.u64(*id)
                     .bytes(&o.maker)
-                    .u32(o.offer_asset)
+                    .bytes(&o.offer_asset)
                     .fixed(o.offer_amount)
-                    .u32(o.want_asset)
+                    .bytes(&o.want_asset)
                     .fixed(o.want_amount)
                     .u64(o.expires_at_epoch);
             }
@@ -435,7 +689,11 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
             let path = dir.join(crate::publish::index_rel(server.chain_id));
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let all = crate::publish::parse_index(&text);
-            let from = if limit > 0 && all.len() > limit { all.len() - limit } else { 0 };
+            let from = if limit > 0 && all.len() > limit {
+                all.len() - limit
+            } else {
+                0
+            };
             let shown = &all[from..];
             let mut e = Encoder::new();
             e.u32(shown.len() as u32);
@@ -469,7 +727,9 @@ pub fn dispatch(server: &Server, frame: &[u8]) -> Vec<u8> {
 /// Record every key; refuse if any was seen. All-or-nothing, so a co-signed
 /// intent with one replayed signature records none of them.
 fn fresh(server: &Server, keys: &[[u8; 32]], valid_until_epoch: u64) -> bool {
-    let Ok(mut r) = server.replay.lock() else { return false };
+    let Ok(mut r) = server.replay.lock() else {
+        return false;
+    };
     let mut probe = r.clone();
     if keys.iter().any(|k| !probe.fresh(*k, valid_until_epoch)) {
         return false;
@@ -504,9 +764,9 @@ fn pools_body(n: &Node<SwapState>) -> Vec<u8> {
     let mut e = Encoder::new();
     e.u32(s.pools.len() as u32);
     for (id, p) in s.pools.iter() {
-        e.u32(*id)
-            .u32(p.asset0)
-            .u32(p.asset1)
+        e.bytes(id)
+            .bytes(&p.asset0)
+            .bytes(&p.asset1)
             .fixed(p.reserve0)
             .fixed(p.reserve1)
             .u16(p.fee_bps)
@@ -514,14 +774,18 @@ fn pools_body(n: &Node<SwapState>) -> Vec<u8> {
             .bool(p.reference.is_some())
             .fixed(p.reference.map(|r| r.price).unwrap_or(Fixed::ZERO))
             .u64(p.reference.map(|r| r.seq).unwrap_or(0))
-            .u16(swapvm::vm::effective_fee(p, s.seq(), s.params.reference_staleness));
+            .u16(swapvm::vm::effective_fee(
+                p,
+                s.seq(),
+                s.params.reference_staleness,
+            ));
     }
     e.finish().to_vec()
 }
 
-/// `asset_in:u32 count:u32 pool:u32* amount_in:i128`, as documented.
+/// `asset_in:[32] count:u32 pool:[32]* amount_in:i128`, as documented.
 fn quote(server: &Server, d: &mut Decoder) -> Vec<u8> {
-    let (Ok(asset_in), Ok(count)) = (d.u32(), d.u32()) else {
+    let (Ok(asset_in), Ok(count)) = (d.array::<32>(), d.u32()) else {
         return error_frame("malformed quote");
     };
     if count as usize > wire::MAX_PATH_WIRE {
@@ -529,31 +793,42 @@ fn quote(server: &Server, d: &mut Decoder) -> Vec<u8> {
     }
     let mut path = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let Ok(p) = d.u32() else { return error_frame("malformed path") };
+        let Ok(p) = d.array::<32>() else {
+            return error_frame("malformed path");
+        };
         path.push(p);
     }
-    let Ok(raw) = d.i128() else { return error_frame("malformed amount") };
+    let Ok(raw) = d.i128() else {
+        return error_frame("malformed amount");
+    };
 
-    with_node(server, |n| match swapvm::vm::quote(n.state(), asset_in, &path, Fixed(raw)) {
-        Err(r) => error_frame(reject_name(r)),
-        Ok(q) => {
-            let mut e = Encoder::new();
-            // Both ends of the range: what solo execution pays, and what a
-            // perfectly netted batch would. A router needs the bracket, not a
-            // point it cannot rely on.
-            e.fixed(q.amount_out)
-                .fixed(q.best_case)
-                .u32(q.asset_out)
-                .u32(q.hops.len() as u32);
-            for h in &q.hops {
-                e.u32(h.pool)
-                    .u32(h.asset_in)
-                    .u32(h.asset_out)
-                    .fixed(h.amount_in)
-                    .fixed(h.amount_out)
-                    .fixed(h.fee);
+    with_node(server, |n| {
+        match swapvm::vm::quote(n.state(), asset_in, &path, Fixed(raw)) {
+            Err(r) => error_frame(reject_name(r)),
+            Ok(q) => {
+                let mut e = Encoder::new();
+                // Both ends of the range: what solo execution pays, and what a
+                // perfectly netted batch would. A router needs the bracket, not a
+                // point it cannot rely on.
+                e.fixed(q.amount_out)
+                    .fixed(q.best_case)
+                    .bytes(&q.asset_out)
+                    .u32(q.hops.len() as u32);
+                for h in &q.hops {
+                    e.bytes(&h.pool)
+                        .bytes(&h.asset_in)
+                        .bytes(&h.asset_out)
+                        .fixed(h.amount_in)
+                        .fixed(h.amount_out)
+                        .bytes(&h.fee_asset)
+                        .fixed(h.fee)
+                        .fixed(h.pool_fee)
+                        .fixed(h.protocol_fee)
+                        .fixed(h.creator_fee)
+                        .fixed(h.pol_fee);
+                }
+                ok_frame(e.finish().to_vec())
             }
-            ok_frame(e.finish().to_vec())
         }
     })
 }
@@ -563,10 +838,18 @@ fn quote(server: &Server, d: &mut Decoder) -> Vec<u8> {
 /// The account is never sent. It is recovered from the signature and the
 /// scheme, so a caller cannot name an account they do not control — **S14**.
 fn submit(server: &Server, d: &mut Decoder) -> Vec<u8> {
-    let Ok(vm_id) = d.array::<32>() else { return error_frame("missing program id") };
-    let Ok(valid_until_epoch) = d.u64() else { return error_frame("missing expiry") };
-    let Ok(tag) = d.u8() else { return error_frame("missing scheme") };
-    let Some(scheme) = Scheme::from_tag(tag) else { return error_frame("unknown scheme") };
+    let Ok(vm_id) = d.array::<32>() else {
+        return error_frame("missing program id");
+    };
+    let Ok(valid_until_epoch) = d.u64() else {
+        return error_frame("missing expiry");
+    };
+    let Ok(tag) = d.u8() else {
+        return error_frame("missing scheme");
+    };
+    let Some(scheme) = Scheme::from_tag(tag) else {
+        return error_frame("unknown scheme");
+    };
 
     let cred = match scheme {
         Scheme::Secp256k1Eip712 => match d.array::<65>() {
@@ -578,28 +861,42 @@ fn submit(server: &Server, d: &mut Decoder) -> Vec<u8> {
                 return error_frame("malformed credential");
             };
             match scheme {
-                Scheme::Ed25519 => Credential::Ed25519 { key, signature: sig },
-                _ => Credential::Solana { key, signature: sig },
+                Scheme::Ed25519 => Credential::Ed25519 {
+                    key,
+                    signature: sig,
+                },
+                _ => Credential::Solana {
+                    key,
+                    signature: sig,
+                },
             }
         }
     };
 
-    let Ok(intent) = wire::decode_intent(d) else { return error_frame("malformed intent") };
-    let auth =
-        Authorization { chain_id: server.chain_id, vm_id, valid_until_epoch };
+    let Ok(intent) = wire::decode_intent(d) else {
+        return error_frame("malformed intent");
+    };
+    let auth = Authorization {
+        chain_id: server.chain_id,
+        vm_id,
+        valid_until_epoch,
+    };
     let now = (server.now)();
 
     with_node(server, |n| {
-        let authorized = match authorize_intent(std::slice::from_ref(&cred), &auth, intent, n.state()) {
-            Ok(a) => a,
-            Err(e) => return error_frame(&format!("unauthorised: {:?}", e)),
-        };
+        let authorized =
+            match authorize_intent(std::slice::from_ref(&cred), &auth, intent, n.state()) {
+                Ok(a) => a,
+                Err(e) => return error_frame(&format!("unauthorised: {:?}", e)),
+            };
         if !fresh(server, &[replay_key_of(&cred)], auth.valid_until_epoch) {
             return error_frame("already applied: this signature was seen before (replay)");
         }
         let step = n.submit(authorized, now);
         let mut e = Encoder::new();
-        e.u64(step.seq).u64(n.state().epoch()).bytes(&n.state().state_root());
+        e.u64(step.seq)
+            .u64(n.state().epoch())
+            .bytes(&n.state().state_root());
         let receipts = wire::encode_receipts(&step.receipts);
         e.bytes(&receipts);
         ok_frame(e.finish().to_vec())
@@ -629,14 +926,18 @@ fn signed_read(server: &Server, d: &mut Decoder) -> Result<[u8; 32], &'static st
     }
     let msg = read_challenge(server.chain_id, &id, epoch);
     let vk = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| "malformed key")?;
-    vk.verify_strict(&msg, &ed25519_dalek::Signature::from_bytes(&sig)).map_err(|_| "bad signature")?;
+    vk.verify_strict(&msg, &ed25519_dalek::Signature::from_bytes(&sig))
+        .map_err(|_| "bad signature")?;
     Ok(id)
 }
 
 /// The bytes a signed read covers.
 pub fn read_challenge(chain_id: u32, account: &[u8; 32], epoch: u64) -> Vec<u8> {
     let mut e = Encoder::new();
-    e.bytes(b"zyn.read.v1").u32(chain_id).bytes(account).u64(epoch);
+    e.bytes(b"zyn.read.v1")
+        .u32(chain_id)
+        .bytes(account)
+        .u64(epoch);
     e.finish().to_vec()
 }
 
@@ -648,16 +949,26 @@ fn with_epoch(server: &Server) -> u64 {
 /// party an intent names signs the same bytes; a co-signed offer is one
 /// intent with two credentials.
 fn submit_multi(server: &Server, d: &mut Decoder) -> Vec<u8> {
-    let Ok(vm_id) = d.array::<32>() else { return error_frame("missing program id") };
-    let Ok(valid_until_epoch) = d.u64() else { return error_frame("missing expiry") };
-    let Ok(count) = d.u8() else { return error_frame("missing credential count") };
+    let Ok(vm_id) = d.array::<32>() else {
+        return error_frame("missing program id");
+    };
+    let Ok(valid_until_epoch) = d.u64() else {
+        return error_frame("missing expiry");
+    };
+    let Ok(count) = d.u8() else {
+        return error_frame("missing credential count");
+    };
     if count == 0 || count > 4 {
         return error_frame("one to four credentials");
     }
     let mut creds = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let Ok(tag) = d.u8() else { return error_frame("missing scheme") };
-        let Some(scheme) = Scheme::from_tag(tag) else { return error_frame("unknown scheme") };
+        let Ok(tag) = d.u8() else {
+            return error_frame("missing scheme");
+        };
+        let Some(scheme) = Scheme::from_tag(tag) else {
+            return error_frame("unknown scheme");
+        };
         creds.push(match scheme {
             Scheme::Secp256k1Eip712 => match d.array::<65>() {
                 Ok(sig) => Credential::Evm { signature: sig },
@@ -668,14 +979,26 @@ fn submit_multi(server: &Server, d: &mut Decoder) -> Vec<u8> {
                     return error_frame("malformed credential");
                 };
                 match scheme {
-                    Scheme::Ed25519 => Credential::Ed25519 { key, signature: sig },
-                    _ => Credential::Solana { key, signature: sig },
+                    Scheme::Ed25519 => Credential::Ed25519 {
+                        key,
+                        signature: sig,
+                    },
+                    _ => Credential::Solana {
+                        key,
+                        signature: sig,
+                    },
                 }
             }
         });
     }
-    let Ok(intent) = wire::decode_intent(d) else { return error_frame("malformed intent") };
-    let auth = Authorization { chain_id: server.chain_id, vm_id, valid_until_epoch };
+    let Ok(intent) = wire::decode_intent(d) else {
+        return error_frame("malformed intent");
+    };
+    let auth = Authorization {
+        chain_id: server.chain_id,
+        vm_id,
+        valid_until_epoch,
+    };
     let now = (server.now)();
     with_node(server, |n| {
         let authorized = match authorize_intent(&creds, &auth, intent, n.state()) {
@@ -688,7 +1011,9 @@ fn submit_multi(server: &Server, d: &mut Decoder) -> Vec<u8> {
         }
         let step = n.submit(authorized, now);
         let mut e = Encoder::new();
-        e.u64(step.seq).u64(n.state().epoch()).bytes(&n.state().state_root());
+        e.u64(step.seq)
+            .u64(n.state().epoch())
+            .bytes(&n.state().state_root());
         e.bytes(&wire::encode_receipts(&step.receipts));
         ok_frame(e.finish().to_vec())
     })
@@ -703,30 +1028,42 @@ fn submit_delegated(server: &Server, d: &mut Decoder) -> Vec<u8> {
     let Ok(valid_until_epoch) = d.u64() else {
         return error_frame("missing intent expiry");
     };
-    let (Ok(account), Ok(session_key), Ok(capabilities)) = (
-        d.array::<32>(),
-        d.array::<32>(),
-        d.u32(),
-    ) else {
+    let (Ok(account), Ok(session_key), Ok(capabilities)) =
+        (d.array::<32>(), d.array::<32>(), d.u32())
+    else {
         return error_frame("malformed delegation");
     };
-    let mut ids = |name: &'static str| -> Result<Vec<u32>, &'static str> {
+    let mut ids = |name: &'static str| -> Result<Vec<[u8; 32]>, &'static str> {
         let n = d.u8().map_err(|_| name)? as usize;
-        if n > MAX_POLICY_ITEMS { return Err(name); }
-        (0..n).map(|_| d.u32().map_err(|_| name)).collect()
+        if n > MAX_POLICY_ITEMS {
+            return Err(name);
+        }
+        (0..n).map(|_| d.array::<32>().map_err(|_| name)).collect()
     };
-    let Ok(allowed_assets) = ids("malformed allowed assets") else { return error_frame("malformed allowed assets") };
-    let Ok(allowed_pools) = ids("malformed allowed pools") else { return error_frame("malformed allowed pools") };
-    let Ok(limit_count) = d.u8() else { return error_frame("malformed amount limits") };
-    if limit_count as usize > MAX_POLICY_ITEMS { return error_frame("too many amount limits"); }
+    let Ok(allowed_assets) = ids("malformed allowed assets") else {
+        return error_frame("malformed allowed assets");
+    };
+    let Ok(allowed_pools) = ids("malformed allowed pools") else {
+        return error_frame("malformed allowed pools");
+    };
+    let Ok(limit_count) = d.u8() else {
+        return error_frame("malformed amount limits");
+    };
+    if limit_count as usize > MAX_POLICY_ITEMS {
+        return error_frame("too many amount limits");
+    }
     let mut max_per_action = Vec::with_capacity(limit_count as usize);
     for _ in 0..limit_count {
-        let (Ok(asset), Ok(amount)) = (d.u32(), d.fixed()) else { return error_frame("malformed amount limit") };
+        let (Ok(asset), Ok(amount)) = (d.array::<32>(), d.fixed()) else {
+            return error_frame("malformed amount limit");
+        };
         max_per_action.push(AssetLimit { asset, amount });
     }
     let (Ok(max_slippage_bps), Ok(valid_from_epoch), Ok(salt), Ok(session_until)) =
         (d.u16(), d.u64(), d.array::<32>(), d.u64())
-    else { return error_frame("malformed delegation policy") };
+    else {
+        return error_frame("malformed delegation policy");
+    };
     let Ok(owner_tag) = d.u8() else {
         return error_frame("missing owner scheme");
     };
@@ -812,12 +1149,25 @@ fn submit_delegated(server: &Server, d: &mut Decoder) -> Vec<u8> {
 /// destination the account bound on-chain — so the channel cannot be used
 /// to redirect an exit, only to disclose one the holder already committed.
 fn reveal(server: &Server, id: &[u8; 32], d: &mut Decoder) -> Vec<u8> {
-    let Ok(kind) = d.u8() else { return error_frame("missing kind") };
-    let Ok(len) = d.u16() else { return error_frame("missing address") };
-    let Ok(addr) = d.take_bytes(len as usize) else { return error_frame("malformed address") };
-    let Ok(salt) = d.array::<32>() else { return error_frame("missing salt") };
+    let Ok(kind) = d.u8() else {
+        return error_frame("missing kind");
+    };
+    let Ok(len) = d.u16() else {
+        return error_frame("missing address");
+    };
+    let Ok(addr) = d.take_bytes(len as usize) else {
+        return error_frame("malformed address");
+    };
+    let Ok(salt) = d.array::<32>() else {
+        return error_frame("missing salt");
+    };
     let addr = String::from_utf8_lossy(addr).to_string();
-    let bound = match server.node.lock().ok().and_then(|n| n.state().accounts.get(id).and_then(|a| a.binding)) {
+    let bound = match server
+        .node
+        .lock()
+        .ok()
+        .and_then(|n| n.state().accounts.get(id).and_then(|a| a.binding))
+    {
         Some(b) => b,
         None => return error_frame("this account has no withdrawal binding"),
     };
@@ -829,22 +1179,39 @@ fn reveal(server: &Server, id: &[u8; 32], d: &mut Decoder) -> Vec<u8> {
     let id_hex: String = id.iter().map(|b| format!("{:02x}", b)).collect();
     match kind {
         0 => {
-            let Some(dest) = crate::settle::parse_destination(&addr, zcash_protocol::consensus::Network::TestNetwork) else {
+            let Some(dest) = crate::settle::parse_destination(
+                &addr,
+                zcash_protocol::consensus::Network::TestNetwork,
+            ) else {
                 return error_frame("not a testnet Zcash address");
             };
             if !bound.admits(crate::settle::zcash_commitment(&dest, &salt)) {
                 return error_frame("this address and salt do not match the account's binding");
             }
-            inbox.zcash.push(crate::settle::ZcashReveal { account: *id, address: dest, salt });
-            inbox.lines.push(("zcash", format!("{} {} {}", id_hex, addr, salt_hex)));
+            inbox.zcash.push(crate::settle::ZcashReveal {
+                account: *id,
+                address: dest,
+                salt,
+            });
+            inbox
+                .lines
+                .push(("zcash", format!("{} {} {}", id_hex, addr, salt_hex)));
         }
         1 => {
-            let Some(pk) = zyn_custody::solana::pubkey(&addr) else { return error_frame("not a Solana address") };
+            let Some(pk) = zyn_custody::solana::pubkey(&addr) else {
+                return error_frame("not a Solana address");
+            };
             if !bound.admits(zyn_bridge::solana::commitment(&pk, &salt)) {
                 return error_frame("this address and salt do not match the account's binding");
             }
-            inbox.solana.push(zyn_bridge::solana::Reveal { account: *id, address: pk, salt });
-            inbox.lines.push(("solana", format!("{} {} {}", id_hex, addr, salt_hex)));
+            inbox.solana.push(zyn_bridge::solana::Reveal {
+                account: *id,
+                address: pk,
+                salt,
+            });
+            inbox
+                .lines
+                .push(("solana", format!("{} {} {}", id_hex, addr, salt_hex)));
         }
         _ => return error_frame("unknown kind"),
     }
@@ -858,7 +1225,8 @@ fn reveal(server: &Server, id: &[u8; 32], d: &mut Decoder) -> Vec<u8> {
 /// The node checks the signer is in its set and the signature opens the id;
 /// an endorsement that is neither is dropped, not an error.
 fn endorse(server: &Server, d: &mut Decoder) -> Vec<u8> {
-    let (Ok(anchor_id), Ok(signer), Ok(sig)) = (d.array::<32>(), d.array::<32>(), d.array::<64>()) else {
+    let (Ok(anchor_id), Ok(signer), Ok(sig)) = (d.array::<32>(), d.array::<32>(), d.array::<64>())
+    else {
         return error_frame("malformed endorsement");
     };
     with_node(server, |n| {
@@ -887,7 +1255,9 @@ fn deposit_address(server: &Server, d: &mut Decoder) -> Vec<u8> {
         return error_frame("the all-zero account is the vault's own, not a depositor's");
     }
     let Some(deposits) = &server.deposits else {
-        return error_frame("this node custodies no Zcash vault, so it has no deposit address to give");
+        return error_frame(
+            "this node custodies no Zcash vault, so it has no deposit address to give",
+        );
     };
     let mut guard = match deposits.lock() {
         Ok(g) => g,
@@ -913,7 +1283,10 @@ fn account_proof(server: &Server, id: &[u8; 32]) -> Vec<u8> {
             Err(_) => error_frame("no such account in the anchored snapshot"),
             Ok((record, index, steps)) => {
                 let mut e = Encoder::new();
-                e.u32(record.len() as u32).bytes(&record).u32(index).u32(steps.len() as u32);
+                e.u32(record.len() as u32)
+                    .bytes(&record)
+                    .u32(index)
+                    .u32(steps.len() as u32);
                 for s in &steps {
                     e.u8(s.node_is_right as u8).bytes(&s.sibling);
                 }
@@ -944,12 +1317,16 @@ fn snapshot(server: &Server, offset: u32, limit: u32) -> Vec<u8> {
         };
         // Leaves, never records: a leaf is `H(record ‖ blind)` and says
         // nothing to anyone but its holder. Anyone can rebuild the root.
-        let Ok(published) = snap.published() else { return error_frame("snapshot is malformed") };
+        let Ok(published) = snap.published() else {
+            return error_frame("snapshot is malformed");
+        };
         let total = published.leaves.len();
         let start = (offset as usize).min(total);
         let end = start.saturating_add(limit as usize).min(total);
         let mut e = Encoder::new();
-        e.u64(published.epoch).bytes(&published.root).u32(published.sections.len() as u32);
+        e.u64(published.epoch)
+            .bytes(&published.root)
+            .u32(published.sections.len() as u32);
         for s in &published.sections {
             e.bytes(s);
         }
@@ -989,8 +1366,23 @@ mod tests {
     use zyn::epoch::Economics;
 
     fn server() -> Server {
-        let node = Node::new(9, Params::v1(), Config::policy_for_test(), Economics::flat(10_000));
-        Server { node: Arc::new(Mutex::new(node)), chain_id: 9, now: || 0, health: Arc::new(Mutex::new(Vec::new())), inbox: Arc::new(Mutex::new(Inbox::default())), replica: None, replay: Arc::new(Mutex::new(ReplayIndex::default())), deposits: None, da_dir: None }
+        let node = Node::new(
+            9,
+            Params::v1(),
+            Config::policy_for_test(),
+            Economics::flat(10_000),
+        );
+        Server {
+            node: Arc::new(Mutex::new(node)),
+            chain_id: 9,
+            now: || 0,
+            health: Arc::new(Mutex::new(Vec::new())),
+            inbox: Arc::new(Mutex::new(Inbox::default())),
+            replica: None,
+            replay: Arc::new(Mutex::new(ReplayIndex::default())),
+            deposits: None,
+            da_dir: None,
+        }
     }
 
     /// A chain with two anchored epochs and forty holders, so a snapshot has
@@ -999,10 +1391,26 @@ mod tests {
         let s = server();
         {
             let mut n = s.node.lock().unwrap();
-            let observed = n.state().backing_of(swapvm::types::XZEC).add(Fixed::whole(1_000)).unwrap();
-            n.submit_operator(swapvm::tx::Intent::AttestVaultBalance { asset: swapvm::types::XZEC, observed }, 0);
+            let observed = n
+                .state()
+                .backing_of(swapvm::types::XZEC)
+                .add(Fixed::whole(1_000))
+                .unwrap();
+            n.submit_operator(
+                swapvm::tx::Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed,
+                },
+                0,
+            );
             for i in 0..40u8 {
-                let d = swapvm::tx::Intent::next_deposit(n.state(), [i + 1; 32], swapvm::types::XZEC, Fixed::whole(1), [0u8; 32]);
+                let d = swapvm::tx::Intent::next_deposit(
+                    n.state(),
+                    [i + 1; 32],
+                    swapvm::types::XZEC,
+                    Fixed::whole(1),
+                    [0u8; 32],
+                );
                 n.submit_operator(d, 0);
             }
             n.seal_now(1);
@@ -1012,7 +1420,12 @@ mod tests {
     }
 
     fn body_of(out: &[u8]) -> &[u8] {
-        assert_eq!(out[0], wire::STATUS_OK, "{}", String::from_utf8_lossy(&out[3..]));
+        assert_eq!(
+            out[0],
+            wire::STATUS_OK,
+            "{}",
+            String::from_utf8_lossy(&out[3..])
+        );
         &out[1..]
     }
 
@@ -1033,7 +1446,9 @@ mod tests {
         let out = dispatch(&s, &req(OP_DEPOSIT_ADDRESS, 9, &[1u8; 32]));
         assert_eq!(out[0], wire::STATUS_ERR);
 
-        let book = crate::deposits::Book::open(&dir, 9, zcash_protocol::consensus::NetworkType::Test).unwrap();
+        let book =
+            crate::deposits::Book::open(&dir, 9, zcash_protocol::consensus::NetworkType::Test)
+                .unwrap();
         s.deposits = Some(Arc::new(Mutex::new((book, keys.clone()))));
 
         let alice = [1u8; 32];
@@ -1048,8 +1463,16 @@ mod tests {
         let b1 = read(dispatch(&s, &req(OP_DEPOSIT_ADDRESS, 9, &bob)));
         assert_eq!(a1, a2, "asking twice gives one address");
         assert_ne!(a1, b1, "each account gets its own");
-        assert_eq!(a1, keys.deposit_address(&alice, zcash_protocol::consensus::NetworkType::Test), "and it is the derived one");
-        assert_ne!(a1, keys.address(0, zcash_protocol::consensus::NetworkType::Test), "never the vault's own address");
+        assert_eq!(
+            a1,
+            keys.deposit_address(&alice, zcash_protocol::consensus::NetworkType::Test),
+            "and it is the derived one"
+        );
+        assert_ne!(
+            a1,
+            keys.address(0, zcash_protocol::consensus::NetworkType::Test),
+            "never the vault's own address"
+        );
 
         // The all-zero account is the vault's, not a depositor's.
         let out = dispatch(&s, &req(OP_DEPOSIT_ADDRESS, 9, &[0u8; 32]));
@@ -1059,7 +1482,10 @@ mod tests {
         let shared = s.deposits.as_ref().unwrap().lock().unwrap().0.shared();
         let m = shared.lock().unwrap();
         assert_eq!(m.len(), 2);
-        assert_eq!(m.get(zyn_custody::shielded::deposit_index(&alice).as_bytes()), Some(&alice));
+        assert_eq!(
+            m.get(zyn_custody::shielded::deposit_index(&alice).as_bytes()),
+            Some(&alice)
+        );
     }
 
     #[test]
@@ -1069,10 +1495,14 @@ mod tests {
         let mut d = Decoder::new(body_of(&whole));
         let (_epoch, root) = (d.u64().unwrap(), d.hash().unwrap());
         let ns = d.u32().unwrap();
-        for _ in 0..ns { d.hash().unwrap(); }
+        for _ in 0..ns {
+            d.hash().unwrap();
+        }
         let n = d.u32().unwrap() as usize;
         let mut all = Vec::new();
-        for _ in 0..n { all.push(d.hash().unwrap()); }
+        for _ in 0..n {
+            all.push(d.hash().unwrap());
+        }
         assert_eq!(d.u32().unwrap() as usize, n, "total");
         assert_eq!(d.u32().unwrap(), 0, "offset");
         assert!(n >= 40);
@@ -1087,13 +1517,19 @@ mod tests {
             d.u64().unwrap();
             assert_eq!(d.hash().unwrap(), root);
             let ns = d.u32().unwrap();
-            for _ in 0..ns { d.hash().unwrap(); }
+            for _ in 0..ns {
+                d.hash().unwrap();
+            }
             let k = d.u32().unwrap() as usize;
-            for _ in 0..k { paged.push(d.hash().unwrap()); }
+            for _ in 0..k {
+                paged.push(d.hash().unwrap());
+            }
             let total = d.u32().unwrap();
             assert_eq!(d.u32().unwrap(), offset);
             offset += k as u32;
-            if offset >= total { break; }
+            if offset >= total {
+                break;
+            }
         }
         assert_eq!(paged, all, "pages must concatenate to the whole");
     }
@@ -1119,7 +1555,10 @@ mod tests {
         let mut path = Vec::new();
         for _ in 0..n {
             let right = d.u8().unwrap() != 0;
-            path.push(zyn_vm::commit::ProofStep { node_is_right: right, sibling: d.hash().unwrap() });
+            path.push(zyn_vm::commit::ProofStep {
+                node_is_right: right,
+                sibling: d.hash().unwrap(),
+            });
         }
         assert!(zyn::verify_record::<SwapState>(&record, &path, anchored));
     }
@@ -1127,14 +1566,41 @@ mod tests {
     #[test]
     fn an_endorsement_is_counted_only_from_the_set_and_grants_no_authority() {
         use ed25519_dalek::{Signer as _, SigningKey};
-        let node = Node::new(9, Params::v1(), Config::policy_for_test(), Economics::flat(10_000))
-            .with_manual_anchoring()
-            .with_signers(zyn::anchor::SignerSet::new((1..=3u8).map(|i| SigningKey::from_bytes(&[i; 32]).verifying_key().to_bytes()).collect(), 2).unwrap());
-        let s = Server { node: Arc::new(Mutex::new(node)), chain_id: 9, now: || 0, health: Arc::new(Mutex::new(Vec::new())), inbox: Arc::new(Mutex::new(Inbox::default())), replica: None, replay: Arc::new(Mutex::new(ReplayIndex::default())), deposits: None, da_dir: None };
+        let node = Node::new(
+            9,
+            Params::v1(),
+            Config::policy_for_test(),
+            Economics::flat(10_000),
+        )
+        .with_manual_anchoring()
+        .with_signers(
+            zyn::anchor::SignerSet::new(
+                (1..=3u8)
+                    .map(|i| SigningKey::from_bytes(&[i; 32]).verifying_key().to_bytes())
+                    .collect(),
+                2,
+            )
+            .unwrap(),
+        );
+        let s = Server {
+            node: Arc::new(Mutex::new(node)),
+            chain_id: 9,
+            now: || 0,
+            health: Arc::new(Mutex::new(Vec::new())),
+            inbox: Arc::new(Mutex::new(Inbox::default())),
+            replica: None,
+            replay: Arc::new(Mutex::new(ReplayIndex::default())),
+            deposits: None,
+            da_dir: None,
+        };
         let id = [7u8; 32];
         let endorse = |k: &SigningKey| {
             let mut e = Encoder::new();
-            e.u8(OP_ENDORSE).u32(9).bytes(&id).bytes(&k.verifying_key().to_bytes()).bytes(&k.sign(&id).to_bytes());
+            e.u8(OP_ENDORSE)
+                .u32(9)
+                .bytes(&id)
+                .bytes(&k.verifying_key().to_bytes())
+                .bytes(&k.sign(&id).to_bytes());
             let out = dispatch(&s, e.finish());
             assert_eq!(out[0], wire::STATUS_OK);
             (out[1] != 0, out[2] != 0)
@@ -1145,21 +1611,52 @@ mod tests {
         assert_eq!(endorse(&SigningKey::from_bytes(&[1u8; 32])), (true, false));
         assert_eq!(endorse(&SigningKey::from_bytes(&[2u8; 32])), (true, true));
         // A replica refuses to take endorsements at all.
-        let mut rep = Server { node: Arc::new(Mutex::new(Node::new(9, Params::v1(), Config::policy_for_test(), Economics::flat(10_000)))), chain_id: 9, now: || 0, health: Arc::new(Mutex::new(Vec::new())), inbox: Arc::new(Mutex::new(Inbox::default())), replica: None, replay: Arc::new(Mutex::new(ReplayIndex::default())), deposits: None, da_dir: None };
-        rep.replica = Some(ReplicaInfo { sequencer: "x".into(), verified: Arc::new(Mutex::new((None, 0))), forced: Arc::new(Mutex::new((0, 0))) });
+        let mut rep = Server {
+            node: Arc::new(Mutex::new(Node::new(
+                9,
+                Params::v1(),
+                Config::policy_for_test(),
+                Economics::flat(10_000),
+            ))),
+            chain_id: 9,
+            now: || 0,
+            health: Arc::new(Mutex::new(Vec::new())),
+            inbox: Arc::new(Mutex::new(Inbox::default())),
+            replica: None,
+            replay: Arc::new(Mutex::new(ReplayIndex::default())),
+            deposits: None,
+            da_dir: None,
+        };
+        rep.replica = Some(ReplicaInfo {
+            sequencer: "x".into(),
+            verified: Arc::new(Mutex::new((None, 0))),
+            forced: Arc::new(Mutex::new((0, 0))),
+        });
         let mut e = Encoder::new();
-        e.u8(OP_ENDORSE).u32(9).bytes(&id).bytes(&[1u8; 32]).bytes(&[0u8; 64]);
+        e.u8(OP_ENDORSE)
+            .u32(9)
+            .bytes(&id)
+            .bytes(&[1u8; 32])
+            .bytes(&[0u8; 64]);
         assert_eq!(dispatch(&rep, e.finish())[0], wire::STATUS_ERR);
     }
 
     #[test]
     fn a_replica_refuses_writes_and_names_the_sequencer() {
         let mut s = server();
-        s.replica = Some(ReplicaInfo { sequencer: "168.119.53.39:8099".into(), verified: Arc::new(Mutex::new((Some(4), 4_400_020))), forced: Arc::new(Mutex::new((0, 0))) });
+        s.replica = Some(ReplicaInfo {
+            sequencer: "168.119.53.39:8099".into(),
+            verified: Arc::new(Mutex::new((Some(4), 4_400_020))),
+            forced: Arc::new(Mutex::new((0, 0))),
+        });
         for op in [OP_SUBMIT, OP_SUBMIT_MULTI, OP_SUBMIT_DELEGATED, OP_REVEAL] {
             let out = dispatch(&s, &req(op, 9, &[]));
             assert_eq!(out[0], wire::STATUS_ERR);
-            assert!(String::from_utf8_lossy(&out[3..]).contains("168.119.53.39:8099"), "op {}", op);
+            assert!(
+                String::from_utf8_lossy(&out[3..]).contains("168.119.53.39:8099"),
+                "op {}",
+                op
+            );
         }
         let out = dispatch(&s, &req(wire::OP_STATUS, 9, &[]));
         let body = body_of(&out);
@@ -1167,13 +1664,20 @@ mod tests {
         let tail = &body[body.len() - 25..];
         assert_eq!(tail[0], 1, "role: replica");
         assert_eq!(u64::from_be_bytes(tail[1..9].try_into().unwrap()), 4);
-        assert_eq!(u64::from_be_bytes(tail[9..17].try_into().unwrap()), 4_400_020);
+        assert_eq!(
+            u64::from_be_bytes(tail[9..17].try_into().unwrap()),
+            4_400_020
+        );
         let seq = anchored_server();
         let out = dispatch(&seq, &req(wire::OP_STATUS, 9, &[]));
         let body = body_of(&out);
         let tail = &body[body.len() - 25..];
         assert_eq!(tail[0], 0, "role: sequencer");
-        assert_eq!(u64::from_be_bytes(tail[1..9].try_into().unwrap()), 0, "epoch 0 was the one anchored");
+        assert_eq!(
+            u64::from_be_bytes(tail[1..9].try_into().unwrap()),
+            0,
+            "epoch 0 was the one anchored"
+        );
     }
 
     struct Config;
@@ -1205,7 +1709,12 @@ mod tests {
     #[test]
     fn operator_operations_are_not_reachable_over_the_socket() {
         let s = server();
-        for op in [wire::OP_APPLY_BATCH, wire::OP_CHECKPOINT, wire::OP_RESTORE, wire::OP_STATE] {
+        for op in [
+            wire::OP_APPLY_BATCH,
+            wire::OP_CHECKPOINT,
+            wire::OP_RESTORE,
+            wire::OP_STATE,
+        ] {
             let out = dispatch(&s, &req(op, 9, &[]));
             assert_eq!(out[0], wire::STATUS_ERR, "op {} was reachable", op);
         }
@@ -1250,15 +1759,157 @@ mod tests {
     fn acct_of(k: &ed25519_dalek::SigningKey) -> [u8; 32] {
         zyn_vm::auth::account_of(Scheme::Ed25519, k.verifying_key().as_bytes())
     }
-    fn signed_cred(k: &ed25519_dalek::SigningKey, auth: &Authorization, intent: &Intent) -> Vec<u8> {
+    fn signed_cred(
+        k: &ed25519_dalek::SigningKey,
+        auth: &Authorization,
+        intent: &Intent,
+    ) -> Vec<u8> {
         use ed25519_dalek::Signer;
-        let payload = match zyn_vm::auth::signed_bytes_as::<SwapState>(Scheme::Ed25519, auth, intent) {
-            zyn_vm::auth::Signed::Message(m) => m,
-            zyn_vm::auth::Signed::Prehash(h) => h.to_vec(),
-        };
+        let payload =
+            match zyn_vm::auth::signed_bytes_as::<SwapState>(Scheme::Ed25519, auth, intent) {
+                zyn_vm::auth::Signed::Message(m) => m,
+                zyn_vm::auth::Signed::Prehash(h) => h.to_vec(),
+            };
         let mut e = Encoder::new();
-        e.u8(Scheme::Ed25519.tag()).bytes(k.verifying_key().as_bytes()).bytes(&k.sign(&payload).to_bytes());
+        e.u8(Scheme::Ed25519.tag())
+            .bytes(k.verifying_key().as_bytes())
+            .bytes(&k.sign(&payload).to_bytes());
         e.finish().to_vec()
+    }
+
+    #[test]
+    fn cave_gallery_and_quote_are_public_and_exact() {
+        let s = server();
+        let creator = acct_of(&ed25519_key(12));
+        let asset = {
+            let mut n = s.node.lock().unwrap();
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed: Fixed::whole(100),
+                },
+                0,
+            );
+            let idx = n.state().next_deposit_index(swapvm::types::XZEC);
+            n.submit_operator(
+                Intent::CreditDeposit {
+                    account: creator,
+                    asset: swapvm::types::XZEC,
+                    amount: Fixed::whole(100),
+                    index: idx,
+                    external_ref: [44; 32],
+                },
+                0,
+            );
+            let epoch = n.state().epoch();
+            n.submit_operator(Intent::Checkpoint, 0);
+            n.submit_operator(Intent::ConfirmAnchor { epoch }, 0);
+            let step = n.submit_operator(
+                Intent::LaunchCurve {
+                    creator,
+                    symbol: swapvm::state::symbol("玉".as_bytes()),
+                    display_name: "Dark Jade".as_bytes().to_vec(),
+                    metadata_hash: [5; 32],
+                    fee_bps: 125,
+                    dev_buy: Fixed::ZERO,
+                    max_zec: Fixed::ZERO,
+                },
+                0,
+            );
+            step.receipts
+                .iter()
+                .find_map(|r| match r {
+                    swapvm::Receipt::CurveCreated { asset, .. } => Some(*asset),
+                    _ => None,
+                })
+                .expect("curve created")
+        };
+
+        let body = body_of(&dispatch(&s, &req(OP_CURVES, 9, &[]))).to_vec();
+        let mut d = Decoder::new(&body);
+        assert_eq!(d.u32().unwrap(), 1);
+        assert_eq!(d.array::<32>().unwrap(), asset);
+        assert_eq!(d.array::<32>().unwrap(), creator);
+
+        let mut one = Encoder::new();
+        one.bytes(&asset);
+        let body = body_of(&dispatch(&s, &req(OP_CURVE, 9, one.finish()))).to_vec();
+        let mut d = Decoder::new(&body);
+        assert_eq!(d.u8().unwrap(), 1);
+        assert_eq!(d.array::<32>().unwrap(), asset);
+        assert_eq!(d.array::<32>().unwrap(), creator);
+
+        let mut missing = Encoder::new();
+        missing.bytes(&[99; 32]);
+        let body = body_of(&dispatch(&s, &req(OP_CURVE, 9, missing.finish()))).to_vec();
+        let mut d = Decoder::new(&body);
+        assert_eq!(d.u8().unwrap(), 0);
+        assert_eq!(d.remaining(), 0);
+
+        let amount = Fixed::whole(1_000_000);
+        let mut q = Encoder::new();
+        q.u8(0).bytes(&asset).fixed(amount);
+        let body = body_of(&dispatch(&s, &req(OP_CURVE_QUOTE, 9, q.finish()))).to_vec();
+        let mut d = Decoder::new(&body);
+        let direct = {
+            let n = s.node.lock().unwrap();
+            swapvm::cave::quote_buy(&n.state().curves[&asset], amount).unwrap()
+        };
+        assert_eq!(d.fixed().unwrap(), direct.principal);
+        assert_eq!(d.fixed().unwrap(), direct.fee);
+        assert_eq!(d.fixed().unwrap(), direct.settlement);
+        assert_eq!(d.fixed().unwrap(), direct.sold_after);
+        assert_eq!(d.fixed().unwrap(), direct.price_after);
+        assert_eq!(d.u8().unwrap(), direct.graduates as u8);
+        assert_eq!(d.remaining(), 0);
+
+        // Graduate, then prove the ordinary quote RPC exposes the ZEC-leg fee
+        // contract for a token sell rather than merely returning its net output.
+        let pool = {
+            let mut n = s.node.lock().unwrap();
+            let step = n.submit_operator(
+                Intent::BuyCurve {
+                    buyer: creator,
+                    asset,
+                    tokens: swapvm::cave::CURVE_SUPPLY,
+                    max_zec: Fixed::whole(100),
+                },
+                0,
+            );
+            step.receipts
+                .iter()
+                .find_map(|r| match r {
+                    swapvm::Receipt::CurveGraduated { pool, .. } => Some(*pool),
+                    _ => None,
+                })
+                .expect("curve graduated")
+        };
+        let sell = Fixed::whole(1_000_000);
+        let direct = {
+            let n = s.node.lock().unwrap();
+            swapvm::vm::quote(n.state(), asset, &[pool], sell).unwrap()
+        };
+        let mut q = Encoder::new();
+        q.bytes(&asset).u32(1).bytes(&pool).fixed(sell);
+        let body = body_of(&dispatch(&s, &req(wire::OP_QUOTE, 9, q.finish()))).to_vec();
+        let mut d = Decoder::new(&body);
+        assert_eq!(d.fixed().unwrap(), direct.amount_out);
+        assert_eq!(d.fixed().unwrap(), direct.best_case);
+        assert_eq!(d.array::<32>().unwrap(), swapvm::types::XZEC);
+        assert_eq!(d.u32().unwrap(), 1);
+        let hop = direct.hops[0];
+        assert_eq!(d.array::<32>().unwrap(), hop.pool);
+        assert_eq!(d.array::<32>().unwrap(), hop.asset_in);
+        assert_eq!(d.array::<32>().unwrap(), hop.asset_out);
+        assert_eq!(d.fixed().unwrap(), hop.amount_in);
+        assert_eq!(d.fixed().unwrap(), hop.amount_out);
+        assert_eq!(d.array::<32>().unwrap(), swapvm::types::XZEC);
+        assert_eq!(d.fixed().unwrap(), hop.fee);
+        assert_eq!(d.fixed().unwrap(), hop.pool_fee);
+        assert_eq!(d.fixed().unwrap(), hop.protocol_fee);
+        assert_eq!(d.fixed().unwrap(), hop.creator_fee);
+        assert_eq!(d.fixed().unwrap(), hop.pol_fee);
+        assert_eq!(d.remaining(), 0);
     }
 
     #[test]
@@ -1302,7 +1953,7 @@ mod tests {
         let swap = Intent::SwapExactIn {
             account: delegation.account,
             asset_in: swapvm::types::XZEC,
-            path: vec![1],
+            path: vec![swapvm::types::legacy_id(1)],
             amount_in: Fixed::whole(1),
             min_out: Fixed::ZERO,
         };
@@ -1331,9 +1982,24 @@ mod tests {
         {
             let mut n = s.node.lock().unwrap();
             let a = acct_of(&ed25519_key(1));
-            n.submit_operator(Intent::AttestVaultBalance { asset: swapvm::types::XZEC, observed: Fixed::whole(5) }, 0);
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed: Fixed::whole(5),
+                },
+                0,
+            );
             let idx = n.state().next_deposit_index(swapvm::types::XZEC);
-            n.submit_operator(Intent::CreditDeposit { account: a, asset: swapvm::types::XZEC, amount: Fixed::whole(5), index: idx, external_ref: [1u8; 32] }, 0);
+            n.submit_operator(
+                Intent::CreditDeposit {
+                    account: a,
+                    asset: swapvm::types::XZEC,
+                    amount: Fixed::whole(5),
+                    index: idx,
+                    external_ref: [1u8; 32],
+                },
+                0,
+            );
             let epoch = n.state().epoch();
             n.submit_operator(Intent::Checkpoint, 0);
             n.submit_operator(Intent::ConfirmAnchor { epoch }, 0);
@@ -1341,11 +2007,22 @@ mod tests {
             n.anchor_now(1);
         }
         let out = dispatch(&s, &req(wire::OP_SNAPSHOT, 9, &[]));
-        assert_eq!(out[0], wire::STATUS_OK, "{:?}", String::from_utf8_lossy(&out[3..]));
+        assert_eq!(
+            out[0],
+            wire::STATUS_OK,
+            "{:?}",
+            String::from_utf8_lossy(&out[3..])
+        );
         let a = acct_of(&ed25519_key(1));
-        assert!(!out.windows(32).any(|w| w == a), "an account id is in the published payload");
+        assert!(
+            !out.windows(32).any(|w| w == a),
+            "an account id is in the published payload"
+        );
         let record = s.node.lock().unwrap().state().account_record(&a).unwrap();
-        assert!(!out.windows(record.len()).any(|w| w == record.as_slice()), "a record is in the published payload");
+        assert!(
+            !out.windows(record.len()).any(|w| w == record.as_slice()),
+            "a record is in the published payload"
+        );
     }
 
     /// A record is served to its holder and to nobody else.
@@ -1380,7 +2057,11 @@ mod tests {
         let mut d = Decoder::new(&b);
         assert_eq!(d.u32().unwrap(), 2, "both anchors");
         assert_eq!(d.u64().unwrap(), 7);
-        assert_eq!(d.array::<32>().unwrap(), [0xaa; 32], "the root that was anchored");
+        assert_eq!(
+            d.array::<32>().unwrap(),
+            [0xaa; 32],
+            "the root that was anchored"
+        );
         assert_eq!(d.array::<32>().unwrap(), [0xbb; 32]);
         let n = d.u16().unwrap() as usize;
         assert_eq!(d.take_bytes(n).unwrap(), b"deadbeefcafe", "the Zcash txid");
@@ -1412,22 +2093,44 @@ mod tests {
         let s = server();
         let k = ed25519_key(2);
         let a = acct_of(&k);
-        s.node.lock().unwrap().submit_operator(Intent::Reblind { account: a, blind: [4u8; 32] }, 0);
+        s.node.lock().unwrap().submit_operator(
+            Intent::Reblind {
+                account: a,
+                blind: [4u8; 32],
+            },
+            0,
+        );
         // Bare id: refused.
         assert_eq!(dispatch(&s, &req(OP_ACCOUNT, 9, &a))[0], wire::STATUS_ERR);
         // Signed by the holder: served.
         let epoch = s.node.lock().unwrap().state().epoch();
         let sig = k.sign(&read_challenge(9, &a, epoch)).to_bytes();
         let mut e = Encoder::new();
-        e.bytes(&a).u64(epoch).u8(Scheme::Ed25519.tag()).bytes(k.verifying_key().as_bytes()).bytes(&sig);
+        e.bytes(&a)
+            .u64(epoch)
+            .u8(Scheme::Ed25519.tag())
+            .bytes(k.verifying_key().as_bytes())
+            .bytes(&sig);
         let out = dispatch(&s, &req(OP_ACCOUNT, 9, e.finish()));
-        assert_eq!(out[0], wire::STATUS_OK, "{:?}", String::from_utf8_lossy(&out[3..]));
+        assert_eq!(
+            out[0],
+            wire::STATUS_OK,
+            "{:?}",
+            String::from_utf8_lossy(&out[3..])
+        );
         // Signed by someone else for this account: refused.
         let other = ed25519_key(3);
         let sig = other.sign(&read_challenge(9, &a, epoch)).to_bytes();
         let mut e = Encoder::new();
-        e.bytes(&a).u64(epoch).u8(Scheme::Ed25519.tag()).bytes(other.verifying_key().as_bytes()).bytes(&sig);
-        assert_eq!(dispatch(&s, &req(OP_ACCOUNT, 9, e.finish()))[0], wire::STATUS_ERR);
+        e.bytes(&a)
+            .u64(epoch)
+            .u8(Scheme::Ed25519.tag())
+            .bytes(other.verifying_key().as_bytes())
+            .bytes(&sig);
+        assert_eq!(
+            dispatch(&s, &req(OP_ACCOUNT, 9, e.finish()))[0],
+            wire::STATUS_ERR
+        );
     }
 
     /// A whole collection over the wire: the numbers a storefront needs, at
@@ -1443,27 +2146,90 @@ mod tests {
 
         let (item, offer) = {
             let mut n = s.node.lock().unwrap();
-            n.submit_operator(Intent::AttestVaultBalance { asset: swapvm::types::XZEC, observed: Fixed::whole(100) }, 0);
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed: Fixed::whole(100),
+                },
+                0,
+            );
             let idx = n.state().next_deposit_index(swapvm::types::XZEC);
-            n.submit_operator(Intent::CreditDeposit { account: ma, asset: swapvm::types::XZEC, amount: Fixed::whole(100), index: idx, external_ref: [41u8; 32] }, 0);
+            n.submit_operator(
+                Intent::CreditDeposit {
+                    account: ma,
+                    asset: swapvm::types::XZEC,
+                    amount: Fixed::whole(100),
+                    index: idx,
+                    external_ref: [41u8; 32],
+                },
+                0,
+            );
             let epoch = n.state().epoch();
             n.submit_operator(Intent::Checkpoint, 0);
             n.submit_operator(Intent::ConfirmAnchor { epoch }, 0);
-            n.submit_operator(Intent::CreateCollection { creator: ma, symbol: swapvm::state::symbol(b"NAP"), cap: 1, fee_bps: 100 }, 0);
+            n.submit_operator(
+                Intent::CreateCollection {
+                    creator: ma,
+                    symbol: swapvm::state::symbol(b"NAP"),
+                    cap: 1,
+                    fee_bps: 100,
+                },
+                0,
+            );
             let c = *n.state().collections.keys().next().unwrap();
-            n.submit_operator(Intent::AdvanceCollection { creator: ma, collection: c, to: 1 }, 0);
-            n.submit_operator(Intent::MintCollectionItem { creator: ma, collection: c, to: ma, symbol: swapvm::state::symbol(b"NAP"), content: [8u8; 32] }, 0);
-            let item = n.state().tokens.iter().find(|(_, t)| t.collection == Some(c)).map(|(id, _)| *id).unwrap();
-            n.submit_operator(Intent::AdvanceCollection { creator: ma, collection: c, to: 2 }, 0);
-            n.submit_operator(Intent::AdvanceCollection { creator: ma, collection: c, to: 3 }, 0);
-            let step = n.submit_operator(Intent::PlaceOffer {
-                maker: ma,
-                offer_asset: item,
-                offer_amount: Fixed::ONE,
-                want_asset: swapvm::types::XZEC,
-                want_amount: Fixed::whole(7),
-                expires_at_epoch: 4242,
-            }, 0);
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ma,
+                    collection: c,
+                    to: 1,
+                },
+                0,
+            );
+            n.submit_operator(
+                Intent::MintCollectionItem {
+                    creator: ma,
+                    collection: c,
+                    serial: 0,
+                    to: ma,
+                    symbol: swapvm::state::symbol(b"NAP"),
+                    content: [8u8; 32],
+                },
+                0,
+            );
+            let item = n
+                .state()
+                .tokens
+                .iter()
+                .find(|(_, t)| t.collection == Some(c))
+                .map(|(id, _)| *id)
+                .unwrap();
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ma,
+                    collection: c,
+                    to: 2,
+                },
+                0,
+            );
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ma,
+                    collection: c,
+                    to: 3,
+                },
+                0,
+            );
+            let step = n.submit_operator(
+                Intent::PlaceOffer {
+                    maker: ma,
+                    offer_asset: item,
+                    offer_amount: Fixed::ONE,
+                    want_asset: swapvm::types::XZEC,
+                    want_amount: Fixed::whole(7),
+                    expires_at_epoch: 4242,
+                },
+                0,
+            );
             assert!(!step.rejected(), "{:?}", step.receipts);
             let offer = *n.state().offers.keys().next().unwrap();
             (item, offer)
@@ -1474,10 +2240,14 @@ mod tests {
         assert_eq!(d.u32().unwrap(), 1, "one resting offer");
         assert_eq!(d.u64().unwrap(), offer);
         assert_eq!(d.array::<32>().unwrap(), ma);
-        assert_eq!(d.u32().unwrap(), item);
+        assert_eq!(d.array::<32>().unwrap(), item);
         assert_eq!(d.fixed().unwrap(), Fixed::ONE);
-        assert_eq!(d.u32().unwrap(), swapvm::types::XZEC);
-        assert_eq!(d.fixed().unwrap(), Fixed::whole(7), "the price anyone may take it at");
+        assert_eq!(d.array::<32>().unwrap(), swapvm::types::XZEC);
+        assert_eq!(
+            d.fixed().unwrap(),
+            Fixed::whole(7),
+            "the price anyone may take it at"
+        );
         assert_eq!(d.u64().unwrap(), 4242);
         assert_eq!(d.remaining(), 0);
     }
@@ -1492,19 +2262,72 @@ mod tests {
         // The sale runs and the pool fills, before any item exists.
         let (collection, item) = {
             let mut n = s.node.lock().unwrap();
-            n.submit_operator(Intent::AttestVaultBalance { asset: swapvm::types::XZEC, observed: Fixed::whole(100) }, 0);
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed: Fixed::whole(100),
+                },
+                0,
+            );
             let idx = n.state().next_deposit_index(swapvm::types::XZEC);
-            n.submit_operator(Intent::CreditDeposit { account: ca, asset: swapvm::types::XZEC, amount: Fixed::whole(100), index: idx, external_ref: [31u8; 32] }, 0);
+            n.submit_operator(
+                Intent::CreditDeposit {
+                    account: ca,
+                    asset: swapvm::types::XZEC,
+                    amount: Fixed::whole(100),
+                    index: idx,
+                    external_ref: [31u8; 32],
+                },
+                0,
+            );
             let epoch = n.state().epoch();
             n.submit_operator(Intent::Checkpoint, 0);
             n.submit_operator(Intent::ConfirmAnchor { epoch }, 0);
-            n.submit_operator(Intent::CreateCollection { creator: ca, symbol: swapvm::state::symbol(b"NAP"), cap: 2, fee_bps: 100 }, 0);
+            n.submit_operator(
+                Intent::CreateCollection {
+                    creator: ca,
+                    symbol: swapvm::state::symbol(b"NAP"),
+                    cap: 2,
+                    fee_bps: 100,
+                },
+                0,
+            );
             let c = *n.state().collections.keys().next().unwrap();
-            n.submit_operator(Intent::FundCollection { from: ca, collection: c, amount: Fixed::whole(20) }, 0);
-            n.submit_operator(Intent::AdvanceCollection { creator: ca, collection: c, to: 1 }, 0);
-            let step = n.submit_operator(Intent::MintCollectionItem { creator: ca, collection: c, to: buyer, symbol: swapvm::state::symbol(b"NAP"), content: [7u8; 32] }, 0);
+            n.submit_operator(
+                Intent::FundCollection {
+                    from: ca,
+                    collection: c,
+                    amount: Fixed::whole(20),
+                },
+                0,
+            );
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ca,
+                    collection: c,
+                    to: 1,
+                },
+                0,
+            );
+            let step = n.submit_operator(
+                Intent::MintCollectionItem {
+                    creator: ca,
+                    collection: c,
+                    serial: 0,
+                    to: buyer,
+                    symbol: swapvm::state::symbol(b"NAP"),
+                    content: [7u8; 32],
+                },
+                0,
+            );
             assert!(!step.rejected(), "{:?}", step.receipts);
-            let item = n.state().tokens.iter().find(|(_, t)| t.collection == Some(c)).map(|(id, _)| *id).unwrap();
+            let item = n
+                .state()
+                .tokens
+                .iter()
+                .find(|(_, t)| t.collection == Some(c))
+                .map(|(id, _)| *id)
+                .unwrap();
             (c, item)
         };
 
@@ -1513,9 +2336,10 @@ mod tests {
             let b = read(out);
             let mut d = Decoder::new(&b);
             assert_eq!(d.u32().unwrap(), 1, "one collection");
-            let id = d.u32().unwrap();
+            let id = d.array::<32>().unwrap();
             let _creator = d.array::<32>().unwrap();
-            let _sym = d.array::<8>().unwrap();
+            let symbol_len = d.u8().unwrap() as usize;
+            let _sym = d.take_bytes(symbol_len).unwrap();
             let (cap, minted, outstanding) = (d.u32().unwrap(), d.u32().unwrap(), d.u32().unwrap());
             let pool = d.fixed().unwrap();
             let fee_bps = d.u16().unwrap();
@@ -1539,24 +2363,50 @@ mod tests {
         let n = d.u32().unwrap();
         let mut found = None;
         for _ in 0..n {
-            let aid = d.u32().unwrap();
-            let _sym = d.array::<8>().unwrap();
+            let aid = d.array::<32>().unwrap();
+            let symbol_len = d.u8().unwrap() as usize;
+            let _sym = d.take_bytes(symbol_len).unwrap();
             let _supply = d.fixed().unwrap();
-            let _lp = d.u32().unwrap();
+            let _has_lp = d.u8().unwrap() != 0;
+            let _lp = d.array::<32>().unwrap();
             let has = d.u8().unwrap() != 0;
             let content = d.array::<32>().unwrap();
-            let coll = d.u32().unwrap();
+            let has_collection = d.u8().unwrap() != 0;
+            let collection_id = d.array::<32>().unwrap();
+            let coll = if has_collection {
+                collection_id
+            } else {
+                [0; 32]
+            };
             if aid == item {
                 found = Some((has, content, coll));
             }
         }
-        assert_eq!(found, Some((true, [7u8; 32], collection)), "the item carries its content and collection");
+        assert_eq!(
+            found,
+            Some((true, [7u8; 32], collection)),
+            "the item carries its content and collection"
+        );
 
         // The market opens and the floor becomes the whole pool over one item.
         {
             let mut n = s.node.lock().unwrap();
-            n.submit_operator(Intent::AdvanceCollection { creator: ca, collection, to: 2 }, 0);
-            n.submit_operator(Intent::AdvanceCollection { creator: ca, collection, to: 3 }, 0);
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ca,
+                    collection,
+                    to: 2,
+                },
+                0,
+            );
+            n.submit_operator(
+                Intent::AdvanceCollection {
+                    creator: ca,
+                    collection,
+                    to: 3,
+                },
+                0,
+            );
         }
         let (.., phase, redeem) = one(dispatch(&s, &req(OP_COLLECTIONS, 9, &[])));
         assert_eq!(phase, 3, "live");
@@ -1572,36 +2422,96 @@ mod tests {
         let item;
         {
             let mut n = s.node.lock().unwrap();
-            n.submit_operator(Intent::AttestVaultBalance { asset: swapvm::types::XZEC, observed: Fixed::whole(10) }, 0);
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: swapvm::types::XZEC,
+                    observed: Fixed::whole(10),
+                },
+                0,
+            );
             for (i, (who, amt)) in [(ma, 2u64), (ta, 5u64)].into_iter().enumerate() {
                 let idx = n.state().next_deposit_index(swapvm::types::XZEC);
-                let step = n.submit_operator(Intent::CreditDeposit { account: who, asset: swapvm::types::XZEC, amount: Fixed::whole(amt as i64), index: idx, external_ref: [i as u8 + 10; 32] }, 0);
+                let step = n.submit_operator(
+                    Intent::CreditDeposit {
+                        account: who,
+                        asset: swapvm::types::XZEC,
+                        amount: Fixed::whole(amt as i64),
+                        index: idx,
+                        external_ref: [i as u8 + 10; 32],
+                    },
+                    0,
+                );
                 assert!(!step.rejected());
             }
             let epoch = n.state().epoch();
             n.submit_operator(Intent::Checkpoint, 0);
             n.submit_operator(Intent::ConfirmAnchor { epoch }, 0);
-            let step = n.submit_operator(Intent::MintItem { creator: ma, symbol: swapvm::state::symbol(b"ART"), supply: Fixed::whole(1), bond: Fixed::whole(1), content: [9u8; 32] }, 0);
+            let step = n.submit_operator(
+                Intent::MintItem {
+                    creator: ma,
+                    symbol: swapvm::state::symbol(b"ART"),
+                    supply: Fixed::whole(1),
+                    bond: Fixed::whole(1),
+                    content: [9u8; 32],
+                },
+                0,
+            );
             assert!(!step.rejected(), "{:?}", step.receipts);
-            item = n.state().tokens.iter().find(|(_, t)| t.symbol == swapvm::state::symbol(b"ART")).map(|(id, _)| *id).unwrap();
+            item = n
+                .state()
+                .tokens
+                .iter()
+                .find(|(_, t)| t.symbol == swapvm::state::symbol(b"ART"))
+                .map(|(id, _)| *id)
+                .unwrap();
         }
-        let intent = Intent::AcceptOffer { maker: ma, taker: ta, offer_asset: item, offer_amount: Fixed::whole(1), want_asset: swapvm::types::XZEC, want_amount: Fixed::whole(3) };
+        let intent = Intent::AcceptOffer {
+            maker: ma,
+            taker: ta,
+            offer_asset: item,
+            offer_amount: Fixed::whole(1),
+            want_asset: swapvm::types::XZEC,
+            want_amount: Fixed::whole(3),
+        };
         let epoch = s.node.lock().unwrap().state().epoch();
         let auth = Authorization::for_vm::<SwapState>(9, epoch, 100);
         // Only the maker's signature: refused.
         let mut e = Encoder::new();
-        e.bytes(&auth.vm_id).u64(auth.valid_until_epoch).u8(1).bytes(&signed_cred(&maker, &auth, &intent));
+        e.bytes(&auth.vm_id)
+            .u64(auth.valid_until_epoch)
+            .u8(1)
+            .bytes(&signed_cred(&maker, &auth, &intent));
         wire::encode_intent(&mut e, &intent);
-        assert_eq!(dispatch(&s, &req(OP_SUBMIT_MULTI, 9, e.finish()))[0], wire::STATUS_ERR);
+        assert_eq!(
+            dispatch(&s, &req(OP_SUBMIT_MULTI, 9, e.finish()))[0],
+            wire::STATUS_ERR
+        );
         // Both: the trade executes.
         let mut e = Encoder::new();
-        e.bytes(&auth.vm_id).u64(auth.valid_until_epoch).u8(2).bytes(&signed_cred(&maker, &auth, &intent)).bytes(&signed_cred(&taker, &auth, &intent));
+        e.bytes(&auth.vm_id)
+            .u64(auth.valid_until_epoch)
+            .u8(2)
+            .bytes(&signed_cred(&maker, &auth, &intent))
+            .bytes(&signed_cred(&taker, &auth, &intent));
         wire::encode_intent(&mut e, &intent);
         let out = dispatch(&s, &req(OP_SUBMIT_MULTI, 9, e.finish()));
-        assert_eq!(out[0], wire::STATUS_OK, "{:?}", String::from_utf8_lossy(&out[3..]));
+        assert_eq!(
+            out[0],
+            wire::STATUS_OK,
+            "{:?}",
+            String::from_utf8_lossy(&out[3..])
+        );
         let n = s.node.lock().unwrap();
-        assert_eq!(n.state().balance(&ta, item), Fixed::whole(1), "the taker holds the item");
-        assert_eq!(n.state().balance(&ma, swapvm::types::XZEC), Fixed::whole(4), "the maker was paid 3, having posted a bond of 1 from 2");
+        assert_eq!(
+            n.state().balance(&ta, item),
+            Fixed::whole(1),
+            "the taker holds the item"
+        );
+        assert_eq!(
+            n.state().balance(&ma, swapvm::types::XZEC),
+            Fixed::whole(4),
+            "the maker was paid 3, having posted a bond of 1 from 2"
+        );
     }
 
     /// The channel discloses, it does not redirect: a reveal is accepted only
@@ -1615,20 +2525,43 @@ mod tests {
         let addr = zyn_custody::solana::base58_encode(&[3u8; 32]);
         let salt = [5u8; 32];
         let good = zyn_bridge::solana::commitment(&[3u8; 32], &salt);
-        s.node.lock().unwrap().submit_operator(Intent::BindWithdrawal { account: a, destination: good }, 0);
+        s.node.lock().unwrap().submit_operator(
+            Intent::BindWithdrawal {
+                account: a,
+                destination: good,
+            },
+            0,
+        );
         let epoch = s.node.lock().unwrap().state().epoch();
         let head = |e: &mut Encoder| {
             let sig = k.sign(&read_challenge(9, &a, epoch)).to_bytes();
-            e.bytes(&a).u64(epoch).u8(Scheme::Ed25519.tag()).bytes(k.verifying_key().as_bytes()).bytes(&sig);
+            e.bytes(&a)
+                .u64(epoch)
+                .u8(Scheme::Ed25519.tag())
+                .bytes(k.verifying_key().as_bytes())
+                .bytes(&sig);
         };
         let mut e = Encoder::new();
         head(&mut e);
-        e.u8(1).u16(addr.len() as u16).bytes(addr.as_bytes()).bytes(&[6u8; 32]);
-        assert_eq!(dispatch(&s, &req(OP_REVEAL, 9, e.finish()))[0], wire::STATUS_ERR, "a wrong salt was accepted");
+        e.u8(1)
+            .u16(addr.len() as u16)
+            .bytes(addr.as_bytes())
+            .bytes(&[6u8; 32]);
+        assert_eq!(
+            dispatch(&s, &req(OP_REVEAL, 9, e.finish()))[0],
+            wire::STATUS_ERR,
+            "a wrong salt was accepted"
+        );
         let mut e = Encoder::new();
         head(&mut e);
-        e.u8(1).u16(addr.len() as u16).bytes(addr.as_bytes()).bytes(&salt);
-        assert_eq!(dispatch(&s, &req(OP_REVEAL, 9, e.finish()))[0], wire::STATUS_OK);
+        e.u8(1)
+            .u16(addr.len() as u16)
+            .bytes(addr.as_bytes())
+            .bytes(&salt);
+        assert_eq!(
+            dispatch(&s, &req(OP_REVEAL, 9, e.finish()))[0],
+            wire::STATUS_OK
+        );
         let inbox = s.inbox.lock().unwrap();
         assert_eq!(inbox.solana.len(), 1);
         assert_eq!(inbox.lines.len(), 1);

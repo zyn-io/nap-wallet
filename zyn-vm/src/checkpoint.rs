@@ -98,7 +98,10 @@ mod tests {
         let a = cp(3, 100, 0, 5);
         assert!(!cp(3, 200, 5, 7).follows(&a), "the epoch did not advance");
         assert!(!cp(5, 200, 5, 7).follows(&a), "an epoch was skipped");
-        assert!(!cp(4, 100, 5, 7).follows(&a), "the sequence covered no new history");
+        assert!(
+            !cp(4, 100, 5, 7).follows(&a),
+            "the sequence covered no new history"
+        );
         assert!(cp(4, 101, 5, 7).follows(&a));
     }
 

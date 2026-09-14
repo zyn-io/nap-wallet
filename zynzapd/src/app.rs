@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use swapvm::state::SwapState;
+use swapvm::state::{SwapState, Symbol};
 use swapvm::tx::Intent;
 use swapvm::types::XZEC;
 use swapvm::Fixed;
@@ -26,9 +26,11 @@ use zyn_vm::auth::{delegation_bytes_as, Authorization, Scheme, Signed};
 use zyn_vm::session::{session_payload, AssetLimit, Delegation, CAP_SWAP};
 use zyn_vm::verify::{Credential, Delegated};
 
-use crate::client::{account, fixed_of, hex, load_key, unhex32, Node, ZAT};
+use crate::client::{account, fixed_of, hex, unhex32, CurveView, Node, ZAT};
 use crate::settle::{parse_destination, zcash_commitment};
-use crate::wallet::{network_name, unit, Event, Wallet, WalletBackup, CONFIRMATIONS, ZAT_PER_ZEC};
+use crate::wallet::{
+    network_name, unit, Event, Wallet, WalletBackup, ZynKeySource, CONFIRMATIONS, ZAT_PER_ZEC,
+};
 
 pub const DEFAULT_LIGHTD_TESTNET: &str = "168.119.53.39:8098";
 pub const DEFAULT_NODE: &str = "168.119.53.39:8099";
@@ -58,7 +60,9 @@ impl Config {
             wallet_path: std::env::var("ZYN_APP_WALLET").ok().map(PathBuf::from),
             key_path: std::env::var("ZYN_APP_KEY").ok().map(PathBuf::from),
             node: env("ZYN_NODE", DEFAULT_NODE),
-            chain: env("ZYN_CHAIN", &DEFAULT_CHAIN.to_string()).parse().unwrap_or(DEFAULT_CHAIN),
+            chain: env("ZYN_CHAIN", &DEFAULT_CHAIN.to_string())
+                .parse()
+                .unwrap_or(DEFAULT_CHAIN),
             vault: env("ZYN_VAULT", DEFAULT_VAULT),
             dir,
         }
@@ -85,18 +89,35 @@ pub struct Settings {
 
 impl Settings {
     fn load(dir: &std::path::Path) -> Settings {
-        let v: Value = std::fs::read(dir.join("settings.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({}));
+        let v: Value = std::fs::read(dir.join("settings.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or(json!({}));
         let env_lightd = std::env::var("ZYN_LIGHTD").ok();
         Settings {
-            network: if v.get("network").and_then(Value::as_str) == Some("mainnet") { Network::MainNetwork } else { Network::TestNetwork },
-            lightd_testnet: v.get("lightd_testnet").and_then(Value::as_str).map(String::from).or(env_lightd).unwrap_or_else(|| DEFAULT_LIGHTD_TESTNET.to_string()),
-            lightd_mainnet: v.get("lightd_mainnet").and_then(Value::as_str).map(String::from).unwrap_or_default(),
+            network: if v.get("network").and_then(Value::as_str) == Some("mainnet") {
+                Network::MainNetwork
+            } else {
+                Network::TestNetwork
+            },
+            lightd_testnet: v
+                .get("lightd_testnet")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .or(env_lightd)
+                .unwrap_or_else(|| DEFAULT_LIGHTD_TESTNET.to_string()),
+            lightd_mainnet: v
+                .get("lightd_mainnet")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .unwrap_or_default(),
             price: v.get("price").and_then(Value::as_bool).unwrap_or(true),
         }
     }
 
     fn save(&self, dir: &std::path::Path) -> Result<(), String> {
-        std::fs::write(dir.join("settings.json"), self.json().to_string()).map_err(|e| e.to_string())
+        std::fs::write(dir.join("settings.json"), self.json().to_string())
+            .map_err(|e| e.to_string())
     }
 
     fn json(&self) -> Value {
@@ -104,9 +125,16 @@ impl Settings {
     }
 
     fn lightd(&self, network: Network) -> Result<&str, String> {
-        let s = if network == Network::MainNetwork { &self.lightd_mainnet } else { &self.lightd_testnet };
+        let s = if network == Network::MainNetwork {
+            &self.lightd_mainnet
+        } else {
+            &self.lightd_testnet
+        };
         if s.trim().is_empty() {
-            return Err(format!("no {} block server is configured yet (Settings)", network_name(network)));
+            return Err(format!(
+                "no {} block server is configured yet (Settings)",
+                network_name(network)
+            ));
         }
         Ok(s.trim())
     }
@@ -142,9 +170,9 @@ const MAX_AGENT_LIST: usize = 16;
 struct AgentMandate {
     id: String,
     session_seed: [u8; 32],
-    allowed_assets: Vec<u32>,
-    allowed_pools: Vec<u32>,
-    max_per_action: Vec<(u32, Fixed)>,
+    allowed_assets: Vec<[u8; 32]>,
+    allowed_pools: Vec<[u8; 32]>,
+    max_per_action: Vec<([u8; 32], Fixed)>,
     max_slippage_bps: u16,
     valid_from_epoch: u64,
     valid_until_epoch: u64,
@@ -162,11 +190,13 @@ impl Binding {
     fn commitment(&self, network: Network) -> Result<[u8; 32], String> {
         match self.kind {
             0 => {
-                let dest = parse_destination(&self.address, network).ok_or("bound address does not parse")?;
+                let dest = parse_destination(&self.address, network)
+                    .ok_or("bound address does not parse")?;
                 Ok(zcash_commitment(&dest, &self.salt))
             }
             _ => {
-                let pk = zyn_custody::solana::pubkey(&self.address).ok_or("bound Solana address does not parse")?;
+                let pk = zyn_custody::solana::pubkey(&self.address)
+                    .ok_or("bound Solana address does not parse")?;
                 Ok(zyn_bridge::solana::commitment(&pk, &self.salt))
             }
         }
@@ -174,10 +204,13 @@ impl Binding {
 }
 
 pub struct App {
+    operation: Mutex<()>,
     cfg: Config,
     pub wallet: Mutex<Wallet>,
     pub settings: Mutex<Settings>,
-    pub key: SigningKey,
+    key: Mutex<SigningKey>,
+    zyn_key_source: Mutex<ZynKeySource>,
+    zyn_key_path: PathBuf,
     pub node: Node,
     pub vault: String,
     binding_path: PathBuf,
@@ -206,25 +239,39 @@ impl App {
     /// key, reaching the block server once to confirm the network.
     pub fn open(cfg: &Config) -> Result<App, String> {
         std::fs::create_dir_all(&cfg.dir).map_err(|e| format!("app dir: {}", e))?;
+        crate::restore::recover(&cfg.dir)?;
         let settings = Settings::load(&cfg.dir);
         let wallet = App::open_wallet(cfg, &settings, settings.network, true)?;
-        let key_path = cfg.key_path.clone().unwrap_or_else(|| cfg.dir.join("zyn.key"));
-        if !key_path.exists() {
+        let key_path = cfg
+            .key_path
+            .clone()
+            .unwrap_or_else(|| cfg.dir.join("zyn.key"));
+        let source = if key_path.exists() {
+            App::read_zyn_key_source(&key_path)?
+        } else if let Some(source) = wallet.default_zyn_source() {
+            App::write_zyn_key_source(&key_path, &source, true)?;
+            source
+        } else {
             use rand::RngCore;
             let mut seed = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut seed);
-            std::fs::write(&key_path, seed).map_err(|e| format!("write key: {}", e))?;
-        }
-        let key = load_key(&key_path.to_string_lossy())?;
+            let source = ZynKeySource::Legacy { seed };
+            App::write_zyn_key_source(&key_path, &source, true)?;
+            source
+        };
+        let key = wallet.zyn_signing_key(&source)?;
         let binding_path = cfg.dir.join("binding");
         let binding = App::load_binding(&binding_path);
         let agent_path = cfg.dir.join("agent.json");
         let agent = App::load_agent_store(&agent_path, account(&key));
         Ok(App {
+            operation: Mutex::new(()),
             cfg: cfg.clone(),
             wallet: Mutex::new(wallet),
             settings: Mutex::new(settings),
-            key,
+            key: Mutex::new(key),
+            zyn_key_source: Mutex::new(source),
+            zyn_key_path: key_path,
             node: Node::new(&cfg.node, cfg.chain),
             vault: cfg.vault.clone(),
             binding_path,
@@ -240,6 +287,60 @@ impl App {
         })
     }
 
+    pub fn key(&self) -> SigningKey {
+        self.key.lock().expect("Zyn key lock").clone()
+    }
+
+    fn zyn_key_source(&self) -> Result<ZynKeySource, String> {
+        self.zyn_key_source
+            .lock()
+            .map_err(|_| "Zyn key lock".to_string())
+            .map(|s| s.clone())
+    }
+
+    fn read_zyn_key_source(path: &Path) -> Result<ZynKeySource, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("cannot read Zyn key: {}", e))?;
+        if bytes.len() == 32 {
+            return Ok(ZynKeySource::Legacy {
+                seed: bytes.try_into().expect("length checked"),
+            });
+        }
+        let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
+            "Zyn key is neither a legacy 32-byte seed nor a Nap descriptor".to_string()
+        })?;
+        ZynKeySource::parse(&value)
+    }
+
+    fn write_zyn_key_source(
+        path: &Path,
+        source: &ZynKeySource,
+        create_new: bool,
+    ) -> Result<(), String> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .write(true)
+            .create(true)
+            .truncate(!create_new)
+            .create_new(create_new);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(path)
+            .map_err(|e| format!("cannot write Zyn key descriptor: {}", e))?;
+        let bytes = match source {
+            ZynKeySource::Legacy { seed } => seed.to_vec(),
+            _ => serde_json::to_vec_pretty(&source.json()).map_err(|e| e.to_string())?,
+        };
+        file.write_all(&bytes)
+            .map_err(|e| format!("cannot write Zyn key descriptor: {}", e))?;
+        file.sync_all()
+            .map_err(|e| format!("cannot sync Zyn key descriptor: {}", e))
+    }
+
     pub fn job(&self) -> Option<Job> {
         self.job.lock().ok().and_then(|j| j.clone())
     }
@@ -252,21 +353,31 @@ impl App {
     /// must not be able to stall that. A refresh is started behind a stale
     /// value and the caller gets what is already known.
     fn zec_usd(app: &App) -> Option<f64> {
-        if !app.settings.lock().ok()?.price { return None }
+        if !app.settings.lock().ok()?.price {
+            return None;
+        }
         let now = App::now();
         let cached = app.price.lock().ok().and_then(|p| *p);
-        if cached.is_none_or(|(_, at)| now.saturating_sub(at) > PRICE_TTL) { app.refresh_price() }
+        if cached.is_none_or(|(_, at)| now.saturating_sub(at) > PRICE_TTL) {
+            app.refresh_price()
+        }
         // Past the hard limit nothing is shown. A price from yesterday
         // presented as today's is worse than admitting there is none.
-        cached.filter(|(_, at)| now.saturating_sub(*at) <= PRICE_MAX_AGE).map(|(px, _)| px)
+        cached
+            .filter(|(_, at)| now.saturating_sub(*at) <= PRICE_MAX_AGE)
+            .map(|(px, _)| px)
     }
 
     /// Fetch in the background. Only the two price cells travel to the thread,
     /// so this needs no `Arc<App>` and stays callable from `overview`.
     fn refresh_price(&self) {
         {
-            let Ok(mut f) = self.price_fetching.lock() else { return };
-            if *f { return }
+            let Ok(mut f) = self.price_fetching.lock() else {
+                return;
+            };
+            if *f {
+                return;
+            }
             *f = true;
         }
         let (cell, flag) = (Arc::clone(&self.price), Arc::clone(&self.price_fetching));
@@ -281,49 +392,83 @@ impl App {
             );
             let (prices, _) = feeds.prices(&["ZEC".to_string()]);
             if let Some(px) = prices.get("ZEC").filter(|p| **p > 0.0) {
-                if let Ok(mut c) = cell.lock() { *c = Some((*px, App::now())) }
+                if let Ok(mut c) = cell.lock() {
+                    *c = Some((*px, App::now()))
+                }
             }
-            if let Ok(mut f) = flag.lock() { *f = false }
+            if let Ok(mut f) = flag.lock() {
+                *f = false
+            }
         });
     }
 
-    fn start_job(app: &Arc<App>, kind: &str, f: impl FnOnce(&App) -> Result<String, String> + Send + 'static) -> Result<Value, String> {
+    fn start_job(
+        app: &Arc<App>,
+        kind: &str,
+        f: impl FnOnce(&App) -> Result<String, String> + Send + 'static,
+    ) -> Result<Value, String> {
         {
             let mut j = app.job.lock().map_err(|_| "busy")?;
             if let Some(j) = j.as_ref() {
                 return Err(format!("still busy: {}", j.kind));
             }
-            *j = Some(Job { kind: kind.to_string(), progress: None, started: App::now() });
+            *j = Some(Job {
+                kind: kind.to_string(),
+                progress: None,
+                started: App::now(),
+            });
         }
         let app2 = Arc::clone(app);
         let kind = kind.to_string();
         let kind2 = kind.clone();
         std::thread::spawn(move || {
             match f(&app2) {
-                Ok(msg) => { if !msg.is_empty() { app2.note(msg) } }
+                Ok(msg) => {
+                    if !msg.is_empty() {
+                        app2.note(msg)
+                    }
+                }
                 Err(e) => app2.note(format!("error: {} failed: {}", kind2, e)),
             }
-            if let Ok(mut j) = app2.job.lock() { *j = None; }
+            if let Ok(mut j) = app2.job.lock() {
+                *j = None;
+            }
         });
         Ok(json!({ "started": true, "job": kind }))
     }
 
     fn set_progress(&self, at: u64, to: u64) {
         if let Ok(mut j) = self.job.lock() {
-            if let Some(j) = j.as_mut() { j.progress = Some((at, to)); }
+            if let Some(j) = j.as_mut() {
+                j.progress = Some((at, to));
+            }
         }
     }
 
-    fn open_wallet(cfg: &Config, settings: &Settings, network: Network, allow_override: bool) -> Result<Wallet, String> {
+    fn open_wallet(
+        cfg: &Config,
+        settings: &Settings,
+        network: Network,
+        allow_override: bool,
+    ) -> Result<Wallet, String> {
         let lightd = settings.lightd(network)?;
         let path = match (&cfg.wallet_path, allow_override) {
             (Some(p), true) => p.clone(),
             _ => cfg.dir.join(format!("wallet-{}", network_name(network))),
         };
         let p = path.to_string_lossy().to_string();
-        let w = if path.exists() { Wallet::open(&p, Client::new(lightd))? } else { Wallet::create(&p, Client::new(lightd))? };
+        let w = if path.exists() {
+            Wallet::open(&p, Client::new(lightd))?
+        } else {
+            Wallet::create(&p, Client::new(lightd))?
+        };
         if w.network() != network {
-            return Err(format!("the block server at {} is {}, not {}", lightd, network_name(w.network()), network_name(network)));
+            return Err(format!(
+                "the block server at {} is {}, not {}",
+                lightd,
+                network_name(w.network()),
+                network_name(network)
+            ));
         }
         Ok(w)
     }
@@ -332,7 +477,9 @@ impl App {
         eprintln!("nap: {}", s);
         if let Ok(mut l) = self.log.lock() {
             l.push(s);
-            if l.len() > 200 { l.remove(0); }
+            if l.len() > 200 {
+                l.remove(0);
+            }
         }
     }
 
@@ -351,7 +498,7 @@ impl App {
         if let Some(a) = self.deposit_address.lock().ok()?.clone() {
             return Some(a);
         }
-        let addr = self.node.deposit_address(account(&self.key)).ok()?;
+        let addr = self.node.deposit_address(account(&self.key())).ok()?;
         let _ = std::fs::write(self.cfg.dir.join("deposit-address"), &addr);
         *self.deposit_address.lock().ok()? = Some(addr.clone());
         Some(addr)
@@ -385,11 +532,26 @@ impl App {
         let salt = unhex32(it.next()?).ok()?;
         let revealed = it.next() == Some("1");
         let kind = it.next().and_then(|k| k.parse().ok()).unwrap_or(0);
-        Some(Binding { address, salt, revealed, kind })
+        Some(Binding {
+            address,
+            salt,
+            revealed,
+            kind,
+        })
     }
 
     fn save_binding(&self, b: &Binding) -> Result<(), String> {
-        std::fs::write(&self.binding_path, format!("{} {} {} {}\n", b.address, hex(&b.salt), if b.revealed { 1 } else { 0 }, b.kind)).map_err(|e| e.to_string())
+        std::fs::write(
+            &self.binding_path,
+            format!(
+                "{} {} {} {}\n",
+                b.address,
+                hex(&b.salt),
+                if b.revealed { 1 } else { 0 },
+                b.kind
+            ),
+        )
+        .map_err(|e| e.to_string())
     }
 
     /// Bind the account's exits to `address` (kind 0 Zcash, 1 Solana), keep
@@ -402,20 +564,35 @@ impl App {
             _ => {
                 let mut salt = [0u8; 32];
                 rand::rngs::OsRng.fill_bytes(&mut salt);
-                Binding { address: address.to_string(), salt, revealed: false, kind }
+                Binding {
+                    address: address.to_string(),
+                    salt,
+                    revealed: false,
+                    kind,
+                }
             }
         };
         let commitment = b.commitment(network)?;
-        let record = self.node.account(&self.key)?.unwrap_or_default();
+        let record = self.node.account(&self.key())?.unwrap_or_default();
         if record.binding != Some(commitment) {
-            let acc = self.node.submit(&self.key, Intent::BindWithdrawal { account: account(&self.key), destination: commitment })?;
-            self.note(format!("bound exits to {}… (seq {})", &address[..address.len().min(12)], acc.seq));
+            let acc = self.node.submit(
+                &self.key(),
+                Intent::BindWithdrawal {
+                    account: account(&self.key()),
+                    destination: commitment,
+                },
+            )?;
+            self.note(format!(
+                "bound exits to {}… (seq {})",
+                &address[..address.len().min(12)],
+                acc.seq
+            ));
             b.revealed = false;
         }
         self.save_binding(&b)?;
         *self.binding.lock().map_err(|_| "busy")? = Some(b.clone());
         if !b.revealed {
-            self.node.reveal(&self.key, kind, &b.address, &b.salt)?;
+            self.node.reveal(&self.key(), kind, &b.address, &b.salt)?;
             b.revealed = true;
             self.save_binding(&b)?;
             *self.binding.lock().map_err(|_| "busy")? = Some(b.clone());
@@ -427,19 +604,31 @@ impl App {
     // ---- history: what the wallet has seen, per network, on disk --------
 
     fn history_path(&self, network: Network) -> PathBuf {
-        self.cfg.dir.join(format!("history-{}.json", network_name(network)))
+        self.cfg
+            .dir
+            .join(format!("history-{}.json", network_name(network)))
     }
 
     fn history(&self, network: Network) -> Vec<Value> {
-        std::fs::read(self.history_path(network)).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+        std::fs::read(self.history_path(network))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
     }
 
     fn write_history(&self, network: Network, h: &[Value]) {
-        let _ = std::fs::write(self.history_path(network), Value::Array(h.to_vec()).to_string());
+        let _ = std::fs::write(
+            self.history_path(network),
+            Value::Array(h.to_vec()).to_string(),
+        );
     }
 
     fn now() -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 
     fn agent_mandate_id(owner: [u8; 32], m: &AgentMandate) -> String {
@@ -449,12 +638,16 @@ impl App {
         h.update(owner);
         h.update(session.verifying_key().as_bytes());
         h.update(CAP_SWAP.to_be_bytes());
-        for asset in &m.allowed_assets { h.update(asset.to_be_bytes()); }
+        for asset in &m.allowed_assets {
+            h.update(asset);
+        }
         h.update([0xff]);
-        for pool in &m.allowed_pools { h.update(pool.to_be_bytes()); }
+        for pool in &m.allowed_pools {
+            h.update(pool);
+        }
         h.update([0xfe]);
         for (asset, amount) in &m.max_per_action {
-            h.update(asset.to_be_bytes());
+            h.update(asset);
             h.update(amount.0.to_be_bytes());
         }
         h.update(m.max_slippage_bps.to_be_bytes());
@@ -467,9 +660,9 @@ impl App {
         json!({
             "id": m.id,
             "capabilities": ["swap"],
-            "allowed_assets": m.allowed_assets,
-            "allowed_pools": m.allowed_pools,
-            "max_per_action_raw": m.max_per_action.iter().map(|(asset, amount)| json!({"asset": asset, "amount": amount.0.to_string()})).collect::<Vec<_>>(),
+            "allowed_assets": m.allowed_assets.iter().map(|id| hex(id)).collect::<Vec<_>>(),
+            "allowed_pools": m.allowed_pools.iter().map(|id| hex(id)).collect::<Vec<_>>(),
+            "max_per_action_raw": m.max_per_action.iter().map(|(asset, amount)| json!({"asset": hex(asset), "amount": amount.0.to_string()})).collect::<Vec<_>>(),
             "max_slippage_bps": m.max_slippage_bps,
             "valid_from_epoch": m.valid_from_epoch,
             "valid_until_epoch": m.valid_until_epoch,
@@ -485,9 +678,9 @@ impl App {
             "mandates": store.mandates.values().map(|m| json!({
                 "id": m.id,
                 "session_seed": hex(&m.session_seed),
-                "allowed_assets": m.allowed_assets,
-                "allowed_pools": m.allowed_pools,
-                "max_per_action_raw": m.max_per_action.iter().map(|(asset, amount)| json!([asset, amount.0.to_string()])).collect::<Vec<_>>(),
+                "allowed_assets": m.allowed_assets.iter().map(|id| hex(id)).collect::<Vec<_>>(),
+                "allowed_pools": m.allowed_pools.iter().map(|id| hex(id)).collect::<Vec<_>>(),
+                "max_per_action_raw": m.max_per_action.iter().map(|(asset, amount)| json!([hex(asset), amount.0.to_string()])).collect::<Vec<_>>(),
                 "max_slippage_bps": m.max_slippage_bps,
                 "valid_from_epoch": m.valid_from_epoch,
                 "valid_until_epoch": m.valid_until_epoch,
@@ -499,50 +692,134 @@ impl App {
     }
 
     fn load_agent_store(path: &Path, owner: [u8; 32]) -> AgentStore {
-        let Some(root) = std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+        let Some(root) = std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        else {
             return AgentStore::default();
         };
         if root.get("schema").and_then(Value::as_str) != Some(AGENT_SCHEMA) {
             return AgentStore::default();
         }
         let mut store = AgentStore::default();
-        for v in root.get("mandates").and_then(Value::as_array).into_iter().flatten() {
-            let Some(seed) = v.get("session_seed").and_then(Value::as_str).and_then(|s| unhex32(s).ok()) else { continue };
-            let list = |name: &str| -> Option<Vec<u32>> {
+        for v in root
+            .get("mandates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(seed) = v
+                .get("session_seed")
+                .and_then(Value::as_str)
+                .and_then(|s| unhex32(s).ok())
+            else {
+                continue;
+            };
+            let list = |name: &str| -> Option<Vec<[u8; 32]>> {
                 let values = v.get(name)?.as_array()?;
-                if values.is_empty() || values.len() > MAX_AGENT_LIST { return None; }
-                let mut out: Vec<u32> = values.iter().map(|x| x.as_u64().and_then(|n| u32::try_from(n).ok())).collect::<Option<_>>()?;
+                if values.is_empty() || values.len() > MAX_AGENT_LIST {
+                    return None;
+                }
+                let mut out: Vec<[u8; 32]> = values
+                    .iter()
+                    .map(|x| x.as_str().and_then(|s| unhex32(s).ok()))
+                    .collect::<Option<_>>()?;
                 out.sort_unstable();
                 out.dedup();
                 (out.len() == values.len()).then_some(out)
             };
-            let Some(allowed_assets) = list("allowed_assets") else { continue };
-            let Some(allowed_pools) = list("allowed_pools") else { continue };
-            let Some(limits) = v.get("max_per_action_raw").and_then(Value::as_array) else { continue };
-            if limits.is_empty() || limits.len() > MAX_AGENT_LIST { continue; }
+            let Some(allowed_assets) = list("allowed_assets") else {
+                continue;
+            };
+            let Some(allowed_pools) = list("allowed_pools") else {
+                continue;
+            };
+            let Some(limits) = v.get("max_per_action_raw").and_then(Value::as_array) else {
+                continue;
+            };
+            if limits.is_empty() || limits.len() > MAX_AGENT_LIST {
+                continue;
+            }
             let mut max_per_action = Vec::with_capacity(limits.len());
             for limit in limits {
-                let Some(pair) = limit.as_array().filter(|x| x.len() == 2) else { max_per_action.clear(); break };
-                let Some(asset) = pair[0].as_u64().and_then(|n| u32::try_from(n).ok()) else { max_per_action.clear(); break };
-                let Some(amount) = pair[1].as_str().and_then(|s| s.parse::<i128>().ok()).filter(|n| *n > 0) else { max_per_action.clear(); break };
+                let Some(pair) = limit.as_array().filter(|x| x.len() == 2) else {
+                    max_per_action.clear();
+                    break;
+                };
+                let Some(asset) = pair[0].as_str().and_then(|s| unhex32(s).ok()) else {
+                    max_per_action.clear();
+                    break;
+                };
+                let Some(amount) = pair[1]
+                    .as_str()
+                    .and_then(|s| s.parse::<i128>().ok())
+                    .filter(|n| *n > 0)
+                else {
+                    max_per_action.clear();
+                    break;
+                };
                 max_per_action.push((asset, Fixed::raw(amount)));
             }
-            if max_per_action.is_empty() { continue; }
+            if max_per_action.is_empty() {
+                continue;
+            }
             max_per_action.sort_by_key(|x| x.0);
-            if max_per_action.windows(2).any(|w| w[0].0 == w[1].0) { continue; }
-            let Some(max_slippage_bps) = v.get("max_slippage_bps").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).filter(|n| *n <= 2_000) else { continue };
-            let Some(valid_from_epoch) = v.get("valid_from_epoch").and_then(Value::as_u64) else { continue };
-            let Some(valid_until_epoch) = v.get("valid_until_epoch").and_then(Value::as_u64).filter(|n| *n >= valid_from_epoch && n.saturating_sub(valid_from_epoch) <= MAX_MANDATE_EPOCHS) else { continue };
-            let Some(created_at) = v.get("created_at").and_then(Value::as_u64) else { continue };
-            let state = v.get("state").and_then(Value::as_str).filter(|s| matches!(*s, "active" | "paused" | "closed")).unwrap_or("paused").to_string();
-            let mut mandate = AgentMandate { id: String::new(), session_seed: seed, allowed_assets, allowed_pools, max_per_action, max_slippage_bps, valid_from_epoch, valid_until_epoch, created_at, state };
+            if max_per_action.windows(2).any(|w| w[0].0 == w[1].0) {
+                continue;
+            }
+            let Some(max_slippage_bps) = v
+                .get("max_slippage_bps")
+                .and_then(Value::as_u64)
+                .and_then(|n| u16::try_from(n).ok())
+                .filter(|n| *n <= 2_000)
+            else {
+                continue;
+            };
+            let Some(valid_from_epoch) = v.get("valid_from_epoch").and_then(Value::as_u64) else {
+                continue;
+            };
+            let Some(valid_until_epoch) = v
+                .get("valid_until_epoch")
+                .and_then(Value::as_u64)
+                .filter(|n| {
+                    *n >= valid_from_epoch
+                        && n.saturating_sub(valid_from_epoch) <= MAX_MANDATE_EPOCHS
+                })
+            else {
+                continue;
+            };
+            let Some(created_at) = v.get("created_at").and_then(Value::as_u64) else {
+                continue;
+            };
+            let state = v
+                .get("state")
+                .and_then(Value::as_str)
+                .filter(|s| matches!(*s, "active" | "paused" | "closed"))
+                .unwrap_or("paused")
+                .to_string();
+            let mut mandate = AgentMandate {
+                id: String::new(),
+                session_seed: seed,
+                allowed_assets,
+                allowed_pools,
+                max_per_action,
+                max_slippage_bps,
+                valid_from_epoch,
+                valid_until_epoch,
+                created_at,
+                state,
+            };
             mandate.id = App::agent_mandate_id(owner, &mandate);
-            if v.get("id").and_then(Value::as_str) != Some(mandate.id.as_str()) { continue; }
+            if v.get("id").and_then(Value::as_str) != Some(mandate.id.as_str()) {
+                continue;
+            }
             store.mandates.insert(mandate.id.clone(), mandate);
         }
         if let Some(actions) = root.get("actions").and_then(Value::as_object) {
             for (request, action) in actions {
-                if valid_request_id(request) { store.actions.insert(request.clone(), action.clone()); }
+                if valid_request_id(request) {
+                    store.actions.insert(request.clone(), action.clone());
+                }
             }
         }
         store
@@ -559,9 +836,13 @@ impl App {
             options.mode(0o600);
         }
         use std::io::Write;
-        let mut file = options.open(&tmp).map_err(|e| format!("write agent store: {e}"))?;
-        file.write_all(bytes.as_bytes()).map_err(|e| format!("write agent store: {e}"))?;
-        file.sync_all().map_err(|e| format!("sync agent store: {e}"))?;
+        let mut file = options
+            .open(&tmp)
+            .map_err(|e| format!("write agent store: {e}"))?;
+        file.write_all(bytes.as_bytes())
+            .map_err(|e| format!("write agent store: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync agent store: {e}"))?;
         std::fs::rename(&tmp, &self.agent_path).map_err(|e| format!("replace agent store: {e}"))
     }
 
@@ -577,17 +858,45 @@ impl App {
         let mut spent_by: std::collections::BTreeMap<String, (u64, u64, u64)> = Default::default();
         for e in events {
             match e {
-                Event::Spent { txid_hex, zatoshi, height, .. } => { let x = spent_by.entry(txid_hex.clone()).or_insert((0, 0, *height)); x.0 += zatoshi; }
-                Event::Received { txid_hex, zatoshi, memo, .. } if memo.is_empty() => { let x = spent_by.entry(txid_hex.clone()).or_insert((0, 0, 0)); x.1 += zatoshi; }
+                Event::Spent {
+                    txid_hex,
+                    zatoshi,
+                    height,
+                    ..
+                } => {
+                    let x = spent_by.entry(txid_hex.clone()).or_insert((0, 0, *height));
+                    x.0 += zatoshi;
+                }
+                Event::Received {
+                    txid_hex,
+                    zatoshi,
+                    memo,
+                    ..
+                } if memo.is_empty() => {
+                    let x = spent_by.entry(txid_hex.clone()).or_insert((0, 0, 0));
+                    x.1 += zatoshi;
+                }
                 _ => {}
             }
         }
         for e in events {
             match e {
-                Event::Received { zatoshi, height, txid_hex, memo, pool } => {
+                Event::Received {
+                    zatoshi,
+                    height,
+                    txid_hex,
+                    memo,
+                    pool,
+                } => {
                     let ours = spent_by.get(txid_hex).map(|x| x.0 > 0).unwrap_or(false);
-                    let sent = h.iter().any(|x| x["kind"] != "received" && x["txid"] == txid_hex.as_str());
-                    let seen = h.iter().any(|x| x["kind"] == "received" && x["txid"] == txid_hex.as_str() && x["zatoshi"] == *zatoshi);
+                    let sent = h
+                        .iter()
+                        .any(|x| x["kind"] != "received" && x["txid"] == txid_hex.as_str());
+                    let seen = h.iter().any(|x| {
+                        x["kind"] == "received"
+                            && x["txid"] == txid_hex.as_str()
+                            && x["zatoshi"] == *zatoshi
+                    });
                     // Change from our own transaction is not a receipt; a
                     // memo'd note in it is (someone, maybe us, wrote to us).
                     if !seen && !((ours || sent) && memo.is_empty()) {
@@ -595,12 +904,17 @@ impl App {
                         changed = true;
                     }
                 }
-                Event::Spent { txid_hex, height, .. } => {
+                Event::Spent {
+                    txid_hex, height, ..
+                } => {
                     let mut known = false;
                     for x in h.iter_mut() {
                         if x["kind"] != "received" && x["txid"] == txid_hex.as_str() {
                             known = true;
-                            if x["height"] == 0 { x["height"] = json!(height); changed = true; }
+                            if x["height"] == 0 {
+                                x["height"] = json!(height);
+                                changed = true;
+                            }
                         }
                     }
                     if !known {
@@ -613,7 +927,9 @@ impl App {
                 Event::Progress { .. } => {}
             }
         }
-        if changed { self.write_history(network, &h); }
+        if changed {
+            self.write_history(network, &h);
+        }
     }
 }
 
@@ -622,13 +938,21 @@ impl App {
 // ---------------------------------------------------------------------------
 
 fn str_of<'a>(v: &'a Value, k: &str) -> Result<&'a str, String> {
-    v.get(k).and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or_else(|| format!("{} is required", k))
+    v.get(k)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| format!("{} is required", k))
 }
 
 fn zatoshi_of(v: &Value, k: &str) -> Result<u64, String> {
     let s = str_of(v, k)?;
-    let zec: f64 = s.trim().parse().map_err(|_| format!("{} is not an amount", s))?;
-    if zec.is_nan() || zec <= 0.0 { return Err("amount must be positive".into()) }
+    let zec: f64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("{} is not an amount", s))?;
+    if zec.is_nan() || zec <= 0.0 {
+        return Err("amount must be positive".into());
+    }
     Ok((zec * ZAT_PER_ZEC).round() as u64)
 }
 
@@ -639,71 +963,184 @@ fn zec(zat: u64) -> f64 {
 fn valid_request_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-fn agent_u32_list(input: &Value, name: &str) -> Result<Vec<u32>, String> {
-    let values = input.get(name).and_then(Value::as_array).ok_or_else(|| format!("{name} is required"))?;
-    if values.is_empty() || values.len() > MAX_AGENT_LIST { return Err(format!("{name} must contain 1-{MAX_AGENT_LIST} ids")); }
-    let mut out: Vec<u32> = values.iter().map(|v| v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("invalid {name}"))).collect::<Result<_, _>>()?;
+fn id_of(input: &Value, name: &str) -> Result<[u8; 32], String> {
+    let value = input
+        .get(name)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{name} is required"))?;
+    unhex32(value).map_err(|_| format!("invalid {name}: expected 64 hex characters"))
+}
+
+fn curve_json(c: &CurveView) -> Value {
+    json!({
+        "asset": hex(&c.asset), "creator": hex(&c.creator), "symbol": c.symbol,
+        "display_name": c.display_name, "metadata_hash": hex(&c.metadata_hash),
+        "fee_bps": c.fee_bps, "sold": c.sold.to_string(), "curve_reserve": c.curve_reserve.to_string(), "market_zec": c.market_zec.to_string(),
+        "creator_fees": c.creator_fees.to_string(), "graduation_fees": c.graduation_fees.to_string(),
+        "graduated_token_liquidity": c.graduated_token_liquidity.to_string(),
+        "graduated_zec_liquidity": c.graduated_zec_liquidity.to_string(),
+        "graduation_overflow": c.graduation_overflow.to_string(),
+        "graduated_locked_lp": c.graduated_locked_lp.to_string(),
+        "zec_per_token": c.marginal_price.to_string(), "graduated": c.pool.is_some(),
+        "pool": c.pool.map(|p| hex(&p)),
+    })
+}
+
+fn agent_id_list(input: &Value, name: &str) -> Result<Vec<[u8; 32]>, String> {
+    let values = input
+        .get(name)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{name} is required"))?;
+    if values.is_empty() || values.len() > MAX_AGENT_LIST {
+        return Err(format!("{name} must contain 1-{MAX_AGENT_LIST} ids"));
+    }
+    let mut out: Vec<[u8; 32]> = values
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .ok_or_else(|| format!("invalid {name}"))
+                .and_then(|s| unhex32(s).map_err(|_| format!("invalid {name}")))
+        })
+        .collect::<Result<_, _>>()?;
     out.sort_unstable();
     out.dedup();
-    if out.len() != values.len() { return Err(format!("{name} contains duplicates")); }
+    if out.len() != values.len() {
+        return Err(format!("{name} contains duplicates"));
+    }
     Ok(out)
 }
 
 fn agent_fixed(input: &Value, name: &str) -> Result<Fixed, String> {
-    let raw = input.get(name).and_then(Value::as_str).ok_or_else(|| format!("{name} is required"))?;
+    let raw = input
+        .get(name)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{name} is required"))?;
     let n = raw.parse::<i128>().map_err(|_| format!("invalid {name}"))?;
-    if n <= 0 { return Err(format!("{name} must be positive")); }
+    if n <= 0 {
+        return Err(format!("{name} must be positive"));
+    }
     Ok(Fixed::raw(n))
 }
 
 fn agent_swap(app: &App, input: &Value) -> Result<Intent, String> {
-    let asset_in = input.get("asset_in").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or("asset_in is required")?;
-    agent_u32_list(input, "path")?;
+    let asset_in = id_of(input, "asset_in")?;
+    agent_id_list(input, "path")?;
     // A route may revisit neither a pool nor an id. Sorting would destroy its
     // order, so recover the original after using the helper's validation.
-    let path: Vec<u32> = input["path"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    let path: Vec<[u8; 32]> = input["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| unhex32(v.as_str().unwrap()).unwrap())
+        .collect();
     let amount_in = agent_fixed(input, "amount_in_raw")?;
-    let min_out_raw = input.get("min_out_raw").and_then(Value::as_str).ok_or("min_out_raw is required")?.parse::<i128>().map_err(|_| "invalid min_out_raw")?;
-    if min_out_raw < 0 { return Err("min_out_raw cannot be negative".into()); }
-    Ok(Intent::SwapExactIn { account: account(&app.key), asset_in, path, amount_in, min_out: Fixed::raw(min_out_raw) })
+    let min_out_raw = input
+        .get("min_out_raw")
+        .and_then(Value::as_str)
+        .ok_or("min_out_raw is required")?
+        .parse::<i128>()
+        .map_err(|_| "invalid min_out_raw")?;
+    if min_out_raw < 0 {
+        return Err("min_out_raw cannot be negative".into());
+    }
+    Ok(Intent::SwapExactIn {
+        account: account(&app.key()),
+        asset_in,
+        path,
+        amount_in,
+        min_out: Fixed::raw(min_out_raw),
+    })
 }
 
-fn agent_policy(app: &App, mandate: &AgentMandate, intent: &Intent, epoch: u64) -> Result<Value, String> {
-    if mandate.state != "active" { return Err(format!("mandate_{}", mandate.state)); }
-    if epoch < mandate.valid_from_epoch { return Err("mandate_not_started".into()); }
-    if epoch > mandate.valid_until_epoch { return Err("mandate_expired".into()); }
-    let Intent::SwapExactIn { account: owner, asset_in, path, amount_in, min_out } = intent else {
+fn agent_policy(
+    app: &App,
+    mandate: &AgentMandate,
+    intent: &Intent,
+    epoch: u64,
+) -> Result<Value, String> {
+    if mandate.state != "active" {
+        return Err(format!("mandate_{}", mandate.state));
+    }
+    if epoch < mandate.valid_from_epoch {
+        return Err("mandate_not_started".into());
+    }
+    if epoch > mandate.valid_until_epoch {
+        return Err("mandate_expired".into());
+    }
+    let Intent::SwapExactIn {
+        account: owner,
+        asset_in,
+        path,
+        amount_in,
+        min_out,
+    } = intent
+    else {
         return Err("operation_permanently_unavailable".into());
     };
-    if *owner != account(&app.key) { return Err("wrong_account".into()); }
-    if !mandate.allowed_assets.contains(asset_in) { return Err("wrong_asset".into()); }
-    if path.iter().any(|p| !mandate.allowed_pools.contains(p)) { return Err("wrong_pool".into()); }
-    let max = mandate.max_per_action.iter().find(|(asset, _)| asset == asset_in).map(|(_, amount)| *amount).ok_or("no_amount_limit_for_asset")?;
-    if *amount_in > max { return Err("over_limit".into()); }
+    if *owner != account(&app.key()) {
+        return Err("wrong_account".into());
+    }
+    if !mandate.allowed_assets.contains(asset_in) {
+        return Err("wrong_asset".into());
+    }
+    if path.iter().any(|p| !mandate.allowed_pools.contains(p)) {
+        return Err("wrong_pool".into());
+    }
+    let max = mandate
+        .max_per_action
+        .iter()
+        .find(|(asset, _)| asset == asset_in)
+        .map(|(_, amount)| *amount)
+        .ok_or("no_amount_limit_for_asset")?;
+    if *amount_in > max {
+        return Err("over_limit".into());
+    }
 
     let pools = app.node.pools()?;
     let mut asset = *asset_in;
     for id in path {
         let pool = pools.iter().find(|p| p.id == *id).ok_or("unknown_pool")?;
-        asset = if pool.asset0 == asset { pool.asset1 } else if pool.asset1 == asset { pool.asset0 } else { return Err("invalid_path".into()); };
-        if !mandate.allowed_assets.contains(&asset) { return Err("wrong_asset".into()); }
+        asset = if pool.asset0 == asset {
+            pool.asset1
+        } else if pool.asset1 == asset {
+            pool.asset0
+        } else {
+            return Err("invalid_path".into());
+        };
+        if !mandate.allowed_assets.contains(&asset) {
+            return Err("wrong_asset".into());
+        }
     }
-    let (quoted, best, asset_out) = app.node.quote(*asset_in, path, *amount_in)?;
-    let floor = quoted.0.checked_mul((10_000u16 - mandate.max_slippage_bps) as i128).and_then(|n| n.checked_div(10_000)).ok_or("arithmetic")?;
-    if min_out.0 < floor { return Err("excessive_slippage".into()); }
+    let quote = app.node.quote(*asset_in, path, *amount_in)?;
+    let floor = quote
+        .amount_out
+        .0
+        .checked_mul((10_000u16 - mandate.max_slippage_bps) as i128)
+        .and_then(|n| n.checked_div(10_000))
+        .ok_or("arithmetic")?;
+    if min_out.0 < floor {
+        return Err("excessive_slippage".into());
+    }
     Ok(json!({
         "allowed": true,
-        "quote_raw": quoted.0.to_string(),
-        "best_case_raw": best.0.to_string(),
-        "asset_out": asset_out,
+        "quote_raw": quote.amount_out.0.to_string(),
+        "best_case_raw": quote.best_case.0.to_string(),
+        "asset_out": hex(&quote.asset_out),
         "required_min_out_raw": floor.to_string(),
     }))
 }
 
 pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Value, String> {
+    // In-process identities cannot change halfway through another API request.
+    let _operation = app.operation.lock().map_err(|_| "wallet operation lock")?;
+    if crate::restore::pending(&app.cfg.dir) {
+        return Err("unfinished restore; restart Nap to recover before continuing".into());
+    }
     match (method, path) {
         ("GET", "/api/agent/status") => {
             zyn_only(app)?;
@@ -712,15 +1149,15 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("GET", "/api/agent/assets") => {
             zyn_only(app)?;
-            Ok(json!({ "schema": AGENT_SCHEMA, "assets": app.node.assets()?.into_iter().map(|a| json!({"id": a.id, "symbol": a.symbol, "supply_raw": a.supply.0.to_string(), "lp_of": a.lp_of, "content": a.content.map(|v| hex(&v)), "collection": a.collection})).collect::<Vec<_>>() }))
+            Ok(json!({ "schema": AGENT_SCHEMA, "assets": app.node.assets()?.into_iter().map(|a| json!({"id": hex(&a.id), "symbol": a.symbol, "supply_raw": a.supply.0.to_string(), "lp_of": a.lp_of.map(|v| hex(&v)), "content": a.content.map(|v| hex(&v)), "collection": a.collection.map(|v| hex(&v))})).collect::<Vec<_>>() }))
         }
         ("GET", "/api/agent/pools") => {
             zyn_only(app)?;
-            Ok(json!({ "schema": AGENT_SCHEMA, "pools": app.node.pools()?.into_iter().map(|p| json!({"id": p.id, "asset0": p.asset0, "asset1": p.asset1, "reserve0_raw": p.reserve0.0.to_string(), "reserve1_raw": p.reserve1.0.to_string(), "fee_bps": p.fee_bps, "effective_fee_bps": p.effective_fee_bps, "reference": p.reference.map(|(price, seq)| json!({"price_raw": price.0.to_string(), "seq": seq}))})).collect::<Vec<_>>() }))
+            Ok(json!({ "schema": AGENT_SCHEMA, "pools": app.node.pools()?.into_iter().map(|p| json!({"id": hex(&p.id), "asset0": hex(&p.asset0), "asset1": hex(&p.asset1), "reserve0_raw": p.reserve0.0.to_string(), "reserve1_raw": p.reserve1.0.to_string(), "fee_bps": p.fee_bps, "effective_fee_bps": p.effective_fee_bps, "reference": p.reference.map(|(price, seq)| json!({"price_raw": price.0.to_string(), "seq": seq}))})).collect::<Vec<_>>() }))
         }
         ("GET", "/api/agent/offers") => {
             zyn_only(app)?;
-            Ok(json!({ "schema": AGENT_SCHEMA, "offers": app.node.offers()?.into_iter().map(|o| json!({"id": o.id, "maker": hex(&o.maker), "offer_asset": o.offer_asset, "offer_amount_raw": o.offer_amount.0.to_string(), "want_asset": o.want_asset, "want_amount_raw": o.want_amount.0.to_string(), "expires_at_epoch": o.expires_at_epoch})).collect::<Vec<_>>() }))
+            Ok(json!({ "schema": AGENT_SCHEMA, "offers": app.node.offers()?.into_iter().map(|o| json!({"id": o.id, "maker": hex(&o.maker), "offer_asset": hex(&o.offer_asset), "offer_amount_raw": o.offer_amount.0.to_string(), "want_asset": hex(&o.want_asset), "want_amount_raw": o.want_amount.0.to_string(), "expires_at_epoch": o.expires_at_epoch})).collect::<Vec<_>>() }))
         }
         ("GET", "/api/agent/anchors") => {
             zyn_only(app)?;
@@ -728,17 +1165,17 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("GET", "/api/agent/portfolio") => {
             zyn_only(app)?;
-            let record = app.node.account(&app.key)?.unwrap_or_default();
-            Ok(json!({ "schema": AGENT_SCHEMA, "account": hex(&account(&app.key)), "spendable": record.spendable.into_iter().map(|(asset, amount)| json!({"asset": asset, "amount_raw": amount.0.to_string()})).collect::<Vec<_>>(), "exiting": record.exiting.into_iter().map(|(asset, amount, epoch)| json!({"asset": asset, "amount_raw": amount.0.to_string(), "requested_epoch": epoch})).collect::<Vec<_>>() }))
+            let record = app.node.account(&app.key())?.unwrap_or_default();
+            Ok(json!({ "schema": AGENT_SCHEMA, "account": hex(&account(&app.key())), "spendable": record.spendable.into_iter().map(|(asset, amount)| json!({"asset": hex(&asset), "amount_raw": amount.0.to_string()})).collect::<Vec<_>>(), "exiting": record.exiting.into_iter().map(|(asset, amount, epoch)| json!({"asset": hex(&asset), "amount_raw": amount.0.to_string(), "requested_epoch": epoch})).collect::<Vec<_>>() }))
         }
         ("POST", "/api/agent/quote") => {
             zyn_only(app)?;
-            let asset = input.get("asset_in").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or("asset_in is required")?;
-            agent_u32_list(input, "path")?;
-            let path: Vec<u32> = input["path"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+            let asset = id_of(input, "asset_in")?;
+            agent_id_list(input, "path")?;
+            let path: Vec<[u8; 32]> = input["path"].as_array().unwrap().iter().map(|v| unhex32(v.as_str().unwrap()).unwrap()).collect();
             let amount = agent_fixed(input, "amount_in_raw")?;
-            let (out, best, asset_out) = app.node.quote(asset, &path, amount)?;
-            Ok(json!({ "schema": AGENT_SCHEMA, "asset_in": asset, "asset_out": asset_out, "path": path, "amount_in_raw": amount.0.to_string(), "amount_out_raw": out.0.to_string(), "best_case_raw": best.0.to_string() }))
+            let quote = app.node.quote(asset, &path, amount)?;
+            Ok(json!({ "schema": AGENT_SCHEMA, "asset_in": hex(&asset), "asset_out": hex(&quote.asset_out), "path": path.iter().map(|id| hex(id)).collect::<Vec<_>>(), "amount_in_raw": amount.0.to_string(), "amount_out_raw": quote.amount_out.0.to_string(), "best_case_raw": quote.best_case.0.to_string(), "hops": quote.hops.iter().map(|h| json!({"pool": hex(&h.pool), "asset_in": hex(&h.asset_in), "asset_out": hex(&h.asset_out), "amount_in_raw": h.amount_in.0.to_string(), "amount_out_raw": h.amount_out.0.to_string(), "fee_asset": hex(&h.fee_asset), "fee_raw": h.fee.0.to_string(), "pool_fee_raw": h.pool_fee.0.to_string(), "protocol_fee_raw": h.protocol_fee.0.to_string(), "creator_fee_raw": h.creator_fee.0.to_string(), "pol_fee_raw": h.pol_fee.0.to_string()})).collect::<Vec<_>>() }))
         }
         ("POST", "/api/agent/draft-swap") => {
             zyn_only(app)?;
@@ -746,7 +1183,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let bytes = swapvm::wire::encode_intent_bytes(&intent);
             let digest: [u8; 32] = Sha256::digest(&bytes).into();
             let Intent::SwapExactIn { account, asset_in, path, amount_in, min_out } = intent else { unreachable!() };
-            Ok(json!({ "schema": AGENT_SCHEMA, "intent": "swap_exact_in", "canonical_hex": hex(&bytes), "intent_digest": hex(&digest), "fields": {"account": hex(&account), "asset_in": asset_in, "path": path, "amount_in_raw": amount_in.0.to_string(), "min_out_raw": min_out.0.to_string()}, "signed": false }))
+            Ok(json!({ "schema": AGENT_SCHEMA, "intent": "swap_exact_in", "canonical_hex": hex(&bytes), "intent_digest": hex(&digest), "fields": {"account": hex(&account), "asset_in": hex(&asset_in), "path": path.iter().map(|id| hex(id)).collect::<Vec<_>>(), "amount_in_raw": amount_in.0.to_string(), "min_out_raw": min_out.0.to_string()}, "signed": false }))
         }
         ("GET", "/api/agent/mandates") => {
             let store = app.agent.lock().map_err(|_| "agent store busy")?;
@@ -756,14 +1193,14 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             zyn_only(app)?;
             let status = app.node.status()?;
             let epochs = input.get("valid_for_epochs").and_then(Value::as_u64).filter(|n| *n > 0 && *n <= MAX_MANDATE_EPOCHS).ok_or("valid_for_epochs must be 1-100")?;
-            let allowed_assets = agent_u32_list(input, "allowed_assets")?;
-            let allowed_pools = agent_u32_list(input, "allowed_pools")?;
+            let allowed_assets = agent_id_list(input, "allowed_assets")?;
+            let allowed_pools = agent_id_list(input, "allowed_pools")?;
             let max_slippage_bps = input.get("max_slippage_bps").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).filter(|n| *n <= 2_000).ok_or("max_slippage_bps must be 0-2000")?;
             let limits = input.get("max_per_action_raw").and_then(Value::as_array).ok_or("max_per_action_raw is required")?;
             if limits.is_empty() || limits.len() > MAX_AGENT_LIST { return Err("max_per_action_raw must contain 1-16 limits".into()); }
             let mut max_per_action = Vec::with_capacity(limits.len());
             for limit in limits {
-                let asset = limit.get("asset").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or("invalid limit asset")?;
+                let asset = id_of(limit, "asset").map_err(|_| "invalid limit asset")?;
                 let amount = match limit.get("amount_raw") {
                     Some(_) => agent_fixed(limit, "amount_raw")?,
                     None => fixed_of(str_of(limit, "amount")?)?,
@@ -778,7 +1215,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let mut seed = [0u8; 32];
             rand::rngs::OsRng.fill_bytes(&mut seed);
             let mut mandate = AgentMandate { id: String::new(), session_seed: seed, allowed_assets, allowed_pools, max_per_action, max_slippage_bps, valid_from_epoch: status.epoch, valid_until_epoch: status.epoch.saturating_add(epochs), created_at: App::now(), state: "active".into() };
-            mandate.id = App::agent_mandate_id(account(&app.key), &mandate);
+            mandate.id = App::agent_mandate_id(account(&app.key()), &mandate);
             let public = App::mandate_json(&mandate);
             let mut store = app.agent.lock().map_err(|_| "agent store busy")?;
             store.mandates.insert(mandate.id.clone(), mandate);
@@ -814,7 +1251,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 let session = SigningKey::from_bytes(&mandate.session_seed);
                 let salt: [u8; 32] = Sha256::digest([b"nap.agent.policy.v1".as_slice(), &mandate.session_seed].concat()).into();
                 let delegation = Delegation {
-                    account: account(&app.key),
+                    account: account(&app.key()),
                     session_key: session.verifying_key().to_bytes(),
                     capabilities: CAP_SWAP,
                     allowed_assets: mandate.allowed_assets.clone(),
@@ -828,7 +1265,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 let Signed::Message(certificate) = delegation_bytes_as::<SwapState>(Scheme::Ed25519, app.cfg.chain, &delegation) else { return Err("internal_signature_scheme".into()) };
                 let auth = Authorization::for_vm::<SwapState>(app.cfg.chain, status.epoch, 1.min(mandate.valid_until_epoch.saturating_sub(status.epoch)));
                 let delegation_id = delegation.id(app.cfg.chain, &auth.vm_id);
-                let delegated = Delegated { delegation, owner: Credential::Ed25519 { key: app.key.verifying_key().to_bytes(), signature: app.key.sign(&certificate).to_bytes() }, session_signature: session.sign(&session_payload::<SwapState>(&delegation_id, &auth, &intent)).to_bytes() };
+                let delegated = Delegated { delegation, owner: Credential::Ed25519 { key: app.key().verifying_key().to_bytes(), signature: app.key().sign(&certificate).to_bytes() }, session_signature: session.sign(&session_payload::<SwapState>(&delegation_id, &auth, &intent)).to_bytes() };
                 let accepted = app.node.submit_delegated(&auth, &delegated, &intent)?;
                 Ok(json!({ "schema": AGENT_SCHEMA, "request_id": request_id, "mandate_id": mandate_id, "state": if accepted.queued { "queued" } else { "accepted" }, "seq": accepted.seq, "epoch": accepted.epoch, "receipts": accepted.receipts, "amount_out_raw": accepted.swapped.map(|(_, out)| out.0.to_string()), "decision": decision }))
             })();
@@ -854,6 +1291,55 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             Ok(json!({ "schema": AGENT_SCHEMA, "mandate": public, "on_chain_authority_ends_at_epoch": on_chain_until }))
         }
         ("GET", "/api/overview") => overview(app),
+        ("GET", "/api/curves") => {
+            zyn_only(app)?;
+            Ok(json!({ "curves": app.node.curves()?.iter().map(curve_json).collect::<Vec<_>>() }))
+        }
+        ("POST", "/api/curve") => {
+            zyn_only(app)?;
+            let asset = id_of(input, "asset")?;
+            Ok(json!({ "curve": app.node.curve(asset)?.as_ref().map(curve_json) }))
+        }
+        ("POST", "/api/curve-quote") => {
+            zyn_only(app)?;
+            let asset = id_of(input, "asset")?;
+            let side = str_of(input, "side")?;
+            let buy = match side { "buy" => true, "sell" => false, _ => return Err("side must be buy or sell".into()) };
+            let tokens = fixed_of(str_of(input, "tokens")?)?;
+            let q = app.node.curve_quote(buy, asset, tokens)?;
+            Ok(json!({ "side": side, "asset": hex(&asset), "tokens": tokens.to_string(), "principal": q.principal.to_string(), "fee": q.fee.to_string(), "settlement": q.settlement.to_string(), "sold_after": q.sold_after.to_string(), "zec_per_token_after": q.price_after.to_string(), "graduates": q.graduates }))
+        }
+        ("POST", "/api/launch-curve") => {
+            zyn_only(app)?;
+            let symbol_text = str_of(input, "symbol")?;
+            let symbol = Symbol::new(symbol_text.as_bytes()).ok_or("symbol must be 1-32 UTF-8 bytes without whitespace or controls")?;
+            let display_name = str_of(input, "display_name")?.as_bytes().to_vec();
+            let metadata_hash = id_of(input, "metadata_hash")?;
+            let fee_bps = input.get("fee_bps").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).ok_or("fee_bps must be a number")?;
+            let dev_buy = input.get("dev_buy").and_then(Value::as_str).map(fixed_of).transpose()?.unwrap_or(Fixed::ZERO);
+            let max_zec = input.get("max_zec").and_then(Value::as_str).map(fixed_of).transpose()?.unwrap_or(Fixed::ZERO);
+            let accepted = app.node.launch_curve(&app.key(), symbol, display_name, metadata_hash, fee_bps, dev_buy, max_zec)?;
+            app.note(format!("launched {} ({}) on Cave at seq {}", symbol_text, str_of(input, "display_name")?, accepted.seq));
+            Ok(json!({ "seq": accepted.seq, "epoch": accepted.epoch, "receipts": accepted.receipts }))
+        }
+        ("POST", "/api/buy-curve") => {
+            zyn_only(app)?;
+            let asset = id_of(input, "asset")?;
+            let tokens = fixed_of(str_of(input, "tokens")?)?;
+            let max_zec = fixed_of(str_of(input, "max_zec")?)?;
+            let accepted = app.node.buy_curve(&app.key(), asset, tokens, max_zec)?;
+            app.note(format!("bought {} of Cave asset {} at seq {}", tokens, hex(&asset), accepted.seq));
+            Ok(json!({ "seq": accepted.seq, "epoch": accepted.epoch, "receipts": accepted.receipts }))
+        }
+        ("POST", "/api/sell-curve") => {
+            zyn_only(app)?;
+            let asset = id_of(input, "asset")?;
+            let tokens = fixed_of(str_of(input, "tokens")?)?;
+            let min_zec = fixed_of(str_of(input, "min_zec")?)?;
+            let accepted = app.node.sell_curve(&app.key(), asset, tokens, min_zec)?;
+            app.note(format!("sold {} of Cave asset {} at seq {}", tokens, hex(&asset), accepted.seq));
+            Ok(json!({ "seq": accepted.seq, "epoch": accepted.epoch, "receipts": accepted.receipts }))
+        }
         ("POST", "/api/sync") => App::start_job(app, "sync", |a| {
             let events = sync(a)?;
             Ok(if events.is_empty() { String::new() } else { format!("sync: {} new", events.len()) })
@@ -917,6 +1403,35 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 None => Ok(json!({ "address": app.vault, "memo": true })),
             }
         }
+        ("GET", "/api/zyn-key") => {
+            zyn_only(app)?;
+            let current_key = app.key();
+            let current = account(&current_key);
+            let source = app.zyn_key_source()?;
+            let derived = {
+                let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+                w.default_zyn_source()
+                    .and_then(|s| w.zyn_signing_key(&s).ok().map(|k| (s, account(&k))))
+            };
+            let record = app.node.account(&current_key)?.unwrap_or_default();
+            let authorities = app.node.collections()?.into_iter()
+                .filter(|c| c.creator == current)
+                .map(|c| json!({ "collection": c.id, "symbol": c.symbol, "phase": c.phase_name() }))
+                .collect::<Vec<_>>();
+            Ok(json!({
+                "account": hex(&current),
+                "source": match source { ZynKeySource::Derived { .. } => "bip39-hkdf", ZynKeySource::Legacy { .. } => "legacy-ed25519" },
+                "derived_account": derived.as_ref().map(|(_, id)| hex(id)),
+                "migration_available": false,
+                "migration_blocked_reason": "Automatic migration is disabled pending verified settlement, resumable checkpoints and retained-authority recovery. Export a complete backup; the original account remains active.",
+                "transferable": record.spendable.iter().filter(|(_, amount)| amount.0 > 0).map(|(asset, amount)| json!({ "asset": asset, "amount": amount.to_string() })).collect::<Vec<_>>(),
+                "exiting": record.exiting.len(), "unreleased": record.unreleased.len(),
+                "non_transferable_creator_authorities": authorities,
+            }))
+        }
+        ("POST", "/api/zyn-key/migrate") => {
+            Err("Automatic migration is disabled until settlement verification and resumable recovery are implemented; the original Zyn key has not been changed".into())
+        }
         ("POST", "/api/deposit") => {
             zyn_only(app)?;
             let zat = zatoshi_of(input, "amount")?;
@@ -924,7 +1439,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             // Without one, fall back to the shared vault address and a memo.
             let (to, memo) = match app.deposit_address() {
                 Some(a) => (a, None),
-                None => (app.vault.clone(), Some(zyn_custody::memo::encode_text(&account(&app.key)))),
+                None => (app.vault.clone(), Some(zyn_custody::memo::encode_text(&account(&app.key())))),
             };
             App::start_job(app, "deposit", move |a| {
                 let txid = send(a, &to, zat, memo.as_deref(), "deposit")?;
@@ -932,8 +1447,10 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             })
         }
         ("POST", "/api/import") => {
+            if app.job().is_some() { return Err("wait for the current wallet job before restoring".into()); }
             let mut w = app.wallet.try_lock().map_err(|_| "wallet busy")?;
             let network = w.network();
+            let backup_supplied = input.get("backup").is_some();
             // Parse and derive the replacement before removing even an empty
             // wallet. `backup` is the complete portable form; mnemonic and
             // raw key fields keep manual and legacy restores straightforward.
@@ -956,6 +1473,22 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if restore.network != network {
                 return Err(format!("this backup is for {}, but Nap is showing {}", network_name(restore.network), network_name(network)));
             }
+            let restore_had_zyn = backup_supplied && restore.zyn().is_some();
+            let requested_zyn = restore.effective_zyn_source();
+            let current_zyn = app.zyn_key_source()?;
+            let restore_zyn = match (&current_zyn, backup_supplied, requested_zyn) {
+                // A phrase-only restore cannot reconstruct an independently
+                // generated account. Keep that authority until the holder
+                // explicitly migrates it or imports a complete v2 backup.
+                (ZynKeySource::Legacy { .. }, false, _) => current_zyn.clone(),
+                (_, _, Some(source)) => source,
+                (_, _, None) => {
+                    use rand::RngCore;
+                    let mut seed = [0u8; 32];
+                    rand::rngs::OsRng.fill_bytes(&mut seed);
+                    ZynKeySource::Legacy { seed }
+                }
+            };
             let (o, i) = w.balance();
             if o + i > 0 || w.pending() > 0 || !app.history(network).is_empty() {
                 return Err("this wallet holds funds or history; back it up and remove it before restoring another".into());
@@ -963,8 +1496,9 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let path = w.path().to_string();
             let lightd = app.settings.lock().map_err(|_| "busy")?.lightd(network)?.to_string();
             let staged_path = format!("{}.restore", path);
-            let _ = std::fs::remove_file(&staged_path);
-            let _ = std::fs::remove_file(format!("{}.state", staged_path));
+            if Path::new(&staged_path).exists() || Path::new(&format!("{}.state", staged_path)).exists() {
+                return Err("a previous staged restore exists; preserve it and inspect before retrying".into());
+            }
             // Seed and open the replacement completely before touching the
             // current wallet. A bad phrase, wrong network, unavailable tree
             // frontier, or unwritable disk therefore leaves the old key live.
@@ -976,36 +1510,78 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                     return Err(e);
                 }
             };
-            drop(staged);
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::remove_file(format!("{}.state", path));
-            std::fs::rename(&staged_path, &path).map_err(|e| format!("cannot install restored wallet key: {}", e))?;
-            std::fs::rename(format!("{}.state", staged_path), format!("{}.state", path)).map_err(|e| format!("cannot install restored wallet state: {}", e))?;
-            let fresh = Wallet::open(&path, Client::new(&lightd))?;
+            let restored_zyn_key = staged.zyn_signing_key(&restore_zyn)?;
+            let restored_zyn_account = account(&restored_zyn_key);
+            let current_zyn_account = account(&app.key());
+            if restored_zyn_account != current_zyn_account {
+                let record = app.node.account(&app.key())?.unwrap_or_default();
+                let open_offer = app.node.offers()?.iter().any(|o| o.maker == current_zyn_account);
+                let creator = app.node.collections()?.iter().any(|c| c.creator == current_zyn_account);
+                let orders = !app.node.orders(&app.key())?.is_empty();
+                let launch = app.node.launch_me(&app.key())?;
+                let launch_claims = launch.contribution.0 > 0 || launch.epoch_fees.0 > 0 || launch.vest_total > launch.vest_released || !launch.markets.is_empty();
+                if record.spendable.iter().any(|(_, amount)| amount.0 > 0)
+                    || !record.exiting.is_empty() || !record.unreleased.is_empty() || open_offer || creator || orders || launch_claims
+                {
+                    let _ = std::fs::remove_file(&staged_path);
+                    let _ = std::fs::remove_file(format!("{}.state", staged_path));
+                    return Err("the current Zyn account still has holdings, pending balances, offers, or creator authority; export it and complete the Zyn migration before restoring a different account".into());
+                }
+            }
+            // Acquire every mutable identity field before touching disk. Stage
+            // all replacement bytes, then commit them with a rollback journal.
+            let mut key = app.key.lock().map_err(|_| "Zyn key lock")?;
+            let mut source = app.zyn_key_source.lock().map_err(|_| "Zyn key lock")?;
+            let mut agents = app.agent.lock().map_err(|_| "agent store busy")?;
+            let mut binding = app.binding.lock().map_err(|_| "binding busy")?;
+            let mut deposit = app.deposit_address.lock().map_err(|_| "deposit address busy")?;
+            let zyn_bytes = match &restore_zyn {
+                ZynKeySource::Legacy { seed } => seed.to_vec(),
+                _ => serde_json::to_vec_pretty(&restore_zyn.json()).map_err(|e| e.to_string())?,
+            };
+            let files = vec![
+                (PathBuf::from(&path), Some(std::fs::read(&staged_path).map_err(|e| e.to_string())?)),
+                (PathBuf::from(format!("{}.state", path)), Some(std::fs::read(format!("{}.state", staged_path)).map_err(|e| e.to_string())?)),
+                (app.zyn_key_path.clone(), Some(zyn_bytes)),
+                (app.agent_path.clone(), None),
+                (app.binding_path.clone(), None),
+                (app.cfg.dir.join("deposit-address"), None),
+            ];
+            let recovery_copy = crate::restore::replace(&app.cfg.dir, &files)?;
+            let fresh = staged.installed_at(path);
             let birthday = fresh.state.birthday;
             let warning = fresh.mnemonic_word_count().filter(|n| *n < 24).map(|n| format!("this imported phrase has {} words and less than the 256 bits recommended for Zcash; move recovered funds to a new 24-word wallet", n));
             *w = fresh;
+            *key = restored_zyn_key; *source = restore_zyn;
+            *agents = AgentStore::default(); *binding = None; *deposit = None;
+            let _ = std::fs::remove_file(&staged_path);
+            let _ = std::fs::remove_file(format!("{}.state", staged_path));
             app.note(format!("restored a {} wallet born at {}; sync to find its notes", network_name(network), birthday));
-            Ok(json!({ "address": w.address(), "birthday": birthday, "warning": warning }))
+            Ok(json!({
+                "address": w.address(), "birthday": birthday, "warning": warning,
+                "zyn_account": hex(&restored_zyn_account),
+                "zyn_backup_complete": restore_had_zyn,
+                "previous_recovery_copy": recovery_copy,
+            }))
         }
         ("POST", "/api/quote") => {
             zyn_only(app)?;
             let (asset_in, pool, amount) = swap_args(app, input)?;
-            let (out, best, asset_out) = app.node.quote(asset_in, &[pool], amount)?;
-            Ok(json!({ "out": out.to_string(), "best": best.to_string(), "asset_out": asset_out, "pool": pool }))
+            let quote = app.node.quote(asset_in, &[pool], amount)?;
+            Ok(json!({ "out": quote.amount_out.to_string(), "best": quote.best_case.to_string(), "asset_out": hex(&quote.asset_out), "pool": hex(&pool), "hops": quote.hops.iter().map(|h| json!({"pool": hex(&h.pool), "asset_in": hex(&h.asset_in), "asset_out": hex(&h.asset_out), "amount_in": h.amount_in.to_string(), "amount_out": h.amount_out.to_string(), "fee_asset": hex(&h.fee_asset), "fee": h.fee.to_string(), "pool_fee": h.pool_fee.to_string(), "protocol_fee": h.protocol_fee.to_string(), "creator_fee": h.creator_fee.to_string(), "pol_fee": h.pol_fee.to_string()})).collect::<Vec<_>>() }))
         }
         ("POST", "/api/swap") => {
             zyn_only(app)?;
             let (asset_in, pool, amount) = swap_args(app, input)?;
-            let (out, _, asset_out) = app.node.quote(asset_in, &[pool], amount)?;
-            let min_out = Fixed::raw(out.0 * 99 / 100);
-            let acc = app.node.submit(&app.key, Intent::SwapExactIn { account: account(&app.key), asset_in, path: vec![pool], amount_in: amount, min_out })?;
+            let quote = app.node.quote(asset_in, &[pool], amount)?;
+            let min_out = Fixed::raw(quote.amount_out.0 * 99 / 100);
+            let acc = app.node.submit(&app.key(), Intent::SwapExactIn { account: account(&app.key()), asset_in, path: vec![pool], amount_in: amount, min_out })?;
             if acc.queued {
-                app.note(format!("order queued: {} of asset {} for at least {} of asset {}; clears at the seal (seq {})", amount, asset_in, min_out, asset_out, acc.seq));
+                app.note(format!("order queued: {} of asset {} for at least {} of asset {}; clears at the seal (seq {})", amount, hex(&asset_in), min_out, hex(&quote.asset_out), acc.seq));
                 return Ok(json!({ "seq": acc.seq, "epoch": acc.epoch, "queued": true, "min_out": min_out.to_string() }));
             }
             let got = acc.swapped.map(|(_, o)| o).unwrap_or(min_out);
-            app.note(format!("swapped {} of asset {} for {} of asset {} (seq {})", amount, asset_in, got, asset_out, acc.seq));
+            app.note(format!("swapped {} of asset {} for {} of asset {} (seq {})", amount, hex(&asset_in), got, hex(&quote.asset_out), acc.seq));
             Ok(json!({ "seq": acc.seq, "epoch": acc.epoch, "queued": false, "min_out": min_out.to_string(), "amount_out": got.to_string() }))
         }
         // Every anchor this node knows: the epoch-to-Zcash mapping, which is
@@ -1029,7 +1605,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         ("GET", "/api/offers") => {
             zyn_only(app)?;
             let offers = app.node.offers().map_err(|e| e.to_string())?;
-            let me = account(&app.key);
+            let me = account(&app.key());
             Ok(json!({ "offers": offers.iter().map(|o| json!({
                 "id": o.id,
                 "maker": hex(&o.maker),
@@ -1043,7 +1619,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("POST", "/api/offer") => {
             zyn_only(app)?;
-            let offer_asset = input.get("asset").and_then(Value::as_u64).ok_or("which asset?")? as u32;
+            let offer_asset = id_of(input, "asset")?;
             let want_amount = fixed_of(str_of(input, "price")?)?;
             if want_amount.0 <= 0 { return Err("price must be positive".into()) }
             // One whole unit unless told otherwise: an item is the case this
@@ -1057,22 +1633,22 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             // theft to whoever was about to take it.
             let expires = input.get("expires_at_epoch").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let acc = app.node
-                .place_offer(&app.key, offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
+                .place_offer(&app.key(), offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
                 .map_err(|e| e.to_string())?;
-            app.note(format!("offered asset {} at {} ZEC.zy (seq {})", offer_asset, want_amount, acc.seq));
+            app.note(format!("offered asset {} at {} ZEC.zy (seq {})", hex(&offer_asset), want_amount, acc.seq));
             Ok(json!({ "placed": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/take") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.take_offer(&app.key, offer).map_err(|e| e.to_string())?;
+            let acc = app.node.take_offer(&app.key(), offer).map_err(|e| e.to_string())?;
             app.note(format!("took offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "taken": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/cancel-offer") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.cancel_offer(&app.key, offer).map_err(|e| e.to_string())?;
+            let acc = app.node.cancel_offer(&app.key(), offer).map_err(|e| e.to_string())?;
             app.note(format!("cancelled offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "cancelled": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
@@ -1088,7 +1664,7 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             let cap = input.get("cap").and_then(Value::as_u64).ok_or("how many items?")? as u32;
             let fee_bps = input.get("fee_bps").and_then(Value::as_u64).unwrap_or(100) as u16;
             let acc = app.node
-                .create_collection(&app.key, swapvm::state::symbol(sym.as_bytes()), cap, fee_bps)
+                .create_collection(&app.key(), swapvm::state::symbol(sym.as_bytes()), cap, fee_bps)
                 .map_err(|e| e.to_string())?;
             app.note(format!("created collection {} capped at {} (seq {})", sym, cap, acc.seq));
             Ok(json!({ "created": true, "seq": acc.seq, "epoch": acc.epoch }))
@@ -1097,21 +1673,26 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         // only its creator could raise would be a promise rather than a claim.
         ("POST", "/api/fund") => {
             zyn_only(app)?;
-            let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
+            let collection = id_of(input, "collection")?;
             let amount = fixed_of(str_of(input, "amount")?)?;
             if amount.0 <= 0 { return Err("amount must be positive".into()) }
-            let acc = app.node.fund_collection(&app.key, collection, amount).map_err(|e| e.to_string())?;
-            app.note(format!("funded collection {} with {} ZEC.zy (seq {})", collection, amount, acc.seq));
+            let acc = app.node.fund_collection(&app.key(), collection, amount).map_err(|e| e.to_string())?;
+            app.note(format!("funded collection {} with {} ZEC.zy (seq {})", hex(&collection), amount, acc.seq));
             Ok(json!({ "funded": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         // Creator-only, and deliberately: this is the hand-over half of a
         // claim, and the payment half is the buyer's own `/api/fund`.
         ("POST", "/api/mint") => {
             zyn_only(app)?;
-            let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
+            let collection = id_of(input, "collection")?;
+            let serial = input
+                .get("serial")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or("serial is required and must fit in u32")?;
             let to = match input.get("to").and_then(Value::as_str) {
                 Some(h) => unhex32(h).map_err(|_| "`to` is not a 32-byte account")?,
-                None => account(&app.key),
+                None => account(&app.key()),
             };
             let content = match input.get("content").and_then(Value::as_str) {
                 Some(h) => unhex32(h).map_err(|_| "`content` is not a 32-byte hash")?,
@@ -1122,24 +1703,25 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 None => swapvm::state::symbol(b"ITEM"),
             };
             let acc = app.node
-                .mint_collection_item(&app.key, collection, to, sym, content)
+                .mint_collection_item(&app.key(), collection, serial, to, sym, content)
                 .map_err(|e| e.to_string())?;
-            app.note(format!("minted an item of collection {} to {} (seq {})", collection, hex(&to), acc.seq));
-            Ok(json!({ "minted": true, "seq": acc.seq, "epoch": acc.epoch }))
+            let asset = zyn_vm::item_address(swapvm::types::ADDRESS_SCOPE_V1, &collection, serial);
+            app.note(format!("minted item {} of collection {} to {} (seq {})", serial, hex(&collection), hex(&to), acc.seq));
+            Ok(json!({ "minted": true, "serial": serial, "asset": hex(&asset), "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/advance") => {
             zyn_only(app)?;
-            let collection = input.get("collection").and_then(Value::as_u64).ok_or("which collection?")? as u32;
+            let collection = id_of(input, "collection")?;
             let to = input.get("to").and_then(Value::as_u64).ok_or("advance to which phase?")? as u8;
-            let acc = app.node.advance_collection(&app.key, collection, to).map_err(|e| e.to_string())?;
-            app.note(format!("collection {} advanced to phase {} (seq {})", collection, to, acc.seq));
+            let acc = app.node.advance_collection(&app.key(), collection, to).map_err(|e| e.to_string())?;
+            app.note(format!("collection {} advanced to phase {} (seq {})", hex(&collection), to, acc.seq));
             Ok(json!({ "advanced": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/redeem") => {
             zyn_only(app)?;
-            let asset = input.get("asset").and_then(Value::as_u64).ok_or("which item?")? as u32;
-            let acc = app.node.redeem_collection_item(&app.key, asset).map_err(|e| e.to_string())?;
-            app.note(format!("redeemed item {} at seq {}", asset, acc.seq));
+            let asset = id_of(input, "asset")?;
+            let acc = app.node.redeem_collection_item(&app.key(), asset).map_err(|e| e.to_string())?;
+            app.note(format!("redeemed item {} at seq {}", hex(&asset), acc.seq));
             Ok(json!({ "redeemed": true, "seq": acc.seq }))
         }
         ("POST", "/api/bind") => {
@@ -1158,32 +1740,32 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("POST", "/api/withdraw-sol") => {
             zyn_only(app)?;
-            let asset = input.get("asset").and_then(Value::as_u64).ok_or("asset is required")? as u32;
+            let asset = id_of(input, "asset")?;
             let amount = fixed_of(str_of(input, "amount")?)?;
             let b = app.binding.lock().map_err(|_| "busy")?.clone().ok_or("bind a Solana address first")?;
             if b.kind != 1 { return Err("exits are bound to a Zcash address; bind a Solana address first (a rebind waits out the redirect delay)".into()) }
             let network = app.wallet.lock().map_err(|_| "wallet busy")?.network();
-            let acc = app.node.submit(&app.key, Intent::RequestWithdrawal { account: account(&app.key), asset, amount, destination: b.commitment(network)? })?;
-            app.note(format!("requested an exit of {} of asset {} to {}… (seq {})", amount, asset, &b.address[..8], acc.seq));
+            let acc = app.node.submit(&app.key(), Intent::RequestWithdrawal { account: account(&app.key()), asset, amount, destination: b.commitment(network)? })?;
+            app.note(format!("requested an exit of {} of asset {} to {}… (seq {})", amount, hex(&asset), &b.address[..8], acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
         ("POST", "/api/liquidity/add") => {
             zyn_only(app)?;
-            let pool = input.get("pool").and_then(Value::as_u64).ok_or("pool is required")? as u32;
+            let pool = id_of(input, "pool")?;
             let max0 = fixed_of(str_of(input, "amount0")?)?;
             let max1 = fixed_of(str_of(input, "amount1")?)?;
-            let acc = app.node.submit(&app.key, Intent::AddLiquidity { account: account(&app.key), pool, max0, max1, min_shares: Fixed::ZERO })?;
+            let acc = app.node.submit(&app.key(), Intent::AddLiquidity { account: account(&app.key()), pool, max0, max1, min_shares: Fixed::ZERO })?;
             let (a0, a1, sh) = acc.liquidity.unwrap_or((Fixed::ZERO, Fixed::ZERO, Fixed::ZERO));
-            app.note(format!("added liquidity to pool {}: {} + {} for {} shares (seq {})", pool, a0, a1, sh, acc.seq));
+            app.note(format!("added liquidity to pool {}: {} + {} for {} shares (seq {})", hex(&pool), a0, a1, sh, acc.seq));
             Ok(json!({ "seq": acc.seq, "amount0": a0.to_string(), "amount1": a1.to_string(), "shares": sh.to_string() }))
         }
         ("POST", "/api/liquidity/remove") => {
             zyn_only(app)?;
-            let pool = input.get("pool").and_then(Value::as_u64).ok_or("pool is required")? as u32;
+            let pool = id_of(input, "pool")?;
             let shares = fixed_of(str_of(input, "shares")?)?;
-            let acc = app.node.submit(&app.key, Intent::RemoveLiquidity { account: account(&app.key), pool, shares, min0: Fixed::ZERO, min1: Fixed::ZERO })?;
+            let acc = app.node.submit(&app.key(), Intent::RemoveLiquidity { account: account(&app.key()), pool, shares, min0: Fixed::ZERO, min1: Fixed::ZERO })?;
             let (a0, a1, sh) = acc.liquidity.unwrap_or((Fixed::ZERO, Fixed::ZERO, Fixed::ZERO));
-            app.note(format!("removed {} shares from pool {}: {} + {} back (seq {})", sh, pool, a0, a1, acc.seq));
+            app.note(format!("removed {} shares from pool {}: {} + {} back (seq {})", sh, hex(&pool), a0, a1, acc.seq));
             Ok(json!({ "seq": acc.seq, "amount0": a0.to_string(), "amount1": a1.to_string(), "shares": sh.to_string() }))
         }
         ("POST", "/api/withdraw") => {
@@ -1193,32 +1775,32 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if b.kind != 0 { return Err("exits are bound to a Solana address; bind this wallet first (a rebind waits out the redirect delay)".into()) }
             let network = app.wallet.lock().map_err(|_| "wallet busy")?.network();
             let commitment = b.commitment(network)?;
-            let acc = app.node.submit(&app.key, Intent::RequestWithdrawal { account: account(&app.key), asset: XZEC, amount: Fixed::raw(zat as i128 * ZAT), destination: commitment })?;
+            let acc = app.node.submit(&app.key(), Intent::RequestWithdrawal { account: account(&app.key()), asset: XZEC, amount: Fixed::raw(zat as i128 * ZAT), destination: commitment })?;
             app.note(format!("requested an exit of {:.8} ZEC.zy to this wallet (seq {})", zec(zat), acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
         ("POST", "/api/transfer") => {
             zyn_only(app)?;
             let to = unhex32(str_of(input, "to")?.trim())?;
-            let asset = input.get("asset").and_then(Value::as_u64).ok_or("asset is required")? as u32;
+            let asset = id_of(input, "asset")?;
             let amount = fixed_of(str_of(input, "amount")?)?;
-            let intent = Intent::Transfer { from: account(&app.key), to, asset, amount };
+            let intent = Intent::Transfer { from: account(&app.key()), to, asset, amount };
             if input.get("force").and_then(Value::as_bool).unwrap_or(false) {
                 let txid = force_via_zcash(app, &intent)?;
-                app.note(format!("FORCED on Zcash: transfer of {} of asset {} to {}… rides tx {} — the node must apply it within {} blocks", amount, asset, hex(&to[..4]), &txid[..12], 20));
+                app.note(format!("FORCED on Zcash: transfer of {} of asset {} to {}… rides tx {} — the node must apply it within {} blocks", amount, hex(&asset), hex(&to[..4]), &txid[..12], 20));
                 return Ok(json!({ "forced": true, "txid": txid }));
             }
-            let acc = app.node.submit(&app.key, intent)?;
-            app.note(format!("sent {} of asset {} on Zyn to {}… (seq {})", amount, asset, hex(&to[..4]), acc.seq));
+            let acc = app.node.submit(&app.key(), intent)?;
+            app.note(format!("sent {} of asset {} on Zyn to {}… (seq {})", amount, hex(&asset), hex(&to[..4]), acc.seq));
             Ok(json!({ "seq": acc.seq }))
         }
         ("POST", "/api/force") => {
             // Any intent the wallet can build, forced. Today: a transfer.
             zyn_only(app)?;
             let to = unhex32(str_of(input, "to")?.trim())?;
-            let asset = input.get("asset").and_then(Value::as_u64).ok_or("asset is required")? as u32;
+            let asset = id_of(input, "asset")?;
             let amount = fixed_of(str_of(input, "amount")?)?;
-            let intent = Intent::Transfer { from: account(&app.key), to, asset, amount };
+            let intent = Intent::Transfer { from: account(&app.key()), to, asset, amount };
             let txid = force_via_zcash(app, &intent)?;
             Ok(json!({ "forced": true, "txid": txid }))
         }
@@ -1230,14 +1812,31 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         }
         ("POST", "/api/export") => {
             let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let source = app.zyn_key_source()?;
+            let source_summary = match &source {
+                ZynKeySource::Derived { version, account } => json!({ "source": "bip39-hkdf", "version": version, "account": account }),
+                ZynKeySource::Legacy { .. } => json!({ "source": "legacy-ed25519", "requires_file_export": true }),
+            };
             app.note("wallet recovery material shown for backup".to_string());
             Ok(json!({
                 "key": w.legacy_backup_key().map(|key| hex(&key)),
                 "mnemonic": w.mnemonic(),
-                "backup": w.export_backup(),
+                "backup": if matches!(source, ZynKeySource::Derived { .. }) { Some(w.export_backup_with_zyn(source)) } else { None },
                 "birthday": w.state.birthday,
                 "network": network_name(w.network()),
+                "zyn": source_summary,
+                "zyn_account": hex(&account(&app.key())),
             }))
+        }
+        ("POST", "/api/export-file") => {
+            if input.get("confirm").and_then(Value::as_bool) != Some(true) {
+                return Err("saving a complete secret backup requires confirm: true".into());
+            }
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let backup = w.export_backup_with_zyn(app.zyn_key_source()?);
+            let path = crate::restore::export_file(&app.cfg.dir, backup.as_bytes())?;
+            // Only the path crosses the page boundary, never legacy seed bytes.
+            Ok(json!({ "path": path, "network": network_name(w.network()), "complete": true }))
         }
         ("GET", "/api/settings") => Ok(app.settings.lock().map_err(|_| "busy")?.json()),
         ("POST", "/api/settings") => {
@@ -1261,7 +1860,18 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             if want != w.network() || input.get("lightd_testnet").is_some() || input.get("lightd_mainnet").is_some() {
                 // Reopen against the (possibly new) server: a wrong or
                 // unready server is refused here, and the network stays.
-                let fresh = App::open_wallet(&app.cfg, &s, want, want == before.network && app.cfg.wallet_path.is_some())?;
+                let target_path = app.cfg.dir.join(format!("wallet-{}", network_name(want)));
+                let fresh = if app.cfg.wallet_path.is_none() && !target_path.exists() && w.mnemonic().is_some() {
+                    w.create_network_sibling(&target_path.to_string_lossy(), Client::new(s.lightd(want)?))?
+                } else {
+                    App::open_wallet(&app.cfg, &s, want, want == before.network && app.cfg.wallet_path.is_some())?
+                };
+                if let ZynKeySource::Derived { .. } = app.zyn_key_source()? {
+                    let candidate = fresh.zyn_signing_key(&app.zyn_key_source()?)?;
+                    if candidate.verifying_key() != app.key().verifying_key() {
+                        return Err("the other network wallet has a different recovery phrase; restore the active Nap phrase there before switching so the Zyn account cannot change".into());
+                    }
+                }
                 *w = fresh;
             }
             s.network = want;
@@ -1289,14 +1899,24 @@ fn zyn_only(app: &App) -> Result<(), String> {
 }
 
 /// asset_in, the single pool that joins it to asset_out, and the amount.
-fn swap_args(app: &App, input: &Value) -> Result<(u32, u32, Fixed), String> {
-    let asset_in = input.get("asset_in").and_then(Value::as_u64).ok_or("asset_in is required")? as u32;
-    let asset_out = input.get("asset_out").and_then(Value::as_u64).ok_or("asset_out is required")? as u32;
-    if asset_in == asset_out { return Err("pick two different assets".into()) }
+fn swap_args(app: &App, input: &Value) -> Result<([u8; 32], [u8; 32], Fixed), String> {
+    let asset_in = id_of(input, "asset_in")?;
+    let asset_out = id_of(input, "asset_out")?;
+    if asset_in == asset_out {
+        return Err("pick two different assets".into());
+    }
     let amount = fixed_of(str_of(input, "amount")?)?;
-    if amount.0 <= 0 { return Err("amount must be positive".into()) }
+    if amount.0 <= 0 {
+        return Err("amount must be positive".into());
+    }
     let pools = app.node.pools()?;
-    let pool = pools.iter().find(|p| (p.asset0 == asset_in && p.asset1 == asset_out) || (p.asset1 == asset_in && p.asset0 == asset_out)).ok_or("no pool joins those two assets")?;
+    let pool = pools
+        .iter()
+        .find(|p| {
+            (p.asset0 == asset_in && p.asset1 == asset_out)
+                || (p.asset1 == asset_in && p.asset0 == asset_out)
+        })
+        .ok_or("no pool joins those two assets")?;
     Ok((asset_in, pool.id, amount))
 }
 
@@ -1304,26 +1924,62 @@ fn sync(app: &App) -> Result<Vec<String>, String> {
     let mut events = Vec::new();
     let mut w = app.wallet.lock().map_err(|_| "wallet busy")?;
     w.sync(|e| {
-        if let Event::Progress { at, to } = e { app.set_progress(at, to) } else { events.push(e) }
+        if let Event::Progress { at, to } = e {
+            app.set_progress(at, to)
+        } else {
+            events.push(e)
+        }
     })?;
     let network = w.network();
     drop(w);
     app.record(network, &events);
     let _ = overview(app); // refresh the cached view now that the wallet is free
-    let lines: Vec<String> = events.iter().filter_map(|e| match e {
-        Event::Progress { .. } => None,
-        Event::Received { zatoshi, height, memo, .. } => Some(format!("received {:.8} at height {}{}", zec(*zatoshi), height, if memo.is_empty() { String::new() } else { format!(" — “{}”", memo) })),
-        Event::Spent { zatoshi, height, .. } => Some(format!("a {:.8} note was spent (confirmed at height {})", zec(*zatoshi), height)),
-    }).collect();
-    for l in &lines { app.note(l.clone()); }
+    let lines: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Progress { .. } => None,
+            Event::Received {
+                zatoshi,
+                height,
+                memo,
+                ..
+            } => Some(format!(
+                "received {:.8} at height {}{}",
+                zec(*zatoshi),
+                height,
+                if memo.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — “{}”", memo)
+                }
+            )),
+            Event::Spent {
+                zatoshi, height, ..
+            } => Some(format!(
+                "a {:.8} note was spent (confirmed at height {})",
+                zec(*zatoshi),
+                height
+            )),
+        })
+        .collect();
+    for l in &lines {
+        app.note(l.clone());
+    }
     Ok(lines)
 }
 
 fn send(app: &App, to: &str, zat: u64, memo: Option<&str>, kind: &str) -> Result<String, String> {
     let mut w = app.wallet.lock().map_err(|_| "wallet busy")?;
-    app.note(format!("building a {:.8} payment; proving takes a minute", zec(zat)));
+    app.note(format!(
+        "building a {:.8} payment; proving takes a minute",
+        zec(zat)
+    ));
     let mut events = Vec::new();
-    let txid = w.send(to, zat, memo, |e| if !matches!(e, Event::Progress { .. }) { events.push(e) })?;
+    let txid = w.send(to, zat, memo, |e| {
+        if !matches!(e, Event::Progress { .. }) {
+            events.push(e)
+        }
+    })?;
     let network = w.network();
     drop(w);
     app.record(network, &events);
@@ -1339,13 +1995,22 @@ fn send(app: &App, to: &str, zat: u64, memo: Option<&str>, kind: &str) -> Result
 /// apply it; a replica holds it to that.
 fn force_via_zcash(app: &App, intent: &Intent) -> Result<String, String> {
     let epoch = app.node.status().map(|s| s.epoch).unwrap_or(0);
-    let frame = crate::client::frame_submission(&app.key, app.node.chain, epoch, intent);
-    let memo = zyn_custody::memo::encode_forced(&frame)
-        .ok_or_else(|| format!("this intent is {} bytes signed; a memo carries at most {}", frame.len(), zyn_custody::memo::FORCED_MAX))?;
+    let frame = crate::client::frame_submission(&app.key(), app.node.chain, epoch, intent);
+    let memo = zyn_custody::memo::encode_forced(&frame).ok_or_else(|| {
+        format!(
+            "this intent is {} bytes signed; a memo carries at most {}",
+            frame.len(),
+            zyn_custody::memo::FORCED_MAX
+        )
+    })?;
     let mut w = app.wallet.lock().map_err(|_| "wallet busy")?;
     app.note("forcing via Zcash: building a 0.0001 payment to the vault with the signed intent in its memo; proving takes a minute".to_string());
     let mut events = Vec::new();
-    let txid = w.send_with_memo(&app.vault, 10_000, memo, |e| if !matches!(e, Event::Progress { .. }) { events.push(e) })?;
+    let txid = w.send_with_memo(&app.vault, 10_000, memo, |e| {
+        if !matches!(e, Event::Progress { .. }) {
+            events.push(e)
+        }
+    })?;
     let network = w.network();
     drop(w);
     app.record(network, &events);
@@ -1361,7 +2026,11 @@ fn base64url(input: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     for chunk in input.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(T[(n >> 18) as usize & 63] as char);
         out.push(T[(n >> 12) as usize & 63] as char);
@@ -1380,7 +2049,9 @@ fn percent(s: &str) -> String {
     let mut out = String::new();
     for b in s.as_bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
             _ => out.push_str(&format!("%{:02X}", b)),
         }
     }
@@ -1398,7 +2069,12 @@ pub fn deposit_uri(address: &str, memo: Option<&str>, zatoshi: Option<u64>) -> S
     let mut uri = format!("zcash:{}?message={}", address, percent("Zyn deposit"));
     if let Some(zat) = zatoshi.filter(|z| *z > 0) {
         // ZIP-321 amounts are ZEC, decimal, at most eight places.
-        uri.push_str(&format!("&amount={}", format!("{:.8}", zat as f64 / 100_000_000.0).trim_end_matches('0').trim_end_matches('.')));
+        uri.push_str(&format!(
+            "&amount={}",
+            format!("{:.8}", zat as f64 / 100_000_000.0)
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+        ));
     }
     if let Some(m) = memo {
         uri.push_str(&format!("&memo={}", base64url(m.as_bytes())));
@@ -1408,7 +2084,11 @@ pub fn deposit_uri(address: &str, memo: Option<&str>, zatoshi: Option<u64>) -> S
 
 fn qr_svg(text: &str) -> String {
     match qrcode::QrCode::new(text.as_bytes()) {
-        Ok(code) => code.render::<qrcode::render::svg::Color>().min_dimensions(200, 200).quiet_zone(false).build(),
+        Ok(code) => code
+            .render::<qrcode::render::svg::Color>()
+            .min_dimensions(200, 200)
+            .quiet_zone(false)
+            .build(),
         Err(_) => String::new(),
     }
 }
@@ -1430,16 +2110,27 @@ pub fn overview(app: &App) -> Result<Value, String> {
                 "balance": { "ironwood": ironwood, "orchard": orchard, "total": zec(ironwood + orchard), "pending": zec(w.pending()) },
                 "notes": w.notes().iter().map(|n| json!({ "pool": format!("{:?}", n.pool), "zec": zec(n.zatoshi), "height": n.height, "txid": n.txid_hex })).collect::<Vec<_>>(),
             });
-            if let Ok(mut c) = app.view.lock() { *c = Some(v.clone()); }
+            if let Ok(mut c) = app.view.lock() {
+                *c = Some(v.clone());
+            }
             Some(v)
         }
         Err(_) => None,
     };
     let wallet = match fresh {
         Some(v) => v,
-        None => app.view.lock().ok().and_then(|c| c.clone()).ok_or("the wallet is busy; try again in a moment")?,
+        None => app
+            .view
+            .lock()
+            .ok()
+            .and_then(|c| c.clone())
+            .ok_or("the wallet is busy; try again in a moment")?,
     };
-    let network = if wallet["network"] == "mainnet" { Network::MainNetwork } else { Network::TestNetwork };
+    let network = if wallet["network"] == "mainnet" {
+        Network::MainNetwork
+    } else {
+        Network::TestNetwork
+    };
     let address = wallet["address"].as_str().unwrap_or("").to_string();
     let settings = app.settings.lock().map_err(|_| "busy")?.clone();
     let mut history = app.history(network);
@@ -1468,27 +2159,48 @@ pub fn overview(app: &App) -> Result<Value, String> {
         "job": job,
         "log": app.log.lock().map(|l| l.clone()).unwrap_or_default(),
     });
-    for (k, v) in wallet.as_object().into_iter().flatten() { o[k] = v.clone(); }
+    for (k, v) in wallet.as_object().into_iter().flatten() {
+        o[k] = v.clone();
+    }
     Ok(o)
 }
 
 impl App {
     fn exit_proof_path(&self, network: Network) -> PathBuf {
-        self.cfg.dir.join(format!("exit-{}.json", network_name(network)))
+        self.cfg
+            .dir
+            .join(format!("exit-{}.json", network_name(network)))
     }
 
     /// Keep the exit proof current: whenever the chain has anchored past what
     /// is on disk, fetch the record and path again. Kilobytes per anchor, and
     /// the thing that lets this wallet leave with the sequencer gone.
-    fn refresh_exit_proof(&self, network: Network, anchored_epoch: u64, has_anchor: bool) -> Option<crate::exitproof::ExitProof> {
+    fn refresh_exit_proof(
+        &self,
+        network: Network,
+        anchored_epoch: u64,
+        has_anchor: bool,
+    ) -> Option<crate::exitproof::ExitProof> {
         let path = self.exit_proof_path(network);
         let kept = crate::exitproof::ExitProof::load(&path);
-        if !crate::exitproof::should_refresh(kept.as_ref().map(|p| p.epoch), anchored_epoch, has_anchor) {
+        if !crate::exitproof::should_refresh(
+            kept.as_ref().map(|p| p.epoch),
+            anchored_epoch,
+            has_anchor,
+        ) {
             return kept;
         }
-        match self.node.account_proof(&self.key) {
+        match self.node.account_proof(&self.key()) {
             Ok(Some(p)) => {
-                let proof = crate::exitproof::ExitProof { chain_id: self.node.chain, epoch: p.epoch, root: p.root, record: p.record, index: p.index, path: p.path, fetched_at: App::now() };
+                let proof = crate::exitproof::ExitProof {
+                    chain_id: self.node.chain,
+                    epoch: p.epoch,
+                    root: p.root,
+                    record: p.record,
+                    index: p.index,
+                    path: p.path,
+                    fetched_at: App::now(),
+                };
                 if proof.verify() {
                     let _ = proof.save(&path);
                     self.note(format!("exit proof refreshed for epoch {}", proof.epoch));
@@ -1504,10 +2216,14 @@ impl App {
 }
 
 fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, String> {
-    let id = account(&app.key);
+    let id = account(&app.key());
     let status = app.node.status();
     let exit = match &status {
-        Ok(s) => app.refresh_exit_proof(network, s.anchored_epoch, s.anchored_epoch > 0 || s.role == 1),
+        Ok(s) => app.refresh_exit_proof(
+            network,
+            s.anchored_epoch,
+            s.anchored_epoch > 0 || s.role == 1,
+        ),
         Err(_) => crate::exitproof::ExitProof::load(&app.exit_proof_path(network)),
     };
     let exit_json = json!({
@@ -1520,14 +2236,20 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
     });
     let assets = app.node.assets().unwrap_or_default();
     let pools = app.node.pools().unwrap_or_default();
-    let record = app.node.account(&app.key);
-    let orders = app.node.orders(&app.key).unwrap_or_default();
-    let launch = app.node.launch().ok().flatten();
-    let me = app.node.launch_me(&app.key).unwrap_or_default();
-    let symbol = |a: u32| assets.iter().find(|x| x.id == a).map(|x| x.symbol.clone()).unwrap_or_else(|| format!("asset {}", a));
+    let record = app.node.account(&app.key());
+    let orders = app.node.orders(&app.key()).unwrap_or_default();
+    let symbol = |a: [u8; 32]| {
+        assets
+            .iter()
+            .find(|x| x.id == a)
+            .map(|x| x.symbol.clone())
+            .unwrap_or_else(|| format!("asset {}", hex(&a)))
+    };
     let binding = app.binding.lock().map_err(|_| "busy")?.clone();
     let bound_here = match (&binding, &record) {
-        (Some(b), Ok(Some(r))) => b.kind == 0 && b.address == address && b.commitment(network).ok() == r.binding,
+        (Some(b), Ok(Some(r))) => {
+            b.kind == 0 && b.address == address && b.commitment(network).ok() == r.binding
+        }
         _ => false,
     };
     let bound_sol = match (&binding, &record) {
@@ -1540,7 +2262,7 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
     // Only the pool that quotes it directly against xZEC counts: a price
     // routed through two hops is a guess about depth as well as price, and a
     // portfolio total built on guesses is worse than one that says "unpriced".
-    let price_zec = |asset: u32| -> Option<Fixed> {
+    let price_zec = |asset: [u8; 32]| -> Option<Fixed> {
         if asset == swapvm::types::XZEC {
             return Some(Fixed::ONE);
         }
@@ -1555,7 +2277,7 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
             (other.0 > 0).then(|| Fixed::raw(((zec.0 as i128) * Fixed::ONE.0) / other.0))
         })
     };
-    let value_of = |asset: u32, amount: Fixed| -> Option<Fixed> {
+    let value_of = |asset: [u8; 32], amount: Fixed| -> Option<Fixed> {
         price_zec(asset).map(|p| Fixed::raw((amount.0 * p.0) / Fixed::ONE.0))
     };
 
@@ -1563,7 +2285,7 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
     let collections = app.node.collections().unwrap_or_default();
     let offers = app.node.offers().unwrap_or_default();
     let anchors = app.node.anchors(0).unwrap_or_default();
-    let floor_of = |asset: u32| -> Option<(u32, Fixed)> {
+    let floor_of = |asset: [u8; 32]| -> Option<([u8; 32], Fixed)> {
         let a = assets.iter().find(|x| x.id == asset)?;
         let c = collections.iter().find(|c| Some(c.id) == a.collection)?;
         Some((c.id, c.redeem_price))
@@ -1576,26 +2298,32 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
     // `unpriced` rather than silently as zero — a total that quietly omits a
     // holding is worse than one that admits it does not know.
     let positions: Vec<Value> = match &record {
-        Ok(Some(r)) => r.spendable.iter().filter_map(|(a, v)| {
-            let lp = assets.iter().find(|x| x.id == *a && x.lp_of.is_some())?;
-            let pool = pools.iter().find(|p| p.id == lp.lp_of.unwrap())?;
-            let supply = lp.supply.0.max(1);
-            let share = v.0 as f64 / supply as f64;
-            // Both legs valued and summed, rather than doubling the xZEC
-            // side: that shortcut is only right while a pool is balanced, and
-            // a position is most worth checking when it is not.
-            let a0 = Fixed::raw((pool.reserve0.0 * v.0) / supply);
-            let a1 = Fixed::raw((pool.reserve1.0 * v.0) / supply);
-            let value_zec = match (value_of(pool.asset0, a0), value_of(pool.asset1, a1)) {
-                (Some(x), Some(y)) => x.add(y).map(|t| t.to_string()),
-                _ => None,
-            };
-            Some(json!({ "pool": pool.id, "lp_asset": a, "shares": v.to_string(), "share": share,
+        Ok(Some(r)) => r
+            .spendable
+            .iter()
+            .filter_map(|(a, v)| {
+                let lp = assets.iter().find(|x| x.id == *a && x.lp_of.is_some())?;
+                let pool = pools.iter().find(|p| p.id == lp.lp_of.unwrap())?;
+                let supply = lp.supply.0.max(1);
+                let share = v.0 as f64 / supply as f64;
+                // Both legs valued and summed, rather than doubling the xZEC
+                // side: that shortcut is only right while a pool is balanced, and
+                // a position is most worth checking when it is not.
+                let a0 = Fixed::raw((pool.reserve0.0 * v.0) / supply);
+                let a1 = Fixed::raw((pool.reserve1.0 * v.0) / supply);
+                let value_zec = match (value_of(pool.asset0, a0), value_of(pool.asset1, a1)) {
+                    (Some(x), Some(y)) => x.add(y).map(|t| t.to_string()),
+                    _ => None,
+                };
+                Some(
+                    json!({ "pool": pool.id, "lp_asset": a, "shares": v.to_string(), "share": share,
                 "symbol0": symbol(pool.asset0), "symbol1": symbol(pool.asset1),
                 "amount0": a0.to_string(),
                 "amount1": a1.to_string(),
-                "value_zec": value_zec }))
-        }).collect(),
+                "value_zec": value_zec }),
+                )
+            })
+            .collect(),
         _ => Vec::new(),
     };
     let portfolio = {
@@ -1639,38 +2367,6 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
             "open_orders": orders.len(),
         })
     };
-
-    let markets: Vec<Value> = launch.as_ref().map(|l| l.assets.iter().map(|a| {
-        let mine = me.markets.iter().find(|m| m.0 == a.asset);
-        json!({
-            "asset": a.asset, "symbol": symbol(a.asset), "pot": a.pot.to_string(), "price": a.price.to_string(),
-            "opened": a.opened_at > 0, "opened_at": a.opened_at, "pool": a.pool, "grant": a.grant.to_string(),
-            "contributors": a.contributors, "contributed": a.contributed.to_string(),
-            "zec_needed": if a.price.0 > 0 { a.pot.div(a.price).unwrap_or(Fixed::ZERO).to_string() } else { "0".to_string() },
-            "me": mine.map(|m| json!({ "contributed": m.1.to_string(), "vest_total": m.2.to_string(), "vest_released": m.3.to_string(), "vest_end": m.4 })),
-        })
-    }).collect()).unwrap_or_default();
-
-    // Built outside the literal below: nesting these there outruns `json!`.
-    let launch_json = launch.as_ref().map(|l| {
-        let mut v = json!({
-            "fee_bps": l.params.fee_bps, "threshold": l.params.threshold.to_string(), "genesis": l.params.genesis.to_string(), "cap": l.params.cap.to_string(),
-            "rate0": l.params.rate0.to_string(), "halving_blocks": l.params.halving_blocks, "vesting_blocks": l.params.vesting_blocks,
-            "zcash_height": l.zcash_height, "graduated": l.graduated_at > 0, "graduated_at": l.graduated_at, "zyn": l.zyn, "genesis_pool": l.genesis_pool,
-        });
-        for (k, val) in [
-            ("minted", l.minted.to_string()), ("supply", l.supply.to_string()), ("pot", l.pot.to_string()),
-            ("lp_pot", l.lp_pot.to_string()), ("bridge_pot", l.bridge_pot.to_string()), ("pol_zyn", l.pol_zyn.to_string()),
-            ("pol_zec", l.pol_zec.to_string()), ("fee_pot", l.fee_pot.to_string()), ("contributed", l.contributed.to_string()),
-            ("asset_threshold", l.asset_threshold.to_string()),
-        ] { v[k] = json!(val); }
-        v["contributors"] = json!(l.contributors);
-        v["bootstrap_bps"] = json!(l.bootstrap_bps);
-        v["markets"] = json!(markets);
-        v["me"] = json!({ "contribution": me.contribution.to_string(), "epoch_fees": me.epoch_fees.to_string(), "vest_total": me.vest_total.to_string(), "vest_released": me.vest_released.to_string(), "vest_end": me.vest_end });
-        v
-    });
-    // Built outside the literal below: nesting it there outruns `json!`.
 
     Ok(json!({
         "available": true,
@@ -1778,7 +2474,6 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
         }).collect::<Vec<_>>(),
         "positions": positions,
         "portfolio": portfolio,
-        "launch": launch_json,
         "orders": orders.iter().map(|(seq, pool, asset_in, amount_in, min_out)| json!({ "seq": seq, "pool": pool, "asset_in": asset_in, "symbol_in": symbol(*asset_in), "amount_in": amount_in.to_string(), "min_out": min_out.to_string() })).collect::<Vec<_>>(),
         "bound_sol": bound_sol,
         "solana_vault": std::env::var("ZYN_SOLANA_VAULT").unwrap_or_else(|_| "7KacSYXuVhKSf8dpXcLY3qFZQYiZg2m6vKh4m1HxKZmA".to_string()),
@@ -1817,7 +2512,11 @@ mod uri_tests {
         // Falling back to the shared vault, the memo travels in the request
         // rather than in the depositor's fingers.
         let u = deposit_uri(addr, Some("ZYN1:aabb"), None);
-        assert!(u.contains(&format!("memo={}", base64url(b"ZYN1:aabb"))), "{}", u);
+        assert!(
+            u.contains(&format!("memo={}", base64url(b"ZYN1:aabb"))),
+            "{}",
+            u
+        );
 
         // Amounts are ZEC, decimal, trimmed — not zatoshi.
         assert!(deposit_uri(addr, None, Some(150_000_000)).ends_with("&amount=1.5"));

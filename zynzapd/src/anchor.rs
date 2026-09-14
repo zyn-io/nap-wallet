@@ -40,7 +40,10 @@ use zyn_custody::zebra::Zebra;
 use crate::rpc::Shared;
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 use crate::settle::{Entry, Ledger, Status};
 
@@ -144,7 +147,11 @@ impl ZcashBuilder {
         // Local mode needs a quorum of shares; remote mode needs none — the
         // custodians hold them, and the box holds only the public package.
         if custodians.is_none() && shares.len() < usize::from(threshold) {
-            return Err(format!("{} share(s) loaded, {} needed to sign anchors", shares.len(), threshold));
+            return Err(format!(
+                "{} share(s) loaded, {} needed to sign anchors",
+                shares.len(),
+                threshold
+            ));
         }
         let group = *public.verifying_key();
         let ak_matches = zyn_custody::ceremony::orchard_viewing_key(&group, [0u8; 32], [0u8; 32])
@@ -156,11 +163,27 @@ impl ZcashBuilder {
         if let Some(c) = &custodians {
             eprintln!("zynzapd: anchors signed by {} custodian(s), threshold {} — this box holds no share", c.len(), threshold);
         }
-        let scanner = zyn_custody::shielded::Scanner::new(zyn_custody::shielded::VaultKeys::from_full_viewing_key(fvk.clone()), from_height, 200)
-            .with_notes(notes.clone())
-            .with_tree_lag(tree_lag)
-            .with_attributions(attributions);
-        Ok(ZcashBuilder { network, shares, public, custodians, threshold, fvk, notes, zebra, scanner, tree_lag, proving: None })
+        let scanner = zyn_custody::shielded::Scanner::new(
+            zyn_custody::shielded::VaultKeys::from_full_viewing_key(fvk.clone()),
+            from_height,
+            200,
+        )
+        .with_notes(notes.clone())
+        .with_tree_lag(tree_lag)
+        .with_attributions(attributions);
+        Ok(ZcashBuilder {
+            network,
+            shares,
+            public,
+            custodians,
+            threshold,
+            fvk,
+            notes,
+            zebra,
+            scanner,
+            tree_lag,
+            proving: None,
+        })
     }
 
     /// The tree must name a root the node has, or the witness is worthless.
@@ -168,11 +191,20 @@ impl ZcashBuilder {
     /// one line, instead of in a transaction refused until it expires.
     fn tree_matches_node(&self, pool: ValuePool) -> Result<(), String> {
         let (root, at) = {
-            let store = self.notes.of(pool).lock().map_err(|_| "note store poisoned".to_string())?;
-            let Some(at) = store.synced_to() else { return Ok(()) };
+            let store = self
+                .notes
+                .of(pool)
+                .lock()
+                .map_err(|_| "note store poisoned".to_string())?;
+            let Some(at) = store.synced_to() else {
+                return Ok(());
+            };
             (store.root_bytes(), at)
         };
-        let ts = self.zebra.tree_state_of(at, pool).map_err(|e| format!("z_gettreestate {}: {}", at, e))?;
+        let ts = self
+            .zebra
+            .tree_state_of(at, pool)
+            .map_err(|e| format!("z_gettreestate {}: {}", at, e))?;
         if root == Some(ts.final_root) {
             return Ok(());
         }
@@ -184,8 +216,14 @@ impl ZcashBuilder {
         let to = tip.saturating_sub(self.tree_lag);
         // The numbers first, so a re-walk that fails still leaves the evidence.
         let (appended, node_count) = {
-            let store = self.notes.of(pool).lock().map_err(|_| "note store poisoned".to_string())?;
-            let node_count = zyn_custody::notes::NoteStore::from_frontier(&ts.final_state, at).map(|s| s.appended()).unwrap_or(0);
+            let store = self
+                .notes
+                .of(pool)
+                .lock()
+                .map_err(|_| "note store poisoned".to_string())?;
+            let node_count = zyn_custody::notes::NoteStore::from_frontier(&ts.final_state, at)
+                .map(|s| s.appended())
+                .unwrap_or(0);
             (store.appended(), node_count)
         };
         eprintln!(
@@ -194,10 +232,19 @@ impl ZcashBuilder {
             if appended == node_count { "same count — different order, or a reorganised block" } else { "COUNT MISMATCH — a block fed twice or skipped" },
             to
         );
-        self.scanner.reseed(&self.zebra, pool, to).map_err(|e| format!("re-seeding the {:?} tree failed: {:?}", pool, e))?;
-        let store = self.notes.of(pool).lock().map_err(|_| "note store poisoned".to_string())?;
+        self.scanner
+            .reseed(&self.zebra, pool, to)
+            .map_err(|e| format!("re-seeding the {:?} tree failed: {:?}", pool, e))?;
+        let store = self
+            .notes
+            .of(pool)
+            .lock()
+            .map_err(|_| "note store poisoned".to_string())?;
         let at = store.synced_to().unwrap_or(to);
-        let ts = self.zebra.tree_state_of(at, pool).map_err(|e| format!("z_gettreestate {}: {}", at, e))?;
+        let ts = self
+            .zebra
+            .tree_state_of(at, pool)
+            .map_err(|e| format!("z_gettreestate {}: {}", at, e))?;
         if store.root_bytes() != Some(ts.final_root) {
             return Err(format!("the {:?} note tree still does not match the node at {} after re-seeding — the feeder itself is wrong", pool, at));
         }
@@ -210,7 +257,11 @@ impl Builder for ZcashBuilder {
         let env = Envelope::at(self.network, tip as u32);
         let to = self.fvk.address_at(0u32, Scope::External);
         let ovk = Some(self.fvk.to_ovk(Scope::External));
-        let payment = Payment { to: Destination::Shielded(to), zatoshi: ANCHOR_ZATOSHI, memo: anchor_memo_field(anchor) };
+        let payment = Payment {
+            to: Destination::Shielded(to),
+            zatoshi: ANCHOR_ZATOSHI,
+            memo: anchor_memo_field(anchor),
+        };
 
         // Ironwood only: a shielded output is what an anchor is, and under
         // NU6.3 the Orchard pool cannot pay one. With a single note the
@@ -221,7 +272,11 @@ impl Builder for ZcashBuilder {
         let version = env.bundle_version_for(pool).map_err(|e| e.to_string())?;
         self.tree_matches_node(pool)?;
         let mut payout = {
-            let store = self.notes.of(pool).lock().map_err(|_| "note store poisoned".to_string())?;
+            let store = self
+                .notes
+                .of(pool)
+                .lock()
+                .map_err(|_| "note store poisoned".to_string())?;
             match payout::build(&store, &self.fvk, ovk.clone(), &[payment], to, version, rand::rngs::OsRng) {
                 Ok(p) => p,
                 Err(payout::PayoutError::Notes(_)) => {
@@ -231,24 +286,59 @@ impl Builder for ZcashBuilder {
             }
         };
         let sighash = payout.sighash(&env).map_err(|e| e.to_string())?;
-        payout.finalize_io(sighash, rand::rngs::OsRng).map_err(|e| e.to_string())?;
-        if self.proving.as_ref().map(|(v, _)| *v != version).unwrap_or(true) {
-            eprintln!("zynzapd: building the Orchard proving key ({:?}) for anchors", version.circuit_version());
+        payout
+            .finalize_io(sighash, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
+        if self
+            .proving
+            .as_ref()
+            .map(|(v, _)| *v != version)
+            .unwrap_or(true)
+        {
+            eprintln!(
+                "zynzapd: building the Orchard proving key ({:?}) for anchors",
+                version.circuit_version()
+            );
             self.proving = Some((version, payout::proving_key(version)));
         }
-        payout.prove(&self.proving.as_ref().unwrap().1, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+        payout
+            .prove(&self.proving.as_ref().unwrap().1, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
         let group = *self.public.verifying_key();
         match &self.custodians {
             Some(addrs) => {
                 let mut q = zyn_custody::custody_net::RemoteQuorum::new(addrs.clone());
-                payout::sign_all_with(&mut payout, sighash, &mut q, self.threshold, &group, &self.public, now_secs()).map_err(|e| e.to_string())?;
+                payout::sign_all_with(
+                    &mut payout,
+                    sighash,
+                    &mut q,
+                    self.threshold,
+                    &group,
+                    &self.public,
+                    now_secs(),
+                )
+                .map_err(|e| e.to_string())?;
             }
             None => {
-                let quorum: Vec<(ZcashId, &ZcashKeys)> = self.shares.iter().take(usize::from(self.threshold)).map(|(i, k)| (*i, k)).collect();
-                payout::sign_all(&mut payout, sighash, &quorum, self.threshold, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+                let quorum: Vec<(ZcashId, &ZcashKeys)> = self
+                    .shares
+                    .iter()
+                    .take(usize::from(self.threshold))
+                    .map(|(i, k)| (*i, k))
+                    .collect();
+                payout::sign_all(
+                    &mut payout,
+                    sighash,
+                    &quorum,
+                    self.threshold,
+                    rand::rngs::OsRng,
+                )
+                .map_err(|e| e.to_string())?;
             }
         }
-        let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).map_err(|e| e.to_string())?;
+        let sealed = payout
+            .extract(sighash, &env, rand::rngs::OsRng)
+            .map_err(|e| e.to_string())?;
         Ok(Built {
             txid: sealed.txid_hex(),
             bytes: sealed.bytes.clone(),
@@ -299,9 +389,27 @@ pub struct AnchorSettler<C: Chain, B: Builder> {
 }
 
 impl<C: Chain, B: Builder> AnchorSettler<C, B> {
-    pub fn new(chain: C, builder: B, confirmations: u64, dir: &Path, chain_id: u32) -> Result<Self, String> {
+    pub fn new(
+        chain: C,
+        builder: B,
+        confirmations: u64,
+        dir: &Path,
+        chain_id: u32,
+    ) -> Result<Self, String> {
         let ledger = Ledger::load_named(dir, chain_id, LEDGER_NAME)?;
-        Ok(AnchorSettler { chain, builder, ledger, dir: dir.to_path_buf(), chain_id, confirmations, warned_unfunded: false, signing: false, awaiting: None, lineage_lost: Vec::new(), reanchor_pending: Vec::new() })
+        Ok(AnchorSettler {
+            chain,
+            builder,
+            ledger,
+            dir: dir.to_path_buf(),
+            chain_id,
+            confirmations,
+            warned_unfunded: false,
+            signing: false,
+            awaiting: None,
+            lineage_lost: Vec::new(),
+            reanchor_pending: Vec::new(),
+        })
     }
 
     /// Release deposits only after a signer set endorses each anchor. The set
@@ -360,7 +468,8 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
     }
 
     fn save(&self) -> Result<(), String> {
-        self.ledger.save_named(&self.dir, self.chain_id, LEDGER_NAME)
+        self.ledger
+            .save_named(&self.dir, self.chain_id, LEDGER_NAME)
     }
 
     /// One pass: follow up what is in flight, then propose and send the next.
@@ -439,7 +548,10 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
             match self.reanchor(&anchor) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("zynzapd: re-anchor of epoch {} waiting: {}", anchor.checkpoint.epoch, e);
+                    eprintln!(
+                        "zynzapd: re-anchor of epoch {} waiting: {}",
+                        anchor.checkpoint.epoch, e
+                    );
                     self.reanchor_pending.push(anchor);
                 }
             }
@@ -524,14 +636,27 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
                                 hex(&anchor_id)
                             ));
                         }
-                        Err(e) => return Err(format!("the node refused to confirm anchor {}: {:?}", hex(&anchor_id), e)),
+                        Err(e) => {
+                            return Err(format!(
+                                "the node refused to confirm anchor {}: {:?}",
+                                hex(&anchor_id),
+                                e
+                            ))
+                        }
                     };
                     drop(n);
-                    let (pool, spent) = (self.ledger.entries[i].pool, self.ledger.entries[i].spent.clone());
+                    let (pool, spent) = (
+                        self.ledger.entries[i].pool,
+                        self.ledger.entries[i].spent.clone(),
+                    );
                     self.builder.settled(pool, &spent);
                     self.ledger.entries[i].status = Status::Confirmed;
                     changed = true;
-                    confirmed = Some(Confirmed { anchor, txid: id, height: tip.saturating_sub(depth).saturating_add(1) });
+                    confirmed = Some(Confirmed {
+                        anchor,
+                        txid: id,
+                        height: tip.saturating_sub(depth).saturating_add(1),
+                    });
                     break;
                 }
                 Some(_) => {} // seen, not deep enough
@@ -541,7 +666,11 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
                     changed = true;
                 }
                 None => {
-                    let hex_tx: String = self.ledger.entries[i].transaction.iter().map(|b| format!("{:02x}", b)).collect();
+                    let hex_tx: String = self.ledger.entries[i]
+                        .transaction
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect();
                     if let Err(e) = self.chain.broadcast(&hex_tx) {
                         if is_consensus_refusal(&e) {
                             // The chain will never take it: its witness names
@@ -578,13 +707,18 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
             let mut n = node.lock().map_err(|_| "node lock poisoned".to_string())?;
             n.proposed().copied().or_else(|| n.propose_anchor(now))
         };
-        let Some(anchor) = proposal else { return Ok(()) };
+        let Some(anchor) = proposal else {
+            return Ok(());
+        };
         let tip = self.chain.tip()?;
         let built = match self.builder.build(&anchor, tip) {
             Ok(b) => b,
             Err(e) => {
                 if !self.warned_unfunded {
-                    eprintln!("zynzapd: cannot send anchor for epoch {}: {}; waiting", anchor.checkpoint.epoch, e);
+                    eprintln!(
+                        "zynzapd: cannot send anchor for epoch {}: {}; waiting",
+                        anchor.checkpoint.epoch, e
+                    );
                     self.warned_unfunded = true;
                 }
                 return Err(e);
@@ -629,7 +763,10 @@ fn hex(b: &[u8]) -> String {
 /// node that is briefly behind.
 pub fn is_consensus_refusal(e: &str) -> bool {
     let e = e.to_ascii_lowercase();
-    e.contains("consensus validation") || e.contains("unknown ironwood anchor") || e.contains("unknown orchard anchor") || e.contains("\"code\":-25")
+    e.contains("consensus validation")
+        || e.contains("unknown ironwood anchor")
+        || e.contains("unknown orchard anchor")
+        || e.contains("\"code\":-25")
 }
 
 #[cfg(test)]
@@ -700,9 +837,20 @@ mod tests {
     }
 
     fn node() -> Shared {
-        let policy = EpochPolicy { intents_per_epoch: 10, epochs_per_anchor: 1, max_seconds_per_epoch: 0, max_seconds_per_anchor: 0 };
+        let policy = EpochPolicy {
+            intents_per_epoch: 10,
+            epochs_per_anchor: 1,
+            max_seconds_per_epoch: 0,
+            max_seconds_per_anchor: 0,
+        };
         let mut s = SwapState::new(1, Params::v1());
-        s.tokens.get_mut(&XZEC).unwrap().vault.as_mut().unwrap().observed = Fixed::whole(1_000_000);
+        s.tokens
+            .get_mut(&XZEC)
+            .unwrap()
+            .vault
+            .as_mut()
+            .unwrap()
+            .observed = Fixed::whole(1_000_000);
         let mut n = Node::resume(s, policy, Economics::flat(1), 0).with_manual_anchoring();
         for _ in 0..10 {
             let d = Intent::next_deposit(n.state(), [1u8; 32], XZEC, Fixed::whole(1), [0u8; 32]);
@@ -760,9 +908,17 @@ mod tests {
         assert_eq!(s.poll_once(&shared, 0).unwrap(), None);
         let entry = s.in_flight().expect("one anchor in flight").clone();
         assert_eq!(chain.0.borrow().broadcasts.len(), 1);
-        let proposed = shared.lock().unwrap().proposed().copied().expect("the node holds the proposal");
+        let proposed = shared
+            .lock()
+            .unwrap()
+            .proposed()
+            .copied()
+            .expect("the node holds the proposal");
         assert_eq!(entry.nonce, proposed.id());
-        assert!(shared.lock().unwrap().publishable().is_none(), "nothing is published before depth");
+        assert!(
+            shared.lock().unwrap().publishable().is_none(),
+            "nothing is published before depth"
+        );
 
         // In the mempool: nothing changes, nothing is rebuilt.
         chain.0.borrow_mut().depth.insert(entry.id.clone(), 0);
@@ -779,7 +935,10 @@ mod tests {
         assert_eq!(s.ledger().entries[0].status, Status::Confirmed);
         assert_eq!(s.builder.settled, vec![(ValuePool::Ironwood, vec![7, 9])]);
         let n = shared.lock().unwrap();
-        assert_eq!(n.publishable().unwrap().root, proposed.checkpoint.state_root);
+        assert_eq!(
+            n.publishable().unwrap().root,
+            proposed.checkpoint.state_root
+        );
         assert_eq!(n.ledger().head_root(), proposed.checkpoint.state_root);
         assert!(n.proposed().is_none());
         drop(n);
@@ -815,8 +974,16 @@ mod tests {
         // A reorg deeper than the confirmation depth removes it.
         chain.0.borrow_mut().depth.remove(&tx);
         let gone = s.reorged().unwrap();
-        assert_eq!(gone.len(), 1, "a settled anchor that left the chain must be noticed");
-        assert_eq!(gone[0], s.ledger().entries[0].nonce, "identified by anchor, not by transaction");
+        assert_eq!(
+            gone.len(),
+            1,
+            "a settled anchor that left the chain must be noticed"
+        );
+        assert_eq!(
+            gone[0],
+            s.ledger().entries[0].nonce,
+            "identified by anchor, not by transaction"
+        );
     }
 
     /// A repair asked for before the vault has a spendable note must wait, not
@@ -843,7 +1010,10 @@ mod tests {
         let sent = chain.0.borrow().broadcasts.len();
         s.poll_once(&shared, 2).unwrap();
         assert_eq!(s.reanchors_pending(), 0, "done once it lands");
-        assert!(chain.0.borrow().broadcasts.len() > sent, "and it was actually sent");
+        assert!(
+            chain.0.borrow().broadcasts.len() > sent,
+            "and it was actually sent"
+        );
     }
 
     /// Asking twice for the same anchor must not send it twice.
@@ -880,15 +1050,29 @@ mod tests {
         chain.0.borrow_mut().tip = 120;
         s.poll_once(&shared, 1).unwrap();
         assert_eq!(s.ledger().entries[0].status, Status::Confirmed);
-        assert!(s.lineage_health().is_ok(), "healthy while the anchor is on the chain");
+        assert!(
+            s.lineage_health().is_ok(),
+            "healthy while the anchor is on the chain"
+        );
         let sent = chain.0.borrow().broadcasts.len();
 
         // The settled anchor is reorged away.
         chain.0.borrow_mut().depth.remove(&tx);
         let err = s.poll_once(&shared, 2).unwrap_err();
-        assert!(err.contains("refusing to anchor"), "stalls rather than extends: {}", err);
-        assert_eq!(chain.0.borrow().broadcasts.len(), sent, "nothing new was sent");
-        assert!(s.lineage_health().is_err(), "and it is reported, not just refused");
+        assert!(
+            err.contains("refusing to anchor"),
+            "stalls rather than extends: {}",
+            err
+        );
+        assert_eq!(
+            chain.0.borrow().broadcasts.len(),
+            sent,
+            "nothing new was sent"
+        );
+        assert!(
+            s.lineage_health().is_err(),
+            "and it is reported, not just refused"
+        );
     }
 
     /// Healing: the anchor goes back on the chain under a new transaction, and
@@ -910,8 +1094,16 @@ mod tests {
         let txid = s.reanchor(&anchor).unwrap();
 
         assert_ne!(txid, first.id, "a new transaction");
-        assert_eq!(chain.0.borrow().broadcasts.len(), sent_before + 1, "it was sent");
-        assert_eq!(s.ledger().entries.len(), entries_before, "no new ledger entry to confirm again");
+        assert_eq!(
+            chain.0.borrow().broadcasts.len(),
+            sent_before + 1,
+            "it was sent"
+        );
+        assert_eq!(
+            s.ledger().entries.len(),
+            entries_before,
+            "no new ledger entry to confirm again"
+        );
     }
 
     #[test]
@@ -942,9 +1134,16 @@ mod tests {
         let shared = node();
         s.poll_once(&shared, 0).unwrap();
         let first = s.in_flight().unwrap().clone();
-        chain.0.borrow_mut().refuse = Some("node refused: transaction did not pass consensus validation: unknown Ironwood anchor".into());
+        chain.0.borrow_mut().refuse = Some(
+            "node refused: transaction did not pass consensus validation: unknown Ironwood anchor"
+                .into(),
+        );
         assert_eq!(s.poll_once(&shared, 1).unwrap(), None);
-        assert_eq!(s.ledger().entries[0].status, Status::Abandoned, "a consensus refusal is final");
+        assert_eq!(
+            s.ledger().entries[0].status,
+            Status::Abandoned,
+            "a consensus refusal is final"
+        );
         chain.0.borrow_mut().refuse = None;
         s.poll_once(&shared, 2).unwrap();
         let second = s.in_flight().expect("rebuilt").clone();
@@ -961,11 +1160,24 @@ mod tests {
         let dir = tmp("unfunded");
         let chain = FakeChain::default();
         chain.0.borrow_mut().tip = 100;
-        let mut s = AnchorSettler::new(chain.clone(), FakeBuilder { fail: true, ..Default::default() }, 10, &dir, 1).unwrap();
+        let mut s = AnchorSettler::new(
+            chain.clone(),
+            FakeBuilder {
+                fail: true,
+                ..Default::default()
+            },
+            10,
+            &dir,
+            1,
+        )
+        .unwrap();
         let shared = node();
         assert!(s.poll_once(&shared, 0).is_err());
         assert!(s.in_flight().is_none());
-        assert!(shared.lock().unwrap().proposed().is_some(), "the proposal stays for the next pass");
+        assert!(
+            shared.lock().unwrap().proposed().is_some(),
+            "the proposal stays for the next pass"
+        );
         s.builder.fail = false;
         assert_eq!(s.poll_once(&shared, 1).unwrap(), None);
         assert!(s.in_flight().is_some());
@@ -983,12 +1195,16 @@ mod tests {
         // "Restart": a node with the same pending epochs but no proposal.
         let restarted = {
             let n = shared.lock().unwrap();
-            let mut fresh = Node::resume(n.state().clone(), *n.policy(), Economics::flat(1), 0).with_manual_anchoring();
+            let mut fresh = Node::resume(n.state().clone(), *n.policy(), Economics::flat(1), 0)
+                .with_manual_anchoring();
             fresh.restore_pending(n.pending().to_vec());
             Arc::new(Mutex::new(fresh))
         };
         chain.0.borrow_mut().depth.insert(entry.id.clone(), 10);
-        let c = s.poll_once(&restarted, 5).unwrap().expect("confirmed after restart");
+        let c = s
+            .poll_once(&restarted, 5)
+            .unwrap()
+            .expect("confirmed after restart");
         assert_eq!(c.anchor.id(), entry.nonce);
         assert_eq!(restarted.lock().unwrap().ledger().len(), 1);
     }

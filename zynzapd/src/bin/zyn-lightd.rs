@@ -35,44 +35,93 @@ fn main() {
     let network = match env("ZYN_LIGHTD_NETWORK", "testnet").as_str() {
         "mainnet" => Network::MainNetwork,
         "testnet" => Network::TestNetwork,
-        other => { eprintln!("zyn-lightd: ZYN_LIGHTD_NETWORK={} is not mainnet or testnet", other); std::process::exit(2) }
+        other => {
+            eprintln!(
+                "zyn-lightd: ZYN_LIGHTD_NETWORK={} is not mainnet or testnet",
+                other
+            );
+            std::process::exit(2)
+        }
     };
     let zebra_addr = env("ZYN_LIGHTD_ZEBRA", "127.0.0.1:18232");
-    let (host, port) = zebra_addr.rsplit_once(':').unwrap_or((&zebra_addr, "18232"));
-    let znet = if network == Network::MainNetwork { ZebraNet::Mainnet } else { ZebraNet::Testnet };
-    let zebra = Zebra::connect_reader(host, port.parse().unwrap_or(18232), None, znet).expect("zebra client");
-    let tip = zebra.block_count().unwrap_or_else(|e| { eprintln!("zyn-lightd: Zebra at {} not answering: {}", zebra_addr, e); std::process::exit(1) });
+    let (host, port) = zebra_addr
+        .rsplit_once(':')
+        .unwrap_or((&zebra_addr, "18232"));
+    let znet = if network == Network::MainNetwork {
+        ZebraNet::Mainnet
+    } else {
+        ZebraNet::Testnet
+    };
+    let zebra = Zebra::connect_reader(host, port.parse().unwrap_or(18232), None, znet)
+        .expect("zebra client");
+    let tip = zebra.block_count().unwrap_or_else(|e| {
+        eprintln!("zyn-lightd: Zebra at {} not answering: {}", zebra_addr, e);
+        std::process::exit(1)
+    });
     let data = PathBuf::from(env("ZYN_LIGHTD_DATA", "./lightd-data"));
     std::fs::create_dir_all(&data).expect("data dir");
     let listen = env("ZYN_LIGHTD_LISTEN", "127.0.0.1:8098");
     let listener = TcpListener::bind(&listen).expect("bind");
-    eprintln!("zyn-lightd: {:?} via {} at height {}, serving on {}", network, zebra_addr, tip, listen);
-    let server = Arc::new(Server { zebra, network, data });
+    eprintln!(
+        "zyn-lightd: {:?} via {} at height {}, serving on {}",
+        network, zebra_addr, tip, listen
+    );
+    let server = Arc::new(Server {
+        zebra,
+        network,
+        data,
+    });
     for stream in listener.incoming().flatten() {
         let s = Arc::clone(&server);
-        std::thread::spawn(move || { let _ = handle(&s, stream); });
+        std::thread::spawn(move || {
+            let _ = handle(&s, stream);
+        });
     }
 }
 
 fn handle(s: &Server, mut stream: TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
     loop {
-        let req = match read_frame(&mut stream, 4 << 20) { Ok(r) => r, Err(_) => return Ok(()) };
+        let req = match read_frame(&mut stream, 4 << 20) {
+            Ok(r) => r,
+            Err(_) => return Ok(()),
+        };
         let reply = dispatch(s, &req);
         write_frame(&mut stream, &reply)?;
     }
 }
 
 fn dispatch(s: &Server, req: &[u8]) -> Vec<u8> {
-    let request = match Request::decode(req) { Ok(r) => r, Err(e) => return reply::err(e) };
+    let request = match Request::decode(req) {
+        Ok(r) => r,
+        Err(e) => return reply::err(e),
+    };
     match request {
         Request::Info => {
-            let ci = match s.zebra.chain_info() { Ok(c) => c, Err(e) => return reply::err(&e.to_string()) };
-            let branch = u32::from(BranchId::for_height(&s.network, BlockHeight::from_u32(ci.blocks as u32)));
-            reply::info(Info { network: if s.network == Network::MainNetwork { NET_MAINNET } else { NET_TESTNET }, tip: ci.blocks, branch, estimated: ci.estimated })
+            let ci = match s.zebra.chain_info() {
+                Ok(c) => c,
+                Err(e) => return reply::err(&e.to_string()),
+            };
+            let branch = u32::from(BranchId::for_height(
+                &s.network,
+                BlockHeight::from_u32(ci.blocks as u32),
+            ));
+            reply::info(Info {
+                network: if s.network == Network::MainNetwork {
+                    NET_MAINNET
+                } else {
+                    NET_TESTNET
+                },
+                tip: ci.blocks,
+                branch,
+                estimated: ci.estimated,
+            })
         }
         Request::Blocks { from, count } => {
-            let tip = match s.zebra.block_count() { Ok(t) => t, Err(e) => return reply::err(&e.to_string()) };
+            let tip = match s.zebra.block_count() {
+                Ok(t) => t,
+                Err(e) => return reply::err(&e.to_string()),
+            };
             let to = (from + count as u64 - 1).min(tip);
             let mut blocks = Vec::new();
             for h in from..=to {
@@ -80,17 +129,21 @@ fn dispatch(s: &Server, req: &[u8]) -> Vec<u8> {
                     Ok(b) => blocks.push(b),
                     // A short reply is fine; a wrong one is not. The
                     // client asks again from where it stopped.
-                    Err(e) => { if blocks.is_empty() { return reply::err(&e) } else { break } }
+                    Err(e) => {
+                        if blocks.is_empty() {
+                            return reply::err(&e);
+                        } else {
+                            break;
+                        }
+                    }
                 }
             }
             reply::blocks(&blocks)
         }
-        Request::Utxos(address) => {
-            match s.zebra.address_utxos(&address) {
-                Ok(list) => reply::utxos(&list),
-                Err(e) => reply::err(&e.to_string()),
-            }
-        }
+        Request::Utxos(address) => match s.zebra.address_utxos(&address) {
+            Ok(list) => reply::utxos(&list),
+            Err(e) => reply::err(&e.to_string()),
+        },
         Request::Transaction(txid) => {
             let mut disp = txid;
             disp.reverse();
@@ -110,8 +163,15 @@ fn dispatch(s: &Server, req: &[u8]) -> Vec<u8> {
         Request::TreeState { height, pool } => {
             // Below the pool's activation there is no tree to seed from;
             // say so rather than relaying whatever the node answers.
-            let upgrade = match pool { orchard::ValuePool::Orchard => NetworkUpgrade::Nu5, orchard::ValuePool::Ironwood => NetworkUpgrade::Nu6_3 };
-            let active = s.network.activation_height(upgrade).map(u32::from).unwrap_or(u32::MAX) as u64;
+            let upgrade = match pool {
+                orchard::ValuePool::Orchard => NetworkUpgrade::Nu5,
+                orchard::ValuePool::Ironwood => NetworkUpgrade::Nu6_3,
+            };
+            let active = s
+                .network
+                .activation_height(upgrade)
+                .map(u32::from)
+                .unwrap_or(u32::MAX) as u64;
             if height < active {
                 return reply::no_tree();
             }
@@ -135,11 +195,15 @@ fn compact_block(s: &Server, height: u64) -> Result<Vec<u8>, String> {
         }
     }
     let raw = s.zebra.raw_block(height).map_err(|e| e.to_string())?;
-    let block = Block::read(&raw[..], &s.network).map_err(|e| format!("block {} does not parse: {}", height, e))?;
+    let block = Block::read(&raw[..], &s.network)
+        .map_err(|e| format!("block {} does not parse: {}", height, e))?;
     let bytes = CompactBlock::from_block(height, &block).encode();
     let _ = std::fs::create_dir_all(&dir);
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+    if std::fs::write(&tmp, &bytes)
+        .and_then(|_| std::fs::rename(&tmp, &path))
+        .is_err()
+    {
         eprintln!("zyn-lightd: could not cache block {}", height);
     }
     Ok(bytes)

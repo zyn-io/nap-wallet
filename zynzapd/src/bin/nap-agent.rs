@@ -23,31 +23,52 @@ fn usage() -> ! {
 
 fn raw(value: Option<&String>, name: &str) -> String {
     let value = value.unwrap_or_else(|| fail(&format!("missing {name}"), 2));
-    value.parse::<i128>().unwrap_or_else(|_| fail(&format!("invalid {name}"), 2));
+    value
+        .parse::<i128>()
+        .unwrap_or_else(|_| fail(&format!("invalid {name}"), 2));
     value.clone()
 }
 
 fn id(value: Option<&String>, name: &str) -> String {
     let value = value.unwrap_or_else(|| fail(&format!("missing {name}"), 2));
-    if value.is_empty() || value.len() > 128 || !value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')) {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    {
         fail(&format!("invalid {name}"), 2);
     }
     value.clone()
 }
 
 fn number(value: Option<&String>, name: &str) -> u32 {
-    value.unwrap_or_else(|| fail(&format!("missing {name}"), 2)).parse().unwrap_or_else(|_| fail(&format!("invalid {name}"), 2))
+    value
+        .unwrap_or_else(|| fail(&format!("missing {name}"), 2))
+        .parse()
+        .unwrap_or_else(|_| fail(&format!("invalid {name}"), 2))
 }
 
 fn path(value: Option<&String>) -> Vec<u32> {
     let value = value.unwrap_or_else(|| fail("missing pool path", 2));
-    let pools: Vec<u32> = value.split(',').map(|v| v.parse()).collect::<Result<_, _>>().unwrap_or_else(|_| fail("invalid pool path", 2));
-    if pools.is_empty() || pools.len() > 8 { fail("pool path must contain 1-8 pool ids", 2); }
+    let pools: Vec<u32> = value
+        .split(',')
+        .map(|v| v.parse())
+        .collect::<Result<_, _>>()
+        .unwrap_or_else(|_| fail("invalid pool path", 2));
+    if pools.is_empty() || pools.len() > 8 {
+        fail("pool path must contain 1-8 pool ids", 2);
+    }
     pools
 }
 
 fn swap(args: &[String]) -> Value {
-    if args.len() != 4 { fail("swap fields: <asset-in> <pool-id,...> <amount-in-raw> <min-out-raw>", 2); }
+    if args.len() != 4 {
+        fail(
+            "swap fields: <asset-in> <pool-id,...> <amount-in-raw> <min-out-raw>",
+            2,
+        );
+    }
     json!({
         "asset_in": number(args.first(), "asset-in"),
         "path": path(args.get(1)),
@@ -66,13 +87,21 @@ impl Service {
         let url = format!("{}/api/agent/{}", self.base.trim_end_matches('/'), route);
         let response = match method {
             "GET" => ureq::get(&url).set("X-Nap-Agent-Token", &self.token).call(),
-            "POST" => ureq::post(&url).set("X-Nap-Agent-Token", &self.token).send_json(body),
+            "POST" => ureq::post(&url)
+                .set("X-Nap-Agent-Token", &self.token)
+                .send_json(body),
             _ => unreachable!(),
         };
         match response {
-            Ok(r) => r.into_json().map_err(|e| format!("invalid service response: {e}")),
+            Ok(r) => r
+                .into_json()
+                .map_err(|e| format!("invalid service response: {e}")),
             Err(ureq::Error::Status(_, r)) => {
-                let message = r.into_json::<Value>().ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string)).unwrap_or_else(|| "agent service refused the call".into());
+                let message = r
+                    .into_json::<Value>()
+                    .ok()
+                    .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| "agent service refused the call".into());
                 Err(message)
             }
             Err(e) => Err(format!("agent service unavailable: {e}")),
@@ -83,10 +112,13 @@ impl Service {
 fn main() {
     let service = Service {
         base: std::env::var("NAP_AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8978".into()),
-        token: std::env::var("ZYN_AGENT_TOKEN").unwrap_or_else(|_| fail("ZYN_AGENT_TOKEN is required", 4)),
+        token: std::env::var("ZYN_AGENT_TOKEN")
+            .unwrap_or_else(|_| fail("ZYN_AGENT_TOKEN is required", 4)),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(command) = args.first().map(String::as_str) else { usage() };
+    let Some(command) = args.first().map(String::as_str) else {
+        usage()
+    };
     let result = match command {
         "status" | "portfolio" | "assets" | "pools" | "offers" | "anchors" | "mandates" if args.len() == 1 => service.call("GET", command, json!({})),
         "quote" if args.len() == 4 => service.call("POST", "quote", json!({ "asset_in": number(args.get(1), "asset-in"), "path": path(args.get(2)), "amount_in_raw": raw(args.get(3), "amount-in-raw") })),

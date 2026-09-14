@@ -31,7 +31,9 @@ fn main() {
         blocks += 1;
         for id in ids {
             txs += 1;
-            let Ok(raw) = zebra.raw_transaction_bytes(&id) else { continue };
+            let Ok(raw) = zebra.raw_transaction_bytes(&id) else {
+                continue;
+            };
             match keys.scan_transaction(&raw, [0u8; 32], h) {
                 Ok(d) => {
                     parsed += 1;

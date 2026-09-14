@@ -134,7 +134,10 @@ impl MicrochainVm for TallyVm {
                 };
                 *entry = next;
                 self.total = self.total.saturating_add(*n);
-                vec![Note::Added { who: *who, total: next }]
+                vec![Note::Added {
+                    who: *who,
+                    total: next,
+                }]
             }
             Tick::Clear { who } => match self.tallies.remove(who) {
                 Some(n) => {
@@ -165,7 +168,11 @@ impl MicrochainVm for TallyVm {
     }
 
     fn sections(&self) -> Vec<Hash> {
-        vec![self.header_leaf(), merkle_root(&self.account_leaves()), self.total_leaf()]
+        vec![
+            self.header_leaf(),
+            merkle_root(&self.account_leaves()),
+            self.total_leaf(),
+        ]
     }
 
     fn seal_intent() -> Tick {
@@ -218,8 +225,13 @@ impl MicrochainVm for TallyVm {
 
     fn decode_intent(d: &mut Decoder) -> Option<Tick> {
         Some(match d.u8().ok()? {
-            1 => Tick::Add { who: d.account().ok()?, n: d.u64().ok()? },
-            2 => Tick::Clear { who: d.account().ok()? },
+            1 => Tick::Add {
+                who: d.account().ok()?,
+                n: d.u64().ok()?,
+            },
+            2 => Tick::Clear {
+                who: d.account().ok()?,
+            },
             3 => Tick::Seal,
             _ => return None,
         })
@@ -252,7 +264,9 @@ impl MicrochainVm for TallyVm {
             chain_id: d.u32().ok()?,
             epoch: d.u64().ok()?,
             seq: d.u64().ok()?,
-            limits: Limits { max_step: d.u64().ok()? },
+            limits: Limits {
+                max_step: d.u64().ok()?,
+            },
             parent_root: d.hash().ok()?,
             intent_acc: d.hash().ok()?,
             epoch_intents: d.u64().ok()?,
@@ -307,7 +321,6 @@ impl MicrochainVm for TallyVm {
 
 // ---------------------------------------------------------------------------
 
-
 pub fn acct(n: u8) -> AccountId {
     [n; 32]
 }
@@ -316,7 +329,13 @@ pub fn seeded() -> TallyVm {
     let mut vm = TallyVm::genesis(77, Limits { max_step: 1_000 });
     for n in 1..=5u8 {
         let at = vm.seq();
-        vm.apply(at + 1, &Tick::Add { who: acct(n), n: 10 * n as u64 });
+        vm.apply(
+            at + 1,
+            &Tick::Add {
+                who: acct(n),
+                n: 10 * n as u64,
+            },
+        );
     }
     vm
 }

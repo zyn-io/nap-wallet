@@ -34,16 +34,16 @@ const BRICOLAGE_GROTESQUE: &[u8] = include_bytes!("../../ui/fonts/BricolageGrote
 const IBM_PLEX_SANS: &[u8] = include_bytes!("../../ui/fonts/IBMPlexSans.ttf");
 const IBM_PLEX_MONO_REGULAR: &[u8] = include_bytes!("../../ui/fonts/IBMPlexMono-Regular.ttf");
 const IBM_PLEX_MONO_MEDIUM: &[u8] = include_bytes!("../../ui/fonts/IBMPlexMono-Medium.ttf");
-/// ZynZap, the AMM front, served from the same origin so it can call the
-/// API directly (hosted elsewhere it goes through the extension provider).
-const ZYNZAP: &str = include_str!("../../../apps/zynzap/index.html");
 
 fn env(k: &str, d: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| d.to_string())
 }
 
 fn main() {
-    let dir = PathBuf::from(env("ZYN_APP_DIR", &format!("{}/.zyn/app", env("HOME", "."))));
+    let dir = PathBuf::from(env(
+        "ZYN_APP_DIR",
+        &format!("{}/.zyn/app", env("HOME", ".")),
+    ));
     let cfg = Config::in_dir(dir);
     let listen = env("ZYN_APP_LISTEN", "127.0.0.1:8977");
     let agent_listen = env("ZYN_AGENT_LISTEN", "127.0.0.1:8978");
@@ -52,10 +52,20 @@ fn main() {
         eprintln!("nap-wallet: ZYN_AGENT_TOKEN must contain at least 32 characters");
         std::process::exit(1);
     }
-    let app = Arc::new(App::open(&cfg).unwrap_or_else(|e| { eprintln!("nap-wallet: {}", e); std::process::exit(1) }));
+    let app = Arc::new(App::open(&cfg).unwrap_or_else(|e| {
+        eprintln!("nap-wallet: {}", e);
+        std::process::exit(1)
+    }));
     {
         let w = app.wallet.lock().unwrap();
-        eprintln!("nap-wallet: {} wallet {}  account {}  node {} chain {}", network_name(w.network()), w.address(), hex(&account(&app.key)), cfg.node, cfg.chain);
+        eprintln!(
+            "nap-wallet: {} wallet {}  account {}  node {} chain {}",
+            network_name(w.network()),
+            w.address(),
+            hex(&account(&app.key())),
+            cfg.node,
+            cfg.chain
+        );
     }
     let agent_listener = TcpListener::bind(&agent_listen).expect("bind agent API");
     let agent_app = Arc::clone(&app);
@@ -65,7 +75,9 @@ fn main() {
         for stream in agent_listener.incoming().flatten() {
             let app = Arc::clone(&agent_app);
             let secret = Arc::clone(&agent_secret_for_thread);
-            std::thread::spawn(move || { let _ = handle(&app, stream, true, &secret); });
+            std::thread::spawn(move || {
+                let _ = handle(&app, stream, true, &secret);
+            });
         }
     });
     let listener = TcpListener::bind(&listen).expect("bind wallet UI");
@@ -74,7 +86,9 @@ fn main() {
     for stream in listener.incoming().flatten() {
         let app = Arc::clone(&app);
         let secret = Arc::clone(&agent_secret);
-        std::thread::spawn(move || { let _ = handle(&app, stream, false, &secret); });
+        std::thread::spawn(move || {
+            let _ = handle(&app, stream, false, &secret);
+        });
     }
 }
 
@@ -88,15 +102,22 @@ struct Request {
 }
 
 fn read_request(s: &mut TcpStream) -> Option<Request> {
-    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).ok();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .ok();
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
     let head_end = loop {
         let n = s.read(&mut tmp).ok()?;
-        if n == 0 { return None }
+        if n == 0 {
+            return None;
+        }
         buf.extend_from_slice(&tmp[..n]);
-        if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break p + 4 }
-        if buf.len() > 64 << 10 { return None }
+        if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break p + 4;
+        }
+        if buf.len() > 64 << 10 {
+            return None;
+        }
     };
     let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
     let mut lines = head.lines();
@@ -108,7 +129,9 @@ fn read_request(s: &mut TcpStream) -> Option<Request> {
     let mut origin = None;
     let mut agent_token = None;
     for l in lines {
-        let Some((k, v)) = l.split_once(':') else { continue };
+        let Some((k, v)) = l.split_once(':') else {
+            continue;
+        };
         match k.trim().to_ascii_lowercase().as_str() {
             "content-length" => len = v.trim().parse().unwrap_or(0),
             "x-zyn" => same_origin = true,
@@ -117,35 +140,57 @@ fn read_request(s: &mut TcpStream) -> Option<Request> {
             _ => {}
         }
     }
-    if len > 1 << 20 { return None }
+    if len > 1 << 20 {
+        return None;
+    }
     let mut body = buf[head_end..].to_vec();
     while body.len() < len {
         let n = s.read(&mut tmp).ok()?;
-        if n == 0 { break }
+        if n == 0 {
+            break;
+        }
         body.extend_from_slice(&tmp[..n]);
     }
     body.truncate(len);
-    Some(Request { method, path, body, same_origin, origin, agent_token })
+    Some(Request {
+        method,
+        path,
+        body,
+        same_origin,
+        origin,
+        agent_token,
+    })
 }
 
 /// An extension is the only cross-origin caller we answer.
 fn cors(origin: &Option<String>) -> String {
     match origin {
-        Some(o) if o.starts_with("chrome-extension://") || o.starts_with("moz-extension://") || o.starts_with("safari-web-extension://") => {
+        Some(o)
+            if o.starts_with("chrome-extension://")
+                || o.starts_with("moz-extension://")
+                || o.starts_with("safari-web-extension://") =>
+        {
             format!("Access-Control-Allow-Origin: {}\r\nAccess-Control-Allow-Headers: Content-Type, X-Zyn\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nVary: Origin\r\n", o)
         }
         _ => String::new(),
     }
 }
 
-fn respond(s: &mut TcpStream, status: &str, ctype: &str, extra: &str, body: &[u8]) -> std::io::Result<()> {
+fn respond(
+    s: &mut TcpStream,
+    status: &str,
+    ctype: &str,
+    extra: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
     write!(s, "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\n{}Connection: close\r\n\r\n", status, ctype, body.len(), extra)?;
     s.write_all(body)?;
     s.flush()
 }
 
 fn agent_route_allowed(method: &str, path: &str) -> bool {
-    matches!((method, path),
+    matches!(
+        (method, path),
         ("GET", "/api/agent/status")
             | ("GET", "/api/agent/portfolio")
             | ("GET", "/api/agent/assets")
@@ -174,14 +219,33 @@ fn static_asset(path: &str) -> Option<(&'static str, &'static [u8])> {
     }
 }
 
-fn handle(app: &Arc<App>, mut s: TcpStream, agent_only: bool, agent_secret: &str) -> std::io::Result<()> {
-    let Some(req) = read_request(&mut s) else { return Ok(()) };
+fn handle(
+    app: &Arc<App>,
+    mut s: TcpStream,
+    agent_only: bool,
+    agent_secret: &str,
+) -> std::io::Result<()> {
+    let Some(req) = read_request(&mut s) else {
+        return Ok(());
+    };
     if agent_only {
         if !agent_route_allowed(&req.method, &req.path) {
-            return respond(&mut s, "404 Not Found", "text/plain", "", b"not available on the agent service");
+            return respond(
+                &mut s,
+                "404 Not Found",
+                "text/plain",
+                "",
+                b"not available on the agent service",
+            );
         }
         if req.agent_token.as_deref() != Some(agent_secret) {
-            return respond(&mut s, "403 Forbidden", "text/plain", "", b"invalid agent token");
+            return respond(
+                &mut s,
+                "403 Forbidden",
+                "text/plain",
+                "",
+                b"invalid agent token",
+            );
         }
     }
     let cors = cors(&req.origin);
@@ -189,15 +253,18 @@ fn handle(app: &Arc<App>, mut s: TcpStream, agent_only: bool, agent_secret: &str
         return respond(&mut s, "204 No Content", "text/plain", &cors, b"");
     }
     if req.method == "GET" && req.path == "/" {
-        return respond(&mut s, "200 OK", "text/html; charset=utf-8", "", UI.as_bytes());
+        return respond(
+            &mut s,
+            "200 OK",
+            "text/html; charset=utf-8",
+            "",
+            UI.as_bytes(),
+        );
     }
     if req.method == "GET" {
         if let Some((content_type, body)) = static_asset(&req.path) {
             return respond(&mut s, "200 OK", content_type, "", body);
         }
-    }
-    if req.method == "GET" && (req.path == "/zynzap" || req.path == "/zynzap/") {
-        return respond(&mut s, "200 OK", "text/html; charset=utf-8", "", ZYNZAP.as_bytes());
     }
     if !req.path.starts_with("/api/") {
         return respond(&mut s, "404 Not Found", "text/plain", "", b"not here");
@@ -205,14 +272,33 @@ fn handle(app: &Arc<App>, mut s: TcpStream, agent_only: bool, agent_secret: &str
     if !agent_only && req.method == "POST" && !req.same_origin {
         // Only the page (or an extension, after a preflight) can set a
         // custom header; a cross-site form cannot.
-        return respond(&mut s, "403 Forbidden", "text/plain", &cors, b"missing X-Zyn header");
+        return respond(
+            &mut s,
+            "403 Forbidden",
+            "text/plain",
+            &cors,
+            b"missing X-Zyn header",
+        );
     }
-    let input: Value = if req.body.is_empty() { json!({}) } else { serde_json::from_slice(&req.body).unwrap_or(json!({})) };
+    let input: Value = if req.body.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_slice(&req.body).unwrap_or(json!({}))
+    };
     let (status, body) = match api(app, &req.method, &req.path, &input) {
         Ok(v) => ("200 OK", v),
-        Err(e) => { app.note(format!("error: {}", e)); ("400 Bad Request", json!({ "error": e })) }
+        Err(e) => {
+            app.note(format!("error: {}", e));
+            ("400 Bad Request", json!({ "error": e }))
+        }
     };
-    respond(&mut s, status, "application/json", &cors, body.to_string().as_bytes())
+    respond(
+        &mut s,
+        status,
+        "application/json",
+        &cors,
+        body.to_string().as_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -223,6 +309,7 @@ mod agent_boundary_tests {
     fn the_agent_listener_has_no_wallet_or_mandate_creation_escape_hatch() {
         for (method, path) in [
             ("POST", "/api/export"),
+            ("POST", "/api/export-file"),
             ("POST", "/api/import"),
             ("POST", "/api/send"),
             ("POST", "/api/withdraw"),
@@ -232,7 +319,10 @@ mod agent_boundary_tests {
             ("POST", "/api/agent/mandates"),
             ("POST", "/api/raw"),
         ] {
-            assert!(!agent_route_allowed(method, path), "{method} {path} escaped the allowlist");
+            assert!(
+                !agent_route_allowed(method, path),
+                "{method} {path} escaped the allowlist"
+            );
         }
         assert!(agent_route_allowed("POST", "/api/agent/execute-swap"));
         assert!(agent_route_allowed("POST", "/api/agent/pause"));
@@ -242,6 +332,10 @@ mod agent_boundary_tests {
     fn the_wallet_ui_loads_fonts_only_from_its_own_origin() {
         assert!(!UI.contains("fonts.googleapis.com"));
         assert!(!UI.contains("fonts.gstatic.com"));
+        assert!(
+            UI.contains("fonts/BricolageGrotesque.ttf"),
+            "the wallet page must reference its own bundled font"
+        );
         for path in [
             "/fonts/BricolageGrotesque.ttf",
             "/fonts/IBMPlexSans.ttf",

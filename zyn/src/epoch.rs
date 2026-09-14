@@ -63,7 +63,8 @@ impl EpochPolicy {
     /// A ceiling, not a promise: the failsafes seal and anchor early on a quiet
     /// market, so the realised ratio is whatever [`Compression`] measured.
     pub fn target_ratio(&self) -> u64 {
-        self.intents_per_epoch.saturating_mul(self.epochs_per_anchor)
+        self.intents_per_epoch
+            .saturating_mul(self.epochs_per_anchor)
     }
 
     pub fn validate(&self) -> Result<(), &'static str> {
@@ -167,7 +168,10 @@ impl Economics {
     /// A plausible Zcash cost: both a settlement and a direct trade are one
     /// ordinary transaction.
     pub fn flat(fee: Unit) -> Self {
-        Economics { anchor_fee: fee, direct_fee: fee }
+        Economics {
+            anchor_fee: fee,
+            direct_fee: fee,
+        }
     }
 
     /// Total L1 cost the chain has actually incurred.
@@ -304,15 +308,27 @@ mod tests {
 
     #[test]
     fn the_ratio_is_undefined_before_the_first_anchor() {
-        let c = Compression { actions: 500, epochs: 2, anchors: 0 };
-        assert_eq!(c.realised_ratio(), None, "a ratio over zero anchors is not infinity");
+        let c = Compression {
+            actions: 500,
+            epochs: 2,
+            anchors: 0,
+        };
+        assert_eq!(
+            c.realised_ratio(),
+            None,
+            "a ratio over zero anchors is not infinity"
+        );
         assert_eq!(c.transactions_saved(), 500);
     }
 
     /// The plan's headline: 25,000 actions into 15 Zcash transactions.
     #[test]
     fn the_compression_figure_is_the_one_the_plan_quotes() {
-        let c = Compression { actions: 25_000, epochs: 105, anchors: 15 };
+        let c = Compression {
+            actions: 25_000,
+            epochs: 105,
+            anchors: 15,
+        };
         assert_eq!(c.realised_ratio(), Some(1_666));
         assert_eq!(c.transactions_saved(), 24_985);
     }
@@ -321,7 +337,11 @@ mod tests {
     fn economics_price_the_compression() {
         // 1000 zatoshi per Zcash transaction.
         let e = Economics::flat(1_000);
-        let c = Compression { actions: 25_000, epochs: 105, anchors: 15 };
+        let c = Compression {
+            actions: 25_000,
+            epochs: 105,
+            anchors: 15,
+        };
         assert_eq!(e.spent(&c), 15_000);
         assert_eq!(e.counterfactual(&c), 25_000_000);
         assert_eq!(e.saved(&c), 24_985_000);
@@ -335,7 +355,11 @@ mod tests {
     fn cost_per_action_never_rounds_in_the_operators_favour() {
         let e = Economics::flat(1_000);
         // 3000 zatoshi spent over 7 actions is 428.57; a floor would say 428.
-        let c = Compression { actions: 7, epochs: 3, anchors: 3 };
+        let c = Compression {
+            actions: 7,
+            epochs: 3,
+            anchors: 3,
+        };
         assert_eq!(e.cost_per_action(&c), Some(429));
         assert_eq!(e.cost_per_action(&Compression::default()), None);
     }
@@ -355,7 +379,11 @@ mod tests {
     fn saturation_beats_overflow_on_the_counterfactual() {
         // A dashboard figure must not wrap into a negative-looking number.
         let e = Economics::flat(u64::MAX);
-        let c = Compression { actions: u64::MAX, epochs: 1, anchors: 1 };
+        let c = Compression {
+            actions: u64::MAX,
+            epochs: 1,
+            anchors: 1,
+        };
         assert_eq!(e.counterfactual(&c), u64::MAX);
         assert_eq!(e.saved(&c), 0);
     }

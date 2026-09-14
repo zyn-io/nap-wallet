@@ -76,8 +76,7 @@ fn node() -> Arc<Mutex<Node<SwapState>>> {
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let n: Node<SwapState> =
-        Node::new(3, Params::testnet(), policy, Economics::flat(10_000));
+    let n: Node<SwapState> = Node::new(3, Params::testnet(), policy, Economics::flat(10_000));
     Arc::new(Mutex::new(n))
 }
 
@@ -168,7 +167,10 @@ fn only_watched_addresses_are_credited() {
     let n = node.lock().unwrap();
     // The second output was 1 ZEC to a stranger. If it had been credited the
     // balance would be a thousand times larger.
-    assert_eq!(n.state().balance(&ACCOUNT, XZEC), Fixed::raw(100_000 * 10_000_000_000));
+    assert_eq!(
+        n.state().balance(&ACCOUNT, XZEC),
+        Fixed::raw(100_000 * 10_000_000_000)
+    );
     drop(n);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -184,8 +186,15 @@ fn a_second_scan_credits_nothing() {
 
     assert_eq!(b.poll_once(&node, 0).expect("first"), 1);
     let after_first = node.lock().unwrap().state().balance(&ACCOUNT, XZEC);
-    assert_eq!(b.poll_once(&node, 0).expect("second"), 0, "the deposit was credited twice");
-    assert_eq!(node.lock().unwrap().state().balance(&ACCOUNT, XZEC), after_first);
+    assert_eq!(
+        b.poll_once(&node, 0).expect("second"),
+        0,
+        "the deposit was credited twice"
+    );
+    assert_eq!(
+        node.lock().unwrap().state().balance(&ACCOUNT, XZEC),
+        after_first
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -223,6 +232,9 @@ fn a_deposit_without_enough_confirmations_waits() {
     let mut b = bridge(addr, &dir, &node);
 
     assert_eq!(b.poll_once(&node, 0).expect("poll"), 0);
-    assert_eq!(node.lock().unwrap().state().balance(&ACCOUNT, XZEC), Fixed::ZERO);
+    assert_eq!(
+        node.lock().unwrap().state().balance(&ACCOUNT, XZEC),
+        Fixed::ZERO
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

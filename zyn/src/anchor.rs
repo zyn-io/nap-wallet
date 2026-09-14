@@ -116,7 +116,12 @@ impl Anchor {
         if d.remaining() != 0 {
             return None;
         }
-        Some(Anchor { checkpoint, previous_root, epochs, actions })
+        Some(Anchor {
+            checkpoint,
+            previous_root,
+            epochs,
+            actions,
+        })
     }
 
     /// The commitment that goes on Zcash.
@@ -266,7 +271,10 @@ pub struct Certificate {
 
 impl Certificate {
     pub fn new(anchor: AnchorId) -> Self {
-        Certificate { anchor, signatures: Vec::new() }
+        Certificate {
+            anchor,
+            signatures: Vec::new(),
+        }
     }
 
     /// Canonical bytes: `anchor ‖ n ‖ (signer ‖ signature)*`, signers in order.
@@ -317,7 +325,8 @@ impl Certificate {
         let Ok(key) = VerifyingKey::from_bytes(signer) else {
             return false;
         };
-        key.verify_strict(&anchor, &Signature::from_bytes(signature)).is_ok()
+        key.verify_strict(&anchor, &Signature::from_bytes(signature))
+            .is_ok()
     }
 
     /// Distinct authorised signers whose signatures actually verify.
@@ -364,14 +373,21 @@ pub struct Ledger {
 
 impl Ledger {
     pub fn new(chain_id: u32) -> Self {
-        Ledger { chain_id, anchors: Vec::new(), certificates: Vec::new() }
+        Ledger {
+            chain_id,
+            anchors: Vec::new(),
+            certificates: Vec::new(),
+        }
     }
 
     /// Rebuild a ledger from what was persisted, re-running the lineage rules
     /// on every entry. Signatures are **not** re-verified here — the signer
     /// set may not be configured at load — which is why the certificates are
     /// kept: they can be checked later against whatever set is supplied.
-    pub fn restore(chain_id: u32, entries: Vec<(Anchor, Certificate)>) -> Result<Ledger, LineageError> {
+    pub fn restore(
+        chain_id: u32,
+        entries: Vec<(Anchor, Certificate)>,
+    ) -> Result<Ledger, LineageError> {
         let mut l = Ledger::new(chain_id);
         for (a, c) in entries {
             if c.anchor != a.id() {
@@ -406,7 +422,10 @@ impl Ledger {
 
     /// The root a new anchor must continue from.
     pub fn head_root(&self) -> Hash {
-        self.anchors.last().map(|a| a.checkpoint.state_root).unwrap_or([0u8; 32])
+        self.anchors
+            .last()
+            .map(|a| a.checkpoint.state_root)
+            .unwrap_or([0u8; 32])
     }
 
     /// Check an anchor against the lineage without accepting it.
@@ -550,7 +569,8 @@ mod tests {
         let mut c = Certificate::new(a.id());
         for i in 1..=n {
             let k = key(i);
-            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).unwrap();
+            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .unwrap();
         }
         c
     }
@@ -584,7 +604,11 @@ mod tests {
 
         let mut a = base;
         a.checkpoint.chain_id += 1;
-        assert_ne!(a.id(), id, "an anchor must not be replayable on another chain");
+        assert_ne!(
+            a.id(),
+            id,
+            "an anchor must not be replayable on another chain"
+        );
     }
 
     #[test]
@@ -612,17 +636,21 @@ mod tests {
     fn anchors_chain_through_the_roots_zcash_actually_saw() {
         let mut l = Ledger::new(1);
         assert_eq!(l.head_root(), [0u8; 32]);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
         assert_eq!(l.head_root(), [9u8; 32]);
-        l.accept_trusted_operator(anchor(14, 1_400, 9, 11, 700)).unwrap();
+        l.accept_trusted_operator(anchor(14, 1_400, 9, 11, 700))
+            .unwrap();
         assert_eq!(l.len(), 2);
-        l.verify_lineage().expect("a ledger it built itself must re-verify");
+        l.verify_lineage()
+            .expect("a ledger it built itself must re-verify");
     }
 
     #[test]
     fn an_anchor_that_does_not_continue_the_chain_is_refused() {
         let mut l = Ledger::new(1);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
         // Continues from a root Zcash never saw.
         assert_eq!(
             l.accept_trusted_operator(anchor(14, 1_400, 5, 11, 700)),
@@ -634,7 +662,8 @@ mod tests {
     #[test]
     fn a_second_history_at_the_same_height_is_a_fork() {
         let mut l = Ledger::new(1);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
         let mut sneaky = anchor(7, 900, 9, 12, 200);
         sneaky.previous_root = [9u8; 32];
         assert_eq!(l.accept_trusted_operator(sneaky), Err(LineageError::Fork));
@@ -647,7 +676,10 @@ mod tests {
         l.accept_trusted_operator(a).unwrap();
         let mut again = a;
         again.previous_root = [9u8; 32];
-        assert_eq!(l.accept_trusted_operator(again), Err(LineageError::EpochNotAdvancing));
+        assert_eq!(
+            l.accept_trusted_operator(again),
+            Err(LineageError::EpochNotAdvancing)
+        );
     }
 
     #[test]
@@ -664,33 +696,47 @@ mod tests {
     #[test]
     fn an_overstated_compression_claim_is_refused() {
         let mut l = Ledger::new(1);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
 
         // Claims 5,000 actions across a 700-sequence advance.
         let mut inflated = anchor(14, 1_400, 9, 11, 5_000);
         inflated.previous_root = [9u8; 32];
-        assert_eq!(l.accept_trusted_operator(inflated), Err(LineageError::ImpossibleCoverage));
+        assert_eq!(
+            l.accept_trusted_operator(inflated),
+            Err(LineageError::ImpossibleCoverage)
+        );
 
         // Claims more epochs than it advanced.
         let mut wide = anchor(8, 1_400, 9, 11, 700);
         wide.previous_root = [9u8; 32];
         wide.epochs = 50;
-        assert_eq!(l.accept_trusted_operator(wide), Err(LineageError::ImpossibleCoverage));
+        assert_eq!(
+            l.accept_trusted_operator(wide),
+            Err(LineageError::ImpossibleCoverage)
+        );
 
         // Claims nothing at all — an anchor that settles no history is a Zcash
         // fee spent on air.
         let mut empty = anchor(14, 1_400, 9, 11, 0);
         empty.previous_root = [9u8; 32];
-        assert_eq!(l.accept_trusted_operator(empty), Err(LineageError::ImpossibleCoverage));
+        assert_eq!(
+            l.accept_trusted_operator(empty),
+            Err(LineageError::ImpossibleCoverage)
+        );
     }
 
     #[test]
     fn a_sequence_that_does_not_advance_covers_no_history() {
         let mut l = Ledger::new(1);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
         let mut stuck = anchor(14, 700, 9, 11, 1);
         stuck.previous_root = [9u8; 32];
-        assert_eq!(l.accept_trusted_operator(stuck), Err(LineageError::SequenceNotAdvancing));
+        assert_eq!(
+            l.accept_trusted_operator(stuck),
+            Err(LineageError::SequenceNotAdvancing)
+        );
     }
 
     #[test]
@@ -698,13 +744,17 @@ mod tests {
         let mut l = Ledger::new(1);
         let mut a = anchor(7, 100, 0, 9, 500);
         a.previous_root = [0u8; 32];
-        assert_eq!(l.accept_trusted_operator(a), Err(LineageError::ImpossibleCoverage));
+        assert_eq!(
+            l.accept_trusted_operator(a),
+            Err(LineageError::ImpossibleCoverage)
+        );
     }
 
     #[test]
     fn totals_are_the_attested_compression() {
         let mut l = Ledger::new(1);
-        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700)).unwrap();
+        l.accept_trusted_operator(anchor(7, 700, 0, 9, 700))
+            .unwrap();
         let mut b = anchor(14, 1_400, 9, 11, 700);
         b.previous_root = [9u8; 32];
         l.accept_trusted_operator(b).unwrap();
@@ -719,15 +769,27 @@ mod tests {
     #[test]
     fn a_signer_set_must_be_a_real_majority() {
         assert!(SignerSet::new(signers(10), 7).is_ok());
-        assert!(SignerSet::new(signers(10), 0).is_err(), "zero threshold accepted");
-        assert!(SignerSet::new(signers(10), 11).is_err(), "threshold above the set accepted");
+        assert!(
+            SignerSet::new(signers(10), 0).is_err(),
+            "zero threshold accepted"
+        );
+        assert!(
+            SignerSet::new(signers(10), 11).is_err(),
+            "threshold above the set accepted"
+        );
         // 5 of 10 lets two disjoint quorums endorse conflicting anchors.
-        assert!(SignerSet::new(signers(10), 5).is_err(), "a non-majority threshold accepted");
+        assert!(
+            SignerSet::new(signers(10), 5).is_err(),
+            "a non-majority threshold accepted"
+        );
         assert!(SignerSet::new(signers(10), 6).is_ok());
         // Duplicates would let one signer count twice toward the threshold.
         let mut dupes = signers(9);
         dupes.push(key(1).verifying_key().to_bytes());
-        assert!(SignerSet::new(dupes, 7).is_err(), "a duplicated signer was accepted");
+        assert!(
+            SignerSet::new(dupes, 7).is_err(),
+            "a duplicated signer was accepted"
+        );
     }
 
     #[test]
@@ -745,7 +807,8 @@ mod tests {
         assert!(l.is_empty());
 
         let enough = certify(&a, &set, 7);
-        l.accept(a, &enough, &set).expect("seven of ten must settle");
+        l.accept(a, &enough, &set)
+            .expect("seven of ten must settle");
         assert_eq!(l.len(), 1);
     }
 
@@ -755,9 +818,11 @@ mod tests {
         let a = anchor(7, 700, 0, 9, 700);
         let mut c = Certificate::new(a.id());
         let k = key(1);
-        c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).unwrap();
+        c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+            .unwrap();
         assert!(
-            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).is_err(),
+            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .is_err(),
             "a signer endorsed twice"
         );
         assert_eq!(c.weight(&set), 1);
@@ -770,16 +835,21 @@ mod tests {
         let mut c = Certificate::new(a.id());
         for i in 1..=6u8 {
             let k = key(i);
-            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).unwrap();
+            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .unwrap();
         }
         // Four outsiders sign honestly; they pad the count but not the weight.
         for i in 100..=103u8 {
             let k = key(i);
-            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()).unwrap();
+            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .unwrap();
         }
         assert_eq!(c.signatures.len(), 10);
         assert_eq!(c.weight(&set), 6);
-        assert_eq!(c.verify(&a, &set), Err(LineageError::InsufficientSignatures));
+        assert_eq!(
+            c.verify(&a, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
     }
 
     /// The hole this closed: a certificate used to be a list of signer ids with
@@ -793,14 +863,26 @@ mod tests {
         // Every authorised signer named, every signature garbage.
         let mut forged = Certificate::new(a.id());
         for i in 1..=10u8 {
-            forged.add(key(i).verifying_key().to_bytes(), [0xAA; 64]).unwrap();
+            forged
+                .add(key(i).verifying_key().to_bytes(), [0xAA; 64])
+                .unwrap();
         }
         assert_eq!(forged.signatures.len(), 10);
-        assert_eq!(forged.weight(&set), 0, "unverified signatures counted toward a threshold");
-        assert_eq!(forged.verify(&a, &set), Err(LineageError::InsufficientSignatures));
+        assert_eq!(
+            forged.weight(&set),
+            0,
+            "unverified signatures counted toward a threshold"
+        );
+        assert_eq!(
+            forged.verify(&a, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
 
         let mut l = Ledger::new(1);
-        assert_eq!(l.accept(a, &forged, &set), Err(LineageError::InsufficientSignatures));
+        assert_eq!(
+            l.accept(a, &forged, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
         assert!(l.is_empty());
     }
 
@@ -816,10 +898,18 @@ mod tests {
         let mut lifted = Certificate::new(b.id());
         for i in 1..=10u8 {
             // Signed over `a`, presented for `b`.
-            lifted.add(key(i).verifying_key().to_bytes(), key(i).sign(&a.id()).to_bytes()).unwrap();
+            lifted
+                .add(
+                    key(i).verifying_key().to_bytes(),
+                    key(i).sign(&a.id()).to_bytes(),
+                )
+                .unwrap();
         }
         assert_eq!(lifted.weight(&set), 0, "a lifted signature counted");
-        assert_eq!(lifted.verify(&b, &set), Err(LineageError::InsufficientSignatures));
+        assert_eq!(
+            lifted.verify(&b, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
     }
 
     /// One tampered byte is enough.
@@ -831,7 +921,10 @@ mod tests {
         assert_eq!(c.weight(&set), 7);
         c.signatures[3].1[0] ^= 0x01;
         assert_eq!(c.weight(&set), 6, "a mangled signature still counted");
-        assert_eq!(c.verify(&a, &set), Err(LineageError::InsufficientSignatures));
+        assert_eq!(
+            c.verify(&a, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
     }
 
     #[test]
@@ -840,7 +933,11 @@ mod tests {
         let a = anchor(7, 700, 0, 9, 700);
         let b = anchor(7, 700, 0, 12, 700);
         let cert = certify(&a, &set, 7);
-        assert_eq!(cert.verify(&b, &set), Err(LineageError::Fork), "certificate was portable");
+        assert_eq!(
+            cert.verify(&b, &set),
+            Err(LineageError::Fork),
+            "certificate was portable"
+        );
     }
 
     /// Lineage is checked before signatures: a fully-signed anchor that does not
@@ -895,8 +992,12 @@ mod tests {
         l.accept_trusted_operator(a1).unwrap();
         l.accept_trusted_operator(a2).unwrap();
         assert_eq!(l.certificates().len(), 2);
-        let entries: Vec<(Anchor, Certificate)> =
-            l.anchors().iter().cloned().zip(l.certificates().iter().cloned()).collect();
+        let entries: Vec<(Anchor, Certificate)> = l
+            .anchors()
+            .iter()
+            .cloned()
+            .zip(l.certificates().iter().cloned())
+            .collect();
         let r = Ledger::restore(1, entries.clone()).unwrap();
         assert_eq!(r.head_root(), l.head_root());
         assert_eq!(r.len(), 2);
@@ -905,6 +1006,9 @@ mod tests {
         assert!(Ledger::restore(1, broken).is_err());
         let mut mismatched = entries;
         mismatched[1].1 = Certificate::new([9u8; 32]);
-        assert_eq!(Ledger::restore(1, mismatched).unwrap_err(), LineageError::CertificateMismatch);
+        assert_eq!(
+            Ledger::restore(1, mismatched).unwrap_err(),
+            LineageError::CertificateMismatch
+        );
     }
 }

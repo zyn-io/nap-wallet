@@ -94,7 +94,8 @@ impl ReplayIndex {
 
     pub fn load(dir: &Path, chain_id: u32) -> Result<ReplayIndex, String> {
         match std::fs::read(Self::path(dir, chain_id)) {
-            Ok(b) => ReplayIndex::decode(&b).ok_or_else(|| "replay index is corrupt; refusing to guess".to_string()),
+            Ok(b) => ReplayIndex::decode(&b)
+                .ok_or_else(|| "replay index is corrupt; refusing to guess".to_string()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ReplayIndex::default()),
             Err(e) => Err(format!("cannot read the replay index: {}", e)),
         }
@@ -122,7 +123,10 @@ mod tests {
         assert_eq!(r.len(), 1, "still valid in epoch 10");
         r.prune(11);
         assert!(r.is_empty(), "expired authorisations are forgotten");
-        assert!(r.fresh(k, 20), "and the VM's envelope would refuse it anyway");
+        assert!(
+            r.fresh(k, 20),
+            "and the VM's envelope would refuse it anyway"
+        );
     }
 
     #[test]

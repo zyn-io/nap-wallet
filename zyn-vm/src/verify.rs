@@ -22,16 +22,18 @@
 //! changing it waits out `exit_timeout_epochs`, so a key theft costs trading
 //! control rather than the balance. See `zyn_bridge::vault::Binding`.
 
-use alloc::vec::Vec;
-use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
 use crate::auth::{
     account_of, delegation_bytes_as, signed_bytes_as, AuthError, Authorization, Scheme, Signed,
 };
 use crate::commit::Encoder;
-use crate::read::Decoder;
-use crate::session::{session_payload, AssetLimit, Delegation, DelegationPolicyError, MAX_POLICY_ITEMS};
 use crate::eip712::keccak;
+use crate::read::Decoder;
+use crate::session::{
+    session_payload, AssetLimit, Delegation, DelegationPolicyError, MAX_POLICY_ITEMS,
+};
 use crate::spec::{AccountId, MicrochainVm};
+use alloc::vec::Vec;
+use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
 
 /// A signature together with whatever the scheme needs to identify its signer.
 ///
@@ -146,7 +148,8 @@ fn verify_ed25519(key: &[u8; 32], signature: &[u8; 64], msg: &[u8]) -> Result<()
     let sig = ed25519_dalek::Signature::from_bytes(signature);
     // `verify_strict` rejects small-order and torsion-component keys, so a
     // single signature cannot be valid under two different public keys.
-    vk.verify_strict(msg, &sig).map_err(|_| VerifyError::BadSignature)
+    vk.verify_strict(msg, &sig)
+        .map_err(|_| VerifyError::BadSignature)
 }
 
 /// The 20-byte Ethereum address that produced this signature over this digest.
@@ -187,7 +190,10 @@ mod tests {
     use crate::eip712::{Domain, TypedData, Value};
 
     fn hex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     /// The EIP-712 specification's own worked example, signed by its own
@@ -209,15 +215,23 @@ mod tests {
                 .field("wallet", Value::Address(hex(wallet).try_into().unwrap()))
         };
         let mail = TypedData::new("Mail")
-            .field("from", Value::Struct(person("Cow", "CD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826")))
-            .field("to", Value::Struct(person("Bob", "bBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB")))
+            .field(
+                "from",
+                Value::Struct(person("Cow", "CD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826")),
+            )
+            .field(
+                "to",
+                Value::Struct(person("Bob", "bBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB")),
+            )
             .field("contents", Value::String("Hello, Bob!".into()));
         let domain = Domain {
             name: "Ether Mail".into(),
             version: "1".into(),
             chain_id: Some(1),
             verifying_contract: Some(
-                hex("CcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC").try_into().unwrap(),
+                hex("CcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC")
+                    .try_into()
+                    .unwrap(),
             ),
             salt: None,
         };
@@ -238,7 +252,6 @@ mod tests {
         );
     }
 }
-
 
 /// An intent signed by a session key, with the certificate that authorised it.
 ///
@@ -304,7 +317,10 @@ pub fn authorize_delegated<V: MicrochainVm>(
             else {
                 return Err(VerifyError::BadSignature);
             };
-            account_of(Scheme::Secp256k1Eip712, &recover_address(&digest, signature)?)
+            account_of(
+                Scheme::Secp256k1Eip712,
+                &recover_address(&digest, signature)?,
+            )
         }
     };
     if signer != d.delegation.account {
@@ -562,31 +578,43 @@ fn decode_credential(d: &mut Decoder) -> Result<Credential, CommittedError> {
 
 fn encode_delegation_policy(e: &mut Encoder, delegation: &Delegation) {
     e.u8(delegation.allowed_assets.len() as u8);
-    for asset in &delegation.allowed_assets { e.u32(*asset); }
+    for asset in &delegation.allowed_assets {
+        e.bytes(asset);
+    }
     e.u8(delegation.allowed_pools.len() as u8);
-    for pool in &delegation.allowed_pools { e.u32(*pool); }
+    for pool in &delegation.allowed_pools {
+        e.bytes(pool);
+    }
     e.u8(delegation.max_per_action.len() as u8);
-    for limit in &delegation.max_per_action { e.u32(limit.asset).fixed(limit.amount); }
+    for limit in &delegation.max_per_action {
+        e.bytes(&limit.asset).fixed(limit.amount);
+    }
     e.u16(delegation.max_slippage_bps)
         .u64(delegation.valid_from_epoch)
         .bytes(&delegation.salt);
 }
 
-fn decode_ids(d: &mut Decoder) -> Result<Vec<u32>, CommittedError> {
+fn decode_ids(d: &mut Decoder) -> Result<Vec<[u8; 32]>, CommittedError> {
     let n = d.u8().map_err(|_| CommittedError::Malformed)? as usize;
-    if n > MAX_POLICY_ITEMS { return Err(CommittedError::Malformed); }
+    if n > MAX_POLICY_ITEMS {
+        return Err(CommittedError::Malformed);
+    }
     let mut out = Vec::with_capacity(n);
-    for _ in 0..n { out.push(d.u32().map_err(|_| CommittedError::Malformed)?); }
+    for _ in 0..n {
+        out.push(d.array::<32>().map_err(|_| CommittedError::Malformed)?);
+    }
     Ok(out)
 }
 
 fn decode_limits(d: &mut Decoder) -> Result<Vec<AssetLimit>, CommittedError> {
     let n = d.u8().map_err(|_| CommittedError::Malformed)? as usize;
-    if n > MAX_POLICY_ITEMS { return Err(CommittedError::Malformed); }
+    if n > MAX_POLICY_ITEMS {
+        return Err(CommittedError::Malformed);
+    }
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(AssetLimit {
-            asset: d.u32().map_err(|_| CommittedError::Malformed)?,
+            asset: d.array::<32>().map_err(|_| CommittedError::Malformed)?,
             amount: d.fixed().map_err(|_| CommittedError::Malformed)?,
         });
     }
@@ -652,7 +680,8 @@ pub fn decode_authorized<V: MicrochainVm>(
     state: &V,
 ) -> Result<Authorized<V::Intent>, CommittedError> {
     let mut d = Decoder::new(bytes);
-    if d.take_bytes(COMMITTED_MAGIC.len()).map_err(|_| CommittedError::Malformed)?
+    if d.take_bytes(COMMITTED_MAGIC.len())
+        .map_err(|_| CommittedError::Malformed)?
         != COMMITTED_MAGIC
     {
         return Err(CommittedError::Malformed);
@@ -718,9 +747,7 @@ pub fn decode_authorized<V: MicrochainVm>(
 /// Read the application intent from a committed record without making an
 /// authorization decision. Use only after [`decode_authorized`] has already
 /// succeeded for the same record, such as indexing a verified journal.
-pub fn decode_committed_intent<V: MicrochainVm>(
-    bytes: &[u8],
-) -> Result<V::Intent, CommittedError> {
+pub fn decode_committed_intent<V: MicrochainVm>(bytes: &[u8]) -> Result<V::Intent, CommittedError> {
     let mut d = Decoder::new(bytes);
     if d.take_bytes(COMMITTED_MAGIC.len())
         .map_err(|_| CommittedError::Malformed)?
@@ -747,7 +774,8 @@ pub fn decode_committed_intent<V: MicrochainVm>(
             let _ = decode_ids(&mut d)?;
             let _ = decode_ids(&mut d)?;
             let _ = decode_limits(&mut d)?;
-            d.take_bytes(2 + 8 + 32 + 8).map_err(|_| CommittedError::Malformed)?;
+            d.take_bytes(2 + 8 + 32 + 8)
+                .map_err(|_| CommittedError::Malformed)?;
             let _ = decode_credential(&mut d)?;
             d.take_bytes(64).map_err(|_| CommittedError::Malformed)?;
         }
@@ -819,7 +847,9 @@ impl Pending {
 /// order on a different machine, which is **S1** broken by an optimisation.
 #[cfg(feature = "std")]
 pub fn resolve_batch(pending: &[Pending]) -> Vec<Result<AccountId, VerifyError>> {
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
 
     // Below this, the threads cost more than the work. Measured against a
     // ~115 µs unit of work and a ~20 µs spawn, the crossover is a handful.
@@ -868,20 +898,27 @@ mod batch_tests {
         let key = k.verifying_key().to_bytes();
         let p = Pending {
             signed: Signed::Message(msg.to_vec()),
-            credential: Credential::Ed25519 { key, signature: k.sign(msg).to_bytes() },
+            credential: Credential::Ed25519 {
+                key,
+                signature: k.sign(msg).to_bytes(),
+            },
         };
         (p, account_of(Scheme::Ed25519, &key))
     }
 
     #[test]
     fn a_batch_agrees_with_one_at_a_time() {
-        let items: Vec<(Pending, AccountId)> =
-            (1..=40u8).map(|n| ed(n, format!("intent {}", n).as_bytes())).collect();
+        let items: Vec<(Pending, AccountId)> = (1..=40u8)
+            .map(|n| ed(n, format!("intent {}", n).as_bytes()))
+            .collect();
         let pending: Vec<Pending> = items.iter().map(|(p, _)| p.clone()).collect();
 
         let batched = resolve_batch(&pending);
         let one_at_a_time: Vec<_> = pending.iter().map(Pending::resolve).collect();
-        assert_eq!(batched, one_at_a_time, "parallel verification disagreed with serial");
+        assert_eq!(
+            batched, one_at_a_time,
+            "parallel verification disagreed with serial"
+        );
         for (i, (_, who)) in items.iter().enumerate() {
             assert_eq!(batched[i], Ok(*who));
         }
@@ -904,8 +941,7 @@ mod batch_tests {
     /// fails.
     #[test]
     fn a_single_bad_signature_fails_alone() {
-        let mut pending: Vec<Pending> =
-            (1..=20u8).map(|n| ed(n, b"payload").0).collect();
+        let mut pending: Vec<Pending> = (1..=20u8).map(|n| ed(n, b"payload").0).collect();
         // Corrupt exactly one.
         if let Credential::Ed25519 { signature, .. } = &mut pending[7].credential {
             signature[0] ^= 0xFF;
@@ -923,8 +959,7 @@ mod batch_tests {
     #[test]
     fn a_small_batch_still_works() {
         for n in 0..5usize {
-            let pending: Vec<Pending> =
-                (1..=n as u8).map(|k| ed(k, b"x").0).collect();
+            let pending: Vec<Pending> = (1..=n as u8).map(|k| ed(k, b"x").0).collect();
             assert_eq!(resolve_batch(&pending).len(), n);
         }
     }
@@ -933,9 +968,16 @@ mod batch_tests {
     fn a_mismatched_credential_is_refused_not_guessed() {
         let p = Pending {
             signed: Signed::Prehash([0u8; 32]),
-            credential: Credential::Ed25519 { key: [1u8; 32], signature: [0u8; 64] },
+            credential: Credential::Ed25519 {
+                key: [1u8; 32],
+                signature: [0u8; 64],
+            },
         };
         assert_eq!(p.resolve(), Err(VerifyError::BadSignature));
-        let _ = Authorization { chain_id: 1, vm_id: [0u8; 32], valid_until_epoch: 0 };
+        let _ = Authorization {
+            chain_id: 1,
+            vm_id: [0u8; 32],
+            valid_until_epoch: 0,
+        };
     }
 }

@@ -15,9 +15,9 @@
 //! wallet asked for, never which addresses it holds. Same trade lightwalletd
 //! makes; stated rather than assumed.
 
+use orchard::keys::PreparedIncomingViewingKey;
 use orchard::note::{ExtractedNoteCommitment, Nullifier};
 use orchard::note_encryption::{CompactAction, IronwoodDomain, OrchardDomain};
-use orchard::keys::PreparedIncomingViewingKey;
 use orchard::ValuePool;
 use zcash_note_encryption::{try_compact_note_decryption, EphemeralKeyBytes};
 use zcash_primitives::block::Block;
@@ -35,8 +35,15 @@ pub struct CompactOutput {
 impl CompactOutput {
     pub fn to_action(&self) -> Option<CompactAction> {
         let nf = Option::<Nullifier>::from(Nullifier::from_bytes(&self.nullifier))?;
-        let cmx = Option::<ExtractedNoteCommitment>::from(ExtractedNoteCommitment::from_bytes(&self.cmx))?;
-        Some(CompactAction::from_parts(nf, cmx, EphemeralKeyBytes(self.epk), self.ciphertext))
+        let cmx = Option::<ExtractedNoteCommitment>::from(ExtractedNoteCommitment::from_bytes(
+            &self.cmx,
+        ))?;
+        Some(CompactAction::from_parts(
+            nf,
+            cmx,
+            EphemeralKeyBytes(self.epk),
+            self.ciphertext,
+        ))
     }
 }
 
@@ -57,13 +64,20 @@ pub struct CompactBlock {
     pub txs: Vec<CompactTx>,
 }
 
-fn outputs<A: orchard::bundle::Authorization>(b: &orchard::Bundle<A, zcash_protocol::value::ZatBalance>) -> Vec<CompactOutput> {
+fn outputs<A: orchard::bundle::Authorization>(
+    b: &orchard::Bundle<A, zcash_protocol::value::ZatBalance>,
+) -> Vec<CompactOutput> {
     b.actions()
         .iter()
         .map(|a| {
             let mut ciphertext = [0u8; 52];
             ciphertext.copy_from_slice(&a.encrypted_note().enc_ciphertext[..52]);
-            CompactOutput { nullifier: a.nullifier().to_bytes(), cmx: a.cmx().to_bytes(), epk: a.encrypted_note().epk_bytes, ciphertext }
+            CompactOutput {
+                nullifier: a.nullifier().to_bytes(),
+                cmx: a.cmx().to_bytes(),
+                epk: a.encrypted_note().epk_bytes,
+                ciphertext,
+            }
         })
         .collect()
 }
@@ -90,7 +104,11 @@ impl CompactBlock {
             .map(|(i, tx)| CompactTx::from_transaction(i as u32, tx))
             .filter(|t| !t.orchard.is_empty() || !t.ironwood.is_empty())
             .collect();
-        CompactBlock { height, hash: block.header().hash().0, txs }
+        CompactBlock {
+            height,
+            hash: block.header().hash().0,
+            txs,
+        }
     }
 
     // --- a fixed binary form, so a cache file and a wire frame are the same bytes ---
@@ -119,8 +137,14 @@ impl CompactBlock {
 
     pub fn decode(b: &[u8]) -> Option<CompactBlock> {
         let mut p = 0usize;
-        let mut take = |n: usize| -> Option<&[u8]> { let s = b.get(p..p + n)?; p += n; Some(s) };
-        if take(6)? != b"ZYNCB1" { return None; }
+        let mut take = |n: usize| -> Option<&[u8]> {
+            let s = b.get(p..p + n)?;
+            p += n;
+            Some(s)
+        };
+        if take(6)? != b"ZYNCB1" {
+            return None;
+        }
         let height = u64::from_le_bytes(take(8)?.try_into().ok()?);
         let hash: [u8; 32] = take(32)?.try_into().ok()?;
         let n = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
@@ -141,9 +165,16 @@ impl CompactBlock {
                 }
             }
             let [orchard, ironwood] = lists;
-            txs.push(CompactTx { index, txid, orchard, ironwood });
+            txs.push(CompactTx {
+                index,
+                txid,
+                orchard,
+                ironwood,
+            });
         }
-        if p != b.len() { return None; }
+        if p != b.len() {
+            return None;
+        }
         Some(CompactBlock { height, hash, txs })
     }
 }
@@ -164,15 +195,35 @@ pub struct Hit {
 pub fn scan(block: &CompactBlock, ivk: &PreparedIncomingViewingKey) -> Vec<Hit> {
     let mut hits = Vec::new();
     for t in &block.txs {
-        for (pool, list) in [(ValuePool::Orchard, &t.orchard), (ValuePool::Ironwood, &t.ironwood)] {
+        for (pool, list) in [
+            (ValuePool::Orchard, &t.orchard),
+            (ValuePool::Ironwood, &t.ironwood),
+        ] {
             for (i, out) in list.iter().enumerate() {
                 let Some(act) = out.to_action() else { continue };
                 let value = match pool {
-                    ValuePool::Orchard => try_compact_note_decryption(&OrchardDomain::for_compact_action(&act), ivk, &act).map(|(n, _)| n.value().inner()),
-                    ValuePool::Ironwood => try_compact_note_decryption(&IronwoodDomain::for_compact_action(&act), ivk, &act).map(|(n, _)| n.value().inner()),
+                    ValuePool::Orchard => try_compact_note_decryption(
+                        &OrchardDomain::for_compact_action(&act),
+                        ivk,
+                        &act,
+                    )
+                    .map(|(n, _)| n.value().inner()),
+                    ValuePool::Ironwood => try_compact_note_decryption(
+                        &IronwoodDomain::for_compact_action(&act),
+                        ivk,
+                        &act,
+                    )
+                    .map(|(n, _)| n.value().inner()),
                 };
                 if let Some(value) = value {
-                    hits.push(Hit { tx_index: t.index, txid: t.txid, pool, action: i, cmx: out.cmx, value });
+                    hits.push(Hit {
+                        tx_index: t.index,
+                        txid: t.txid,
+                        pool,
+                        action: i,
+                        cmx: out.cmx,
+                        value,
+                    });
                 }
             }
         }

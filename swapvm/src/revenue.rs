@@ -42,8 +42,10 @@ impl Revenue {
             if let Receipt::Swapped { hops, .. } = r {
                 self.swaps = self.swaps.saturating_add(1);
                 for h in hops {
-                    self.fees_charged =
-                        self.fees_charged.add(h.fee).unwrap_or(Fixed::raw(i128::MAX));
+                    self.fees_charged = self
+                        .fees_charged
+                        .add(h.fee)
+                        .unwrap_or(Fixed::raw(i128::MAX));
                     self.protocol_share = self
                         .protocol_share
                         .add(h.protocol_fee)
@@ -68,18 +70,22 @@ mod tests {
     fn swap(fee: i64, protocol: i64) -> Receipt {
         Receipt::Swapped {
             account: [1u8; 32],
-            asset_in: 1,
-            asset_out: 2,
+            asset_in: crate::types::legacy_id(1),
+            asset_out: crate::types::legacy_id(2),
             amount_in: Fixed::whole(10),
             amount_out: Fixed::whole(9),
             hops: vec![Hop {
-                pool: 1,
-                asset_in: 1,
-                asset_out: 2,
+                pool: crate::types::legacy_id(1),
+                asset_in: crate::types::legacy_id(1),
+                asset_out: crate::types::legacy_id(2),
                 amount_in: Fixed::whole(10),
                 amount_out: Fixed::whole(9),
+                fee_asset: crate::types::legacy_id(1),
                 fee: Fixed::whole(fee),
+                pool_fee: Fixed::whole(fee - protocol),
                 protocol_fee: Fixed::whole(protocol),
+                creator_fee: Fixed::ZERO,
+                pol_fee: Fixed::ZERO,
             }],
         }
     }
@@ -100,28 +106,36 @@ mod tests {
         let mut r = Revenue::default();
         r.absorb(&[Receipt::Swapped {
             account: [1u8; 32],
-            asset_in: 2,
-            asset_out: 3,
+            asset_in: crate::types::legacy_id(2),
+            asset_out: crate::types::legacy_id(3),
             amount_in: Fixed::whole(10),
             amount_out: Fixed::whole(5),
             hops: vec![
                 Hop {
-                    pool: 1,
-                    asset_in: 2,
-                    asset_out: 1,
+                    pool: crate::types::legacy_id(1),
+                    asset_in: crate::types::legacy_id(2),
+                    asset_out: crate::types::legacy_id(1),
                     amount_in: Fixed::whole(10),
                     amount_out: Fixed::whole(7),
+                    fee_asset: crate::types::legacy_id(2),
                     fee: Fixed::whole(1),
+                    pool_fee: Fixed::whole(1),
                     protocol_fee: Fixed::ZERO,
+                    creator_fee: Fixed::ZERO,
+                    pol_fee: Fixed::ZERO,
                 },
                 Hop {
-                    pool: 2,
-                    asset_in: 1,
-                    asset_out: 3,
+                    pool: crate::types::legacy_id(2),
+                    asset_in: crate::types::legacy_id(1),
+                    asset_out: crate::types::legacy_id(3),
                     amount_in: Fixed::whole(7),
                     amount_out: Fixed::whole(5),
+                    fee_asset: crate::types::legacy_id(1),
                     fee: Fixed::whole(2),
+                    pool_fee: Fixed::whole(1),
                     protocol_fee: Fixed::whole(1),
+                    creator_fee: Fixed::ZERO,
+                    pol_fee: Fixed::ZERO,
                 },
             ],
         }]);
@@ -135,10 +149,12 @@ mod tests {
         let mut r = Revenue::default();
         r.absorb(&[
             Receipt::ParamsUpdated,
-            Receipt::Rejected { reason: crate::tx::Reject::InsufficientBalance },
+            Receipt::Rejected {
+                reason: crate::tx::Reject::InsufficientBalance,
+            },
             Receipt::DepositCredited {
                 account: [1u8; 32],
-                asset: 1,
+                asset: crate::types::legacy_id(1),
                 index: 1,
                 external_ref: [0u8; 32],
                 amount: Fixed::whole(5),

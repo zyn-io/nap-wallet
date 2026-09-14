@@ -22,12 +22,52 @@ use alloc::vec::Vec;
 
 use crate::fixed::Fixed;
 use crate::merkle::Hash;
-use crate::types::{AccountId, AssetId, ChainOrigin, CollectionId, OfferId, Params, PoolId, FIRST_USER_ASSET, ORIGIN_ZCASH, XZEC};
+use crate::types::{
+    AccountId, AssetId, ChainOrigin, CollectionId, OfferId, Params, PoolId, ORIGIN_ZCASH, XZEC,
+};
 
-/// A user-visible ticker. Fixed width because a variable-length field in a
-/// state commitment is a length field an encoder can disagree about.
-/// Right-padded with zero bytes.
-pub type Symbol = [u8; 8];
+/// Exact user-visible UTF-8 bytes used in address derivation.
+///
+/// The fixed backing keeps state copyable while `len` makes the consensus and
+/// wire representation length-delimited. No normalization is performed.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Symbol {
+    len: u8,
+    bytes: [u8; 32],
+}
+
+impl Symbol {
+    pub fn new(input: &[u8]) -> Option<Self> {
+        if input.is_empty() || input.len() > 32 || core::str::from_utf8(input).is_err() {
+            return None;
+        }
+        let text = core::str::from_utf8(input).ok()?;
+        for c in text.chars() {
+            let cp = c as u32;
+            let control = cp <= 0x1f || (0x7f..=0x9f).contains(&cp);
+            let whitespace = matches!(
+                cp,
+                0x20 | 0x85 | 0xa0 | 0x1680 | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000
+            ) || (0x2000..=0x200a).contains(&cp);
+            let bidi = matches!(cp, 0x061c | 0x200e | 0x200f)
+                || (0x202a..=0x202e).contains(&cp)
+                || (0x2066..=0x2069).contains(&cp);
+            if control || whitespace || bidi {
+                return None;
+            }
+        }
+        let mut bytes = [0u8; 32];
+        bytes[..input.len()].copy_from_slice(input);
+        Some(Self {
+            len: input.len() as u8,
+            bytes,
+        })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+}
 
 /// A resting offer: an asset committed at a price until taken, cancelled or
 /// expired.
@@ -161,12 +201,13 @@ impl Collection {
     }
 }
 
-/// Build a `Symbol` from a byte string, truncating past 8 bytes.
+/// Build a valid `Symbol` for static/internal call sites.
 pub fn symbol(s: &[u8]) -> Symbol {
-    let mut out = [0u8; 8];
-    let n = if s.len() > 8 { 8 } else { s.len() };
-    out[..n].copy_from_slice(&s[..n]);
-    out
+    // Older internal fixtures used the former fixed-width, NUL-padded symbol
+    // representation. Accept that spelling at static call sites while keeping
+    // user/wire input subject to the strict canonical validator.
+    let end = s.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
+    Symbol::new(&s[..end]).expect("invalid static symbol")
 }
 
 /// Custody state, from the shared component.
@@ -255,13 +296,18 @@ impl TokenInfo {
             genesis_pool: None,
             unit: Fixed::raw(1),
             bond: Fixed::ZERO,
-            vault: None, content: None, collection: None,
+            vault: None,
+            content: None,
+            collection: None,
         }
     }
 
     /// A bridged asset: issued here, custodied elsewhere.
     pub fn bridged(symbol: Symbol, origin: ChainOrigin) -> TokenInfo {
-        TokenInfo { vault: Some(Vault::new(origin)), ..TokenInfo::divisible(symbol, Fixed::ZERO) }
+        TokenInfo {
+            vault: Some(Vault::new(origin)),
+            ..TokenInfo::divisible(symbol, Fixed::ZERO)
+        }
     }
 
     pub fn is_bridged(&self) -> bool {
@@ -291,6 +337,8 @@ impl TokenInfo {
 pub struct Pool {
     pub asset0: AssetId,
     pub asset1: AssetId,
+    /// Deterministic program-controlled address for the pair's reserves.
+    pub vault: AccountId,
     pub reserve0: Fixed,
     pub reserve1: Fixed,
     /// Fee in basis points, taken from the swap input and left in the reserves.
@@ -533,12 +581,18 @@ impl Account {
 
     /// Units of `asset` committed to an exit.
     pub fn pending_of(&self, asset: AssetId) -> Fixed {
-        self.pending.get(&asset).map(|p| p.amount).unwrap_or(Fixed::ZERO)
+        self.pending
+            .get(&asset)
+            .map(|p| p.amount)
+            .unwrap_or(Fixed::ZERO)
     }
 
     /// Units of `asset` credited but not yet claimable.
     pub fn incoming_of(&self, asset: AssetId) -> Fixed {
-        self.incoming.get(&asset).map(|c| c.amount).unwrap_or(Fixed::ZERO)
+        self.incoming
+            .get(&asset)
+            .map(|c| c.amount)
+            .unwrap_or(Fixed::ZERO)
     }
 
     /// The epoch this asset's exit was last increased, if one is outstanding.
@@ -627,12 +681,9 @@ pub struct SwapState {
     /// Gross swap volume this epoch, denominated in the input asset of each
     /// swap. A rough activity figure for the explorer, not an accounting one.
     pub epoch_gross_volume: Fixed,
-    pub next_asset_id: AssetId,
-    pub next_pool_id: PoolId,
     /// Collections, by id. Empty on a chain that has never had one, which is
     /// what keeps such a chain's roots unchanged by this feature existing.
     pub collections: BTreeMap<CollectionId, Collection>,
-    pub next_collection_id: CollectionId,
     /// Whether single-hop swaps queue for the seal (see [`Order`]) or execute
     /// on arrival. Off by default; an operator turns it on with
     /// `Intent::SetClearing`.
@@ -641,6 +692,10 @@ pub struct SwapState {
     pub orders: Vec<Order>,
     /// ZYN and its launch, once the operator has set it (`launch.rs`).
     pub launch: Option<crate::launch::LaunchState>,
+    /// Permissionless Cave bonding curves, keyed by their deterministic asset
+    /// address, plus the epochs needed for the per-creator rolling limit.
+    pub curves: crate::cave::CurveBook,
+    pub creator_launches: crate::cave::CreatorLaunches,
     /// Resting offers, by id. Empty on a chain that has never had one, which
     /// is what keeps such a chain's roots unchanged by this feature existing.
     pub offers: BTreeMap<OfferId, Offer>,
@@ -667,13 +722,12 @@ impl SwapState {
             intent_acc: [0u8; 32],
             epoch_intents: 0,
             epoch_gross_volume: Fixed::ZERO,
-            next_asset_id: FIRST_USER_ASSET,
             collections: BTreeMap::new(),
-            next_collection_id: 1,
-            next_pool_id: 1,
             batch_clearing: false,
             orders: Vec::new(),
             launch: None,
+            curves: BTreeMap::new(),
+            creator_launches: BTreeMap::new(),
             offers: BTreeMap::new(),
             next_offer_id: 1,
         }
@@ -685,7 +739,10 @@ impl SwapState {
     }
 
     pub fn balance(&self, id: &AccountId, asset: AssetId) -> Fixed {
-        self.accounts.get(id).map(|a| a.balance(asset)).unwrap_or(Fixed::ZERO)
+        self.accounts
+            .get(id)
+            .map(|a| a.balance(asset))
+            .unwrap_or(Fixed::ZERO)
     }
 
     pub fn pool(&self, id: PoolId) -> Option<&Pool> {
@@ -808,7 +865,11 @@ impl SwapState {
     /// operator's, which is what stops two operators — or one operator twice —
     /// crediting the same external deposit.
     pub fn next_deposit_index(&self, asset: AssetId) -> u64 {
-        self.tokens.get(&asset).and_then(|t| t.vault).map(|v| v.next_index()).unwrap_or(1)
+        self.tokens
+            .get(&asset)
+            .and_then(|t| t.vault)
+            .map(|v| v.next_index())
+            .unwrap_or(1)
     }
 
     /// Every bridged asset, with the chain that custodies it.
@@ -859,7 +920,6 @@ impl SwapState {
         Some(sum)
     }
 
-
     /// Every asset id the chain knows about, in order.
     pub fn asset_ids(&self) -> Vec<AssetId> {
         self.tokens.keys().copied().collect()
@@ -904,7 +964,9 @@ impl SwapState {
         // 1. Every token's supply equals what is actually held somewhere.
         for (&asset, info) in self.tokens.iter() {
             let held = self.total_held(asset).ok_or("overflow summing balances")?;
-            let reserved = self.total_reserved(asset).ok_or("overflow summing reserves")?;
+            let reserved = self
+                .total_reserved(asset)
+                .ok_or("overflow summing reserves")?;
             let mut accounted = held.add(reserved).ok_or("overflow")?;
 
             // Units in flight in either direction still exist and are still
@@ -913,7 +975,9 @@ impl SwapState {
             // only at the moments it is not.
             let pending = self.total_pending(asset).ok_or("overflow summing exits")?;
             accounted = accounted.add(pending).ok_or("overflow")?;
-            let incoming = self.total_incoming(asset).ok_or("overflow summing credits")?;
+            let incoming = self
+                .total_incoming(asset)
+                .ok_or("overflow summing credits")?;
             accounted = accounted.add(incoming).ok_or("overflow")?;
             if asset == XZEC {
                 // Bonds are xZEC that exists and is backed but is held by no
@@ -923,7 +987,10 @@ impl SwapState {
                     .add(self.total_bonded().ok_or("overflow summing bonds")?)
                     .ok_or("overflow")?;
                 accounted = accounted
-                    .add(self.total_pooled().ok_or("overflow summing collection pools")?)
+                    .add(
+                        self.total_pooled()
+                            .ok_or("overflow summing collection pools")?,
+                    )
                     .ok_or("overflow")?;
             }
             if let Some(pool_id) = info.lp_of {
@@ -992,6 +1059,9 @@ impl SwapState {
 
         // 4. Pools and LP accounting reconcile.
         for (&id, p) in self.pools.iter() {
+            if p.vault != zyn_vm::vault_address(crate::types::ADDRESS_SCOPE_V1, &id) {
+                return Err("pool vault is not derived from its pool");
+            }
             if p.asset0 >= p.asset1 {
                 return Err("pool assets are not canonically ordered");
             }
@@ -1010,7 +1080,10 @@ impl SwapState {
             if !p.min_in0.is_positive() || !p.min_in1.is_positive() {
                 return Err("a pool's minimum input must be positive");
             }
-            let lp = self.tokens.get(&p.lp_asset).ok_or("pool LP asset missing")?;
+            let lp = self
+                .tokens
+                .get(&p.lp_asset)
+                .ok_or("pool LP asset missing")?;
             if lp.lp_of != Some(id) {
                 return Err("LP asset does not point back at its pool");
             }
@@ -1025,13 +1098,73 @@ impl SwapState {
             }
         }
 
+        // 4b. A Cave curve is the custody ledger for its fixed supply before
+        // graduation, and an immutable pointer to its canonical pool after.
+        for (&asset, c) in &self.curves {
+            let token = self.tokens.get(&asset).ok_or("curve asset missing")?;
+            if token.supply != crate::cave::TOTAL_SUPPLY || token.symbol != c.symbol {
+                return Err("curve token metadata or fixed supply changed");
+            }
+            if !(crate::cave::MIN_FEE_BPS..=crate::cave::MAX_FEE_BPS).contains(&c.fee_bps) {
+                return Err("curve fee outside launch range");
+            }
+            if c.sold.is_negative() || c.sold > crate::cave::CURVE_SUPPLY {
+                return Err("curve sold amount outside inventory");
+            }
+            let vault_balance = self.balance(&crate::cave::launch_vault(&asset), asset);
+            match c.status {
+                crate::cave::CurveStatus::Trading => {
+                    if token.genesis_pool.is_some()
+                        || vault_balance
+                            != crate::cave::TOTAL_SUPPLY
+                                .sub(c.sold)
+                                .ok_or("curve inventory underflow")?
+                    {
+                        return Err("live curve inventory disagrees with sold amount");
+                    }
+                }
+                crate::cave::CurveStatus::Graduated { pool } => {
+                    if c.sold != crate::cave::CURVE_SUPPLY || token.genesis_pool != Some(pool) {
+                        return Err("graduated curve disagrees with canonical pool");
+                    }
+                    let p = self
+                        .pools
+                        .get(&pool)
+                        .ok_or("graduated curve pool missing")?;
+                    if !p.contains(asset)
+                        || !p.contains(XZEC)
+                        || p.locked != c.graduated_locked_lp
+                        || c.graduated_token_liquidity.add(vault_balance)
+                            != Some(crate::cave::POOL_TOKEN_SUPPLY)
+                        || c.graduated_token_liquidity > crate::cave::POOL_TOKEN_SUPPLY
+                        || c.graduated_zec_liquidity > crate::cave::GRADUATION_POOL_CAP
+                        || c.graduated_token_liquidity
+                            .mul(crate::cave::GRADUATION_PRICE)
+                            != Some(c.graduated_zec_liquidity)
+                    {
+                        return Err("graduated curve pool is not canonical and permanently locked");
+                    }
+                }
+            }
+        }
+        for epochs in self.creator_launches.values() {
+            if epochs.windows(2).any(|w| w[0] > w[1]) {
+                return Err("creator launch epochs are not ordered");
+            }
+        }
+
         // 5. No account holds a negative balance or a negative pending exit.
         for a in self.accounts.values() {
             for (asset, c) in a.incoming.iter() {
                 if !c.amount.is_positive() {
                     return Err("an unclaimed credit must be positive or absent");
                 }
-                if !self.tokens.get(asset).map(|t| t.is_bridged()).unwrap_or(false) {
+                if !self
+                    .tokens
+                    .get(asset)
+                    .map(|t| t.is_bridged())
+                    .unwrap_or(false)
+                {
                     return Err("an unclaimed credit against an asset with no vault");
                 }
             }
@@ -1040,7 +1173,12 @@ impl SwapState {
                 if !v.is_positive() {
                     return Err("a pending exit must be positive or absent");
                 }
-                if !self.tokens.get(asset).map(|t| t.is_bridged()).unwrap_or(false) {
+                if !self
+                    .tokens
+                    .get(asset)
+                    .map(|t| t.is_bridged())
+                    .unwrap_or(false)
+                {
                     return Err("a pending exit against an asset with no vault");
                 }
             }
@@ -1054,16 +1192,6 @@ impl SwapState {
             }
         }
 
-        // 6. Ids are only ever handed out going up.
-        if self.next_asset_id < FIRST_USER_ASSET {
-            return Err("next asset id is inside the reserved range");
-        }
-        if self.tokens.keys().any(|&a| a >= self.next_asset_id && a != XZEC) {
-            return Err("an asset id was issued at or beyond the next id");
-        }
-        if self.pools.keys().any(|&p| p >= self.next_pool_id) {
-            return Err("a pool id was issued at or beyond the next id");
-        }
         Ok(())
     }
 }
@@ -1071,6 +1199,10 @@ impl SwapState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn id(n: u32) -> AssetId {
+        crate::types::legacy_id(n)
+    }
 
     fn state() -> SwapState {
         SwapState::new(1, Params::v1())
@@ -1090,11 +1222,15 @@ mod tests {
     #[test]
     fn crediting_zero_leaves_no_entry() {
         let mut a = Account::default();
-        a.credit(7, Fixed::ZERO).unwrap();
+        a.credit(id(7), Fixed::ZERO).unwrap();
         assert!(a.balances.is_empty(), "a zero credit created an entry");
-        a.credit(7, Fixed::whole(5)).unwrap();
-        a.credit(7, Fixed::ZERO).unwrap();
-        assert_eq!(a.balance(7), Fixed::whole(5), "a zero credit disturbed a live balance");
+        a.credit(id(7), Fixed::whole(5)).unwrap();
+        a.credit(id(7), Fixed::ZERO).unwrap();
+        assert_eq!(
+            a.balance(id(7)),
+            Fixed::whole(5),
+            "a zero credit disturbed a live balance"
+        );
     }
 
     #[test]
@@ -1102,62 +1238,85 @@ mod tests {
         // Otherwise two accounts holding nothing would hash differently
         // depending on what they had once held.
         let mut a = Account::default();
-        a.credit(7, Fixed::whole(5)).unwrap();
-        a.debit(7, Fixed::whole(5)).unwrap();
-        assert!(a.balances.is_empty(), "a spent-to-zero balance stayed in the map");
-        assert_eq!(a.balance(7), Fixed::ZERO);
+        a.credit(id(7), Fixed::whole(5)).unwrap();
+        a.debit(id(7), Fixed::whole(5)).unwrap();
+        assert!(
+            a.balances.is_empty(),
+            "a spent-to-zero balance stayed in the map"
+        );
+        assert_eq!(a.balance(id(7)), Fixed::ZERO);
     }
 
     #[test]
     fn an_account_cannot_overdraw() {
         let mut a = Account::default();
-        a.credit(7, Fixed::whole(5)).unwrap();
-        assert_eq!(a.debit(7, Fixed::whole(6)), None);
-        assert_eq!(a.balance(7), Fixed::whole(5), "a failed debit moved the balance");
-        assert_eq!(a.debit(9, Fixed::raw(1)), None, "debited an asset never held");
+        a.credit(id(7), Fixed::whole(5)).unwrap();
+        assert_eq!(a.debit(id(7), Fixed::whole(6)), None);
+        assert_eq!(
+            a.balance(id(7)),
+            Fixed::whole(5),
+            "a failed debit moved the balance"
+        );
+        assert_eq!(
+            a.debit(id(9), Fixed::raw(1)),
+            None,
+            "debited an asset never held"
+        );
     }
 
     #[test]
     fn pool_orientation_follows_the_input_asset() {
         let p = Pool {
-            asset0: 1,
-            asset1: 5,
+            asset0: id(1),
+            asset1: id(5),
+            vault: zyn_vm::vault_address(crate::types::ADDRESS_SCOPE_V1, &id(1)),
             reserve0: Fixed::whole(1_000),
             reserve1: Fixed::whole(10),
             fee_bps: 30,
-            lp_asset: 6,
+            lp_asset: crate::types::legacy_id(6),
             lp_supply: Fixed::whole(100),
             locked: Fixed::raw(1_000),
-                min_in0: Fixed::raw(1),
-                min_in1: Fixed::raw(1),
-                reference: None,
+            min_in0: Fixed::raw(1),
+            min_in1: Fixed::raw(1),
+            reference: None,
         };
-        assert_eq!(p.oriented(1), Some((Fixed::whole(1_000), Fixed::whole(10))));
-        assert_eq!(p.oriented(5), Some((Fixed::whole(10), Fixed::whole(1_000))));
-        assert_eq!(p.oriented(9), None);
-        assert_eq!(p.other(1), Some(5));
-        assert_eq!(p.other(5), Some(1));
-        assert_eq!(p.other(9), None);
+        assert_eq!(
+            p.oriented(id(1)),
+            Some((Fixed::whole(1_000), Fixed::whole(10)))
+        );
+        assert_eq!(
+            p.oriented(id(5)),
+            Some((Fixed::whole(10), Fixed::whole(1_000)))
+        );
+        assert_eq!(p.oriented(id(9)), None);
+        assert_eq!(p.other(id(1)), Some(id(5)));
+        assert_eq!(p.other(id(5)), Some(id(1)));
+        assert_eq!(p.other(id(9)), None);
     }
 
     #[test]
     fn a_reserve_cannot_be_driven_negative() {
         let mut p = Pool {
-            asset0: 1,
-            asset1: 5,
+            asset0: id(1),
+            asset1: id(5),
+            vault: zyn_vm::vault_address(crate::types::ADDRESS_SCOPE_V1, &id(1)),
             reserve0: Fixed::whole(10),
             reserve1: Fixed::whole(10),
             fee_bps: 30,
-            lp_asset: 6,
+            lp_asset: crate::types::legacy_id(6),
             lp_supply: Fixed::whole(10),
             locked: Fixed::ZERO,
-                min_in0: Fixed::raw(1),
-                min_in1: Fixed::raw(1),
-                reference: None,
+            min_in0: Fixed::raw(1),
+            min_in1: Fixed::raw(1),
+            reference: None,
         };
-        assert_eq!(p.debit_reserve(1, Fixed::whole(11)), None);
-        assert_eq!(p.reserve0, Fixed::whole(10), "a failed debit moved the reserve");
-        assert!(p.debit_reserve(1, Fixed::whole(10)).is_some());
+        assert_eq!(p.debit_reserve(id(1), Fixed::whole(11)), None);
+        assert_eq!(
+            p.reserve0,
+            Fixed::whole(10),
+            "a failed debit moved the reserve"
+        );
+        assert!(p.debit_reserve(id(1), Fixed::whole(10)).is_some());
         assert_eq!(p.reserve0, Fixed::ZERO);
     }
 
@@ -1165,14 +1324,15 @@ mod tests {
     fn find_pool_is_order_independent() {
         let mut s = state();
         s.pools.insert(
-            1,
+            id(1),
             Pool {
-                asset0: 1,
-                asset1: 5,
+                asset0: id(1),
+                asset1: id(5),
+                vault: zyn_vm::vault_address(crate::types::ADDRESS_SCOPE_V1, &id(1)),
                 reserve0: Fixed::ZERO,
                 reserve1: Fixed::ZERO,
                 fee_bps: 30,
-                lp_asset: 6,
+                lp_asset: crate::types::legacy_id(6),
                 lp_supply: Fixed::ZERO,
                 locked: Fixed::ZERO,
                 min_in0: Fixed::raw(1),
@@ -1180,16 +1340,18 @@ mod tests {
                 reference: None,
             },
         );
-        assert_eq!(s.find_pool(1, 5), Some(1));
-        assert_eq!(s.find_pool(5, 1), Some(1));
-        assert_eq!(s.find_pool(1, 9), None);
+        assert_eq!(s.find_pool(id(1), id(5)), Some(id(1)));
+        assert_eq!(s.find_pool(id(5), id(1)), Some(id(1)));
+        assert_eq!(s.find_pool(id(1), id(9)), None);
     }
 
     #[test]
     fn unbacked_xzec_fails_the_invariant() {
         let mut s = state();
         s.mint(XZEC, Fixed::whole(10)).unwrap();
-        s.account_mut(&[1u8; 32]).credit(XZEC, Fixed::whole(10)).unwrap();
+        s.account_mut(&[1u8; 32])
+            .credit(XZEC, Fixed::whole(10))
+            .unwrap();
         // Supply and balances agree, but nothing backs it.
         assert!(s.check_invariants().is_err(), "unbacked xZEC passed");
         let t = s.tokens.get_mut(&XZEC).unwrap();
@@ -1209,7 +1371,9 @@ mod tests {
         v.attest(Fixed::whole(10), 0).unwrap();
         v.credit(Fixed::whole(10), 1, 0).unwrap();
         t.vault = Some(v);
-        s.account_mut(&[1u8; 32]).credit(XZEC, Fixed::whole(11)).unwrap();
+        s.account_mut(&[1u8; 32])
+            .credit(XZEC, Fixed::whole(11))
+            .unwrap();
         assert!(s.check_invariants().is_err(), "unminted balance passed");
     }
 
@@ -1225,11 +1389,15 @@ mod tests {
         let a = s.account_mut(&[1u8; 32]);
         a.credit(XZEC, Fixed::whole(4)).unwrap();
         a.set_pending(XZEC, Fixed::whole(6), 0);
-        s.check_invariants().expect("balance plus pending must reconcile");
+        s.check_invariants()
+            .expect("balance plus pending must reconcile");
 
         // Losing track of a pending exit breaks the backing identity, which is
         // the whole point of holding it out of `balances` but still counting it.
-        s.accounts.get_mut(&[1u8; 32]).unwrap().set_pending(XZEC, Fixed::whole(5), 0);
+        s.accounts
+            .get_mut(&[1u8; 32])
+            .unwrap()
+            .set_pending(XZEC, Fixed::whole(5), 0);
         assert!(s.check_invariants().is_err());
     }
 
@@ -1239,14 +1407,19 @@ mod tests {
         s.mint(XZEC, Fixed::whole(1)).unwrap();
         assert_eq!(s.burn(XZEC, Fixed::whole(2)), None);
         assert_eq!(s.token(XZEC).unwrap().supply, Fixed::whole(1));
-        assert_eq!(s.burn(999, Fixed::whole(1)), None, "burned an unknown asset");
+        assert_eq!(
+            s.burn(id(999), Fixed::whole(1)),
+            None,
+            "burned an unknown asset"
+        );
     }
 
     #[test]
     fn prune_drops_accounts_that_hold_nothing() {
         let mut s = state();
         s.account_mut(&[1u8; 32]);
-        s.account_mut(&[2u8; 32]).set_pending(XZEC, Fixed::whole(1), 0);
+        s.account_mut(&[2u8; 32])
+            .set_pending(XZEC, Fixed::whole(1), 0);
         assert_eq!(s.accounts.len(), 2);
         s.prune_empty();
         assert_eq!(s.accounts.len(), 1, "an account holding nothing survived");

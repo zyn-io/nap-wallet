@@ -102,7 +102,10 @@ pub fn read_frame(s: &mut TcpStream, max: usize) -> std::io::Result<Vec<u8>> {
     s.read_exact(&mut len)?;
     let n = u32::from_be_bytes(len) as usize;
     if n > max {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut body = vec![0u8; n];
     s.read_exact(&mut body)?;
@@ -199,10 +202,16 @@ pub struct Utxo {
 
 pub enum Request {
     Info,
-    Blocks { from: u64, count: u32 },
+    Blocks {
+        from: u64,
+        count: u32,
+    },
     Transaction([u8; 32]),
     Send(Vec<u8>),
-    TreeState { height: u64, pool: orchard::ValuePool },
+    TreeState {
+        height: u64,
+        pool: orchard::ValuePool,
+    },
     /// Unspent transparent outputs paying one address. The only request that
     /// names an address; see the module docs.
     Utxos(String),
@@ -210,13 +219,23 @@ pub enum Request {
 
 impl Request {
     pub fn decode(req: &[u8]) -> Result<Request, &'static str> {
-        let Some(&op) = req.first() else { return Err("empty request") };
+        let Some(&op) = req.first() else {
+            return Err("empty request");
+        };
         let mut d = Rd(req, 1);
         match op {
             OP_INFO => Ok(Request::Info),
-            OP_BLOCKS => Ok(Request::Blocks { from: d.u64().ok_or("malformed range")?, count: d.u32().ok_or("malformed range")?.min(MAX_BLOCKS) }),
-            OP_TX => Ok(Request::Transaction(d.take(32).ok_or("malformed txid")?.try_into().unwrap())),
-            OP_SEND => { let n = d.u32().ok_or("malformed")? as usize; Ok(Request::Send(d.take(n).ok_or("malformed")?.to_vec())) }
+            OP_BLOCKS => Ok(Request::Blocks {
+                from: d.u64().ok_or("malformed range")?,
+                count: d.u32().ok_or("malformed range")?.min(MAX_BLOCKS),
+            }),
+            OP_TX => Ok(Request::Transaction(
+                d.take(32).ok_or("malformed txid")?.try_into().unwrap(),
+            )),
+            OP_SEND => {
+                let n = d.u32().ok_or("malformed")? as usize;
+                Ok(Request::Send(d.take(n).ok_or("malformed")?.to_vec()))
+            }
             OP_UTXOS => {
                 let n = d.u16().ok_or("malformed")? as usize;
                 if n > 128 {
@@ -228,7 +247,11 @@ impl Request {
             }
             OP_TREESTATE => {
                 let height = d.u64().ok_or("malformed")?;
-                let pool = match d.u8().ok_or("malformed")? { 0 => orchard::ValuePool::Orchard, 1 => orchard::ValuePool::Ironwood, _ => return Err("unknown pool") };
+                let pool = match d.u8().ok_or("malformed")? {
+                    0 => orchard::ValuePool::Orchard,
+                    1 => orchard::ValuePool::Ironwood,
+                    _ => return Err("unknown pool"),
+                };
                 Ok(Request::TreeState { height, pool })
             }
             _ => Err("unknown op"),
@@ -242,21 +265,36 @@ pub struct Client {
 
 struct Rd<'a>(&'a [u8], usize);
 impl<'a> Rd<'a> {
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> { let s = self.0.get(self.1..self.1 + n)?; self.1 += n; Some(s) }
-    fn u8(&mut self) -> Option<u8> { Some(self.take(1)?[0]) }
-    fn u16(&mut self) -> Option<u16> { Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?)) }
-    fn u32(&mut self) -> Option<u32> { Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?)) }
-    fn u64(&mut self) -> Option<u64> { Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?)) }
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let s = self.0.get(self.1..self.1 + n)?;
+        self.1 += n;
+        Some(s)
+    }
+    fn u8(&mut self) -> Option<u8> {
+        Some(self.take(1)?[0])
+    }
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+    fn u64(&mut self) -> Option<u64> {
+        Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
 }
 
 impl Client {
     pub fn new(addr: &str) -> Client {
-        Client { addr: addr.to_string() }
+        Client {
+            addr: addr.to_string(),
+        }
     }
 
     fn call(&self, body: &[u8]) -> Result<Vec<u8>, LightError> {
         let mut s = TcpStream::connect(&self.addr).map_err(|e| LightError::Io(e.to_string()))?;
-        s.set_read_timeout(Some(std::time::Duration::from_secs(60))).ok();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .ok();
         write_frame(&mut s, body).map_err(|e| LightError::Io(e.to_string()))?;
         let reply = read_frame(&mut s, 64 << 20).map_err(|e| LightError::Io(e.to_string()))?;
         unwrap_reply(&reply)
@@ -269,8 +307,13 @@ pub fn unwrap_reply(reply: &[u8]) -> Result<Vec<u8>, LightError> {
         match reply.first() {
             Some(0) => Ok(reply[1..].to_vec()),
             Some(1) => {
-                let n = u16::from_le_bytes([reply.get(1).copied().unwrap_or(0), reply.get(2).copied().unwrap_or(0)]) as usize;
-                Err(LightError::Server(String::from_utf8_lossy(reply.get(3..3 + n).unwrap_or(b"")).to_string()))
+                let n = u16::from_le_bytes([
+                    reply.get(1).copied().unwrap_or(0),
+                    reply.get(2).copied().unwrap_or(0),
+                ]) as usize;
+                Err(LightError::Server(
+                    String::from_utf8_lossy(reply.get(3..3 + n).unwrap_or(b"")).to_string(),
+                ))
             }
             _ => Err(LightError::Malformed("status")),
         }
@@ -285,7 +328,12 @@ impl Client {
         let tip = d.u64().ok_or(LightError::Malformed("info"))?;
         let branch = d.u32().ok_or(LightError::Malformed("info"))?;
         let estimated = d.u64().unwrap_or(tip).max(tip);
-        Ok(Info { network, tip, branch, estimated })
+        Ok(Info {
+            network,
+            tip,
+            branch,
+            estimated,
+        })
     }
 
     pub fn blocks(&self, from: u64, count: u32) -> Result<Vec<CompactBlock>, LightError> {
@@ -337,26 +385,55 @@ impl Client {
         let n = d.u32().ok_or(LightError::Malformed("utxo count"))? as usize;
         let mut out = Vec::with_capacity(n.min(1024));
         for _ in 0..n {
-            let txid: [u8; 32] = d.take(32).ok_or(LightError::Malformed("utxo txid"))?.try_into().unwrap();
+            let txid: [u8; 32] = d
+                .take(32)
+                .ok_or(LightError::Malformed("utxo txid"))?
+                .try_into()
+                .unwrap();
             let index = d.u32().ok_or(LightError::Malformed("utxo index"))?;
             let value = d.u64().ok_or(LightError::Malformed("utxo value"))?;
             let height = d.u64().ok_or(LightError::Malformed("utxo height"))?;
             let len = d.u16().ok_or(LightError::Malformed("utxo script"))? as usize;
-            let script = d.take(len).ok_or(LightError::Malformed("utxo script"))?.to_vec();
-            out.push(Utxo { txid, index, value, height, script });
+            let script = d
+                .take(len)
+                .ok_or(LightError::Malformed("utxo script"))?
+                .to_vec();
+            out.push(Utxo {
+                txid,
+                index,
+                value,
+                height,
+                script,
+            });
         }
         Ok(out)
     }
 
-    pub fn tree_state(&self, height: u64, pool: orchard::ValuePool) -> Result<([u8; 32], Vec<u8>), LightError> {
+    pub fn tree_state(
+        &self,
+        height: u64,
+        pool: orchard::ValuePool,
+    ) -> Result<([u8; 32], Vec<u8>), LightError> {
         let mut b = vec![OP_TREESTATE];
         b.extend_from_slice(&height.to_le_bytes());
-        b.push(match pool { orchard::ValuePool::Orchard => 0, orchard::ValuePool::Ironwood => 1 });
+        b.push(match pool {
+            orchard::ValuePool::Orchard => 0,
+            orchard::ValuePool::Ironwood => 1,
+        });
         let r = self.call(&b)?;
         let mut d = Rd(&r, 0);
-        let root: [u8; 32] = d.take(32).ok_or(LightError::Malformed("root"))?.try_into().unwrap();
+        let root: [u8; 32] = d
+            .take(32)
+            .ok_or(LightError::Malformed("root"))?
+            .try_into()
+            .unwrap();
         let len = d.u32().ok_or(LightError::Malformed("frontier"))? as usize;
-        Ok((root, d.take(len).ok_or(LightError::Malformed("frontier"))?.to_vec()))
+        Ok((
+            root,
+            d.take(len)
+                .ok_or(LightError::Malformed("frontier"))?
+                .to_vec(),
+        ))
     }
 }
 
@@ -369,11 +446,23 @@ mod tests {
         let mut b = vec![OP_BLOCKS];
         b.extend_from_slice(&4_326_863u64.to_le_bytes());
         b.extend_from_slice(&5000u32.to_le_bytes());
-        assert_eq!(Request::decode(&b), Ok(Request::Blocks { from: 4_326_863, count: MAX_BLOCKS }));
+        assert_eq!(
+            Request::decode(&b),
+            Ok(Request::Blocks {
+                from: 4_326_863,
+                count: MAX_BLOCKS
+            })
+        );
         let mut t = vec![OP_TREESTATE];
         t.extend_from_slice(&7u64.to_le_bytes());
         t.push(1);
-        assert_eq!(Request::decode(&t), Ok(Request::TreeState { height: 7, pool: orchard::ValuePool::Ironwood }));
+        assert_eq!(
+            Request::decode(&t),
+            Ok(Request::TreeState {
+                height: 7,
+                pool: orchard::ValuePool::Ironwood
+            })
+        );
         assert_eq!(Request::decode(&[OP_TX, 1, 2]), Err("malformed txid"));
         assert_eq!(Request::decode(&[]), Err("empty request"));
         assert_eq!(Request::decode(&[99]), Err("unknown op"));
@@ -381,13 +470,44 @@ mod tests {
 
     #[test]
     fn replies_round_trip_through_the_client_parsers() {
-        let r = unwrap_reply(&reply::info(Info { network: NET_TESTNET, tip: 4_327_822, branch: 0xc8e7_1055, estimated: 4_327_900 })).unwrap();
+        let r = unwrap_reply(&reply::info(Info {
+            network: NET_TESTNET,
+            tip: 4_327_822,
+            branch: 0xc8e7_1055,
+            estimated: 4_327_900,
+        }))
+        .unwrap();
         let mut d = Rd(&r, 0);
-        assert_eq!((d.u8(), d.u64(), d.u32(), d.u64()), (Some(NET_TESTNET), Some(4_327_822), Some(0xc8e7_1055), Some(4_327_900)));
-        assert!(Info { network: NET_TESTNET, tip: 4_327_822, branch: 0, estimated: 4_327_900 }.syncing());
-        assert!(!Info { network: NET_TESTNET, tip: 4_327_822, branch: 0, estimated: 4_327_822 }.syncing());
+        assert_eq!(
+            (d.u8(), d.u64(), d.u32(), d.u64()),
+            (
+                Some(NET_TESTNET),
+                Some(4_327_822),
+                Some(0xc8e7_1055),
+                Some(4_327_900)
+            )
+        );
+        assert!(Info {
+            network: NET_TESTNET,
+            tip: 4_327_822,
+            branch: 0,
+            estimated: 4_327_900
+        }
+        .syncing());
+        assert!(!Info {
+            network: NET_TESTNET,
+            tip: 4_327_822,
+            branch: 0,
+            estimated: 4_327_822
+        }
+        .syncing());
 
-        let block = CompactBlock { height: 1, hash: [9; 32], txs: vec![] }.encode();
+        let block = CompactBlock {
+            height: 1,
+            hash: [9; 32],
+            txs: vec![],
+        }
+        .encode();
         let r = unwrap_reply(&reply::blocks(&[block.clone(), block.clone()])).unwrap();
         let mut d = Rd(&r, 0);
         assert_eq!(d.u32(), Some(2));

@@ -27,7 +27,9 @@ use zyn_vm::eip712::{TypedData, Value};
 use zyn_vm::fixed::Fixed;
 use zyn_vm::spec::AccountId;
 
+use crate::state::Symbol;
 use crate::tx::Intent;
+use crate::types::PoolId;
 
 fn account(a: &AccountId) -> Value {
     Value::Bytes32(*a)
@@ -39,69 +41,110 @@ fn amount(f: Fixed) -> Value {
 
 /// A symbol is fixed-width and NUL-padded on the wire; a wallet should show
 /// the name, not the padding.
-fn symbol(s: &[u8; 8]) -> Value {
-    let end = s.iter().position(|&b| b == 0).unwrap_or(s.len());
-    Value::String(String::from_utf8_lossy(&s[..end]).to_string())
+fn symbol(s: &Symbol) -> Value {
+    Value::String(String::from_utf8_lossy(s.as_bytes()).to_string())
 }
 
-fn path(p: &[u32]) -> Value {
-    Value::uints(p.iter().map(|&x| x as u64))
+fn id(id: &[u8; 32]) -> Value {
+    Value::Bytes32(*id)
+}
+
+fn path(p: &[PoolId]) -> Value {
+    Value::Array {
+        elem_type: "bytes32".to_string(),
+        items: p.iter().map(id).collect(),
+    }
 }
 
 pub fn typed_intent(intent: &Intent) -> TypedData {
     let t = TypedData::new;
     match intent {
-        Intent::SwapExactIn { account: a, asset_in, path: p, amount_in, min_out } => {
-            t("SwapExactIn")
-                .field("account", account(a))
-                .field("assetIn", Value::uint(*asset_in as u64))
-                .field("path", path(p))
-                .field("amountIn", amount(*amount_in))
-                .field("minOut", amount(*min_out))
-        }
-        Intent::SwapExactOut { account: a, asset_in, path: p, amount_out, max_in } => {
-            t("SwapExactOut")
-                .field("account", account(a))
-                .field("assetIn", Value::uint(*asset_in as u64))
-                .field("path", path(p))
-                .field("amountOut", amount(*amount_out))
-                .field("maxIn", amount(*max_in))
-        }
-        Intent::Transfer { from, to, asset, amount: v } => t("Transfer")
+        Intent::SwapExactIn {
+            account: a,
+            asset_in,
+            path: p,
+            amount_in,
+            min_out,
+        } => t("SwapExactIn")
+            .field("account", account(a))
+            .field("assetIn", id(asset_in))
+            .field("path", path(p))
+            .field("amountIn", amount(*amount_in))
+            .field("minOut", amount(*min_out)),
+        Intent::SwapExactOut {
+            account: a,
+            asset_in,
+            path: p,
+            amount_out,
+            max_in,
+        } => t("SwapExactOut")
+            .field("account", account(a))
+            .field("assetIn", id(asset_in))
+            .field("path", path(p))
+            .field("amountOut", amount(*amount_out))
+            .field("maxIn", amount(*max_in)),
+        Intent::Transfer {
+            from,
+            to,
+            asset,
+            amount: v,
+        } => t("Transfer")
             .field("from", account(from))
             .field("to", account(to))
-            .field("asset", Value::uint(*asset as u64))
+            .field("asset", id(asset))
             .field("amount", amount(*v)),
-        Intent::AcceptOffer { maker, taker, offer_asset, offer_amount, want_asset, want_amount } => {
-            t("AcceptOffer")
-                .field("maker", account(maker))
-                .field("taker", account(taker))
-                .field("offerAsset", Value::uint(*offer_asset as u64))
-                .field("offerAmount", amount(*offer_amount))
-                .field("wantAsset", Value::uint(*want_asset as u64))
-                .field("wantAmount", amount(*want_amount))
-        }
-        Intent::AddLiquidity { account: a, pool, max0, max1, min_shares } => t("AddLiquidity")
+        Intent::AcceptOffer {
+            maker,
+            taker,
+            offer_asset,
+            offer_amount,
+            want_asset,
+            want_amount,
+        } => t("AcceptOffer")
+            .field("maker", account(maker))
+            .field("taker", account(taker))
+            .field("offerAsset", id(offer_asset))
+            .field("offerAmount", amount(*offer_amount))
+            .field("wantAsset", id(want_asset))
+            .field("wantAmount", amount(*want_amount)),
+        Intent::AddLiquidity {
+            account: a,
+            pool,
+            max0,
+            max1,
+            min_shares,
+        } => t("AddLiquidity")
             .field("account", account(a))
-            .field("pool", Value::uint(*pool as u64))
+            .field("pool", id(pool))
             .field("max0", amount(*max0))
             .field("max1", amount(*max1))
             .field("minShares", amount(*min_shares)),
-        Intent::RemoveLiquidity { account: a, pool, shares, min0, min1 } => t("RemoveLiquidity")
+        Intent::RemoveLiquidity {
+            account: a,
+            pool,
+            shares,
+            min0,
+            min1,
+        } => t("RemoveLiquidity")
             .field("account", account(a))
-            .field("pool", Value::uint(*pool as u64))
+            .field("pool", id(pool))
             .field("shares", amount(*shares))
             .field("min0", amount(*min0))
             .field("min1", amount(*min1)),
-        Intent::CreatePool { creator, asset_a, asset_b, amount_a, amount_b, fee_bps } => {
-            t("CreatePool")
-                .field("creator", account(creator))
-                .field("assetA", Value::uint(*asset_a as u64))
-                .field("assetB", Value::uint(*asset_b as u64))
-                .field("amountA", amount(*amount_a))
-                .field("amountB", amount(*amount_b))
-                .field("feeBps", Value::uint(*fee_bps as u64))
-        }
+        Intent::CreatePool {
+            creator,
+            asset_a,
+            asset_b,
+            amount_a,
+            amount_b,
+            fee_bps,
+        } => t("CreatePool")
+            .field("creator", account(creator))
+            .field("assetA", id(asset_a))
+            .field("assetB", id(asset_b))
+            .field("amountA", amount(*amount_a))
+            .field("amountB", amount(*amount_b))
+            .field("feeBps", Value::uint(*fee_bps as u64)),
         Intent::CreateToken {
             creator,
             symbol: sym,
@@ -118,7 +161,13 @@ pub fn typed_intent(intent: &Intent) -> TypedData {
             .field("xzecLiquidity", amount(*xzec_liquidity))
             .field("tokenLiquidity", amount(*token_liquidity))
             .field("feeBps", Value::uint(*fee_bps as u64)),
-        Intent::MintItem { creator, symbol: sym, supply, bond, content } => t("MintItem")
+        Intent::MintItem {
+            creator,
+            symbol: sym,
+            supply,
+            bond,
+            content,
+        } => t("MintItem")
             .field("creator", account(creator))
             .field("symbol", symbol(sym))
             .field("supply", amount(*supply))
@@ -129,35 +178,85 @@ pub fn typed_intent(intent: &Intent) -> TypedData {
             .field("blind", Value::Bytes32(*blind)),
         Intent::BurnItem { holder, asset } => t("BurnItem")
             .field("holder", account(holder))
-            .field("asset", Value::uint(*asset as u64)),
+            .field("asset", id(asset)),
+        Intent::LaunchCurve {
+            creator,
+            symbol: sym,
+            display_name,
+            metadata_hash,
+            fee_bps,
+            dev_buy,
+            max_zec,
+        } => t("LaunchCurve")
+            .field("creator", account(creator))
+            .field("symbol", symbol(sym))
+            .field(
+                "displayName",
+                Value::String(String::from_utf8_lossy(display_name).to_string()),
+            )
+            .field("metadataHash", Value::Bytes32(*metadata_hash))
+            .field("feeBps", Value::uint(*fee_bps as u64))
+            .field("devBuy", amount(*dev_buy))
+            .field("maxZec", amount(*max_zec)),
+        Intent::BuyCurve {
+            buyer,
+            asset,
+            tokens,
+            max_zec,
+        } => t("BuyCurve")
+            .field("buyer", account(buyer))
+            .field("asset", id(asset))
+            .field("tokens", amount(*tokens))
+            .field("maxZec", amount(*max_zec)),
+        Intent::SellCurve {
+            seller,
+            asset,
+            tokens,
+            min_zec,
+        } => t("SellCurve")
+            .field("seller", account(seller))
+            .field("asset", id(asset))
+            .field("tokens", amount(*tokens))
+            .field("minZec", amount(*min_zec)),
 
         // The custody intents. `destination` is a commitment to a payout
         // address, never the address — Zyn's state is public and a withdrawal
         // destination should not be. The wallet shows the commitment, and the
         // interface that produced it is what shows the address.
-        Intent::RequestWithdrawal { account: a, asset, amount: v, destination } => {
-            t("RequestWithdrawal")
-                .field("account", account(a))
-                .field("asset", Value::uint(*asset as u64))
-                .field("amount", amount(*v))
-                .field("destinationCommitment", Value::Bytes32(*destination))
-        }
-        Intent::BindWithdrawal { account: a, destination } => t("BindWithdrawal")
+        Intent::RequestWithdrawal {
+            account: a,
+            asset,
+            amount: v,
+            destination,
+        } => t("RequestWithdrawal")
+            .field("account", account(a))
+            .field("asset", id(asset))
+            .field("amount", amount(*v))
+            .field("destinationCommitment", Value::Bytes32(*destination)),
+        Intent::BindWithdrawal {
+            account: a,
+            destination,
+        } => t("BindWithdrawal")
             .field("account", account(a))
             .field("destinationCommitment", Value::Bytes32(*destination)),
         Intent::CancelWithdrawal { account: a, asset } => t("CancelWithdrawal")
             .field("account", account(a))
-            .field("asset", Value::uint(*asset as u64)),
+            .field("asset", id(asset)),
 
-        Intent::PlaceOffer { maker, offer_asset, offer_amount, want_asset, want_amount, expires_at_epoch } => {
-            t("PlaceOffer")
-                .field("maker", account(maker))
-                .field("offerAsset", Value::uint(*offer_asset as u64))
-                .field("offerAmount", amount(*offer_amount))
-                .field("wantAsset", Value::uint(*want_asset as u64))
-                .field("wantAmount", amount(*want_amount))
-                .field("expiresAtEpoch", Value::uint(*expires_at_epoch))
-        }
+        Intent::PlaceOffer {
+            maker,
+            offer_asset,
+            offer_amount,
+            want_asset,
+            want_amount,
+            expires_at_epoch,
+        } => t("PlaceOffer")
+            .field("maker", account(maker))
+            .field("offerAsset", id(offer_asset))
+            .field("offerAmount", amount(*offer_amount))
+            .field("wantAsset", id(want_asset))
+            .field("wantAmount", amount(*want_amount))
+            .field("expiresAtEpoch", Value::uint(*expires_at_epoch)),
         Intent::TakeOffer { taker, offer } => t("TakeOffer")
             .field("taker", account(taker))
             .field("offer", Value::uint(*offer)),
@@ -186,7 +285,7 @@ mod tests {
         Intent::SwapExactIn {
             account: [1u8; 32],
             asset_in: XZEC,
-            path: path_ids,
+            path: path_ids.into_iter().map(crate::types::legacy_id).collect(),
             amount_in: Fixed::whole(100),
             min_out: Fixed::whole(90),
         }
@@ -198,7 +297,7 @@ mod tests {
     fn a_swap_shows_its_route_and_its_limits() {
         assert_eq!(
             typed_intent(&swap(vec![1, 2])).encode_type(),
-            "SwapExactIn(bytes32 account,uint256 assetIn,uint256[] path,int256 amountIn,int256 minOut)"
+            "SwapExactIn(bytes32 account,bytes32 assetIn,bytes32[] path,int256 amountIn,int256 minOut)"
         );
         assert_ne!(
             typed_intent(&swap(vec![1, 2])).struct_hash(),
@@ -211,7 +310,14 @@ mod tests {
     #[test]
     fn slippage_limits_are_signed() {
         let a = swap(vec![1]);
-        let Intent::SwapExactIn { account, asset_in, path, amount_in, .. } = a.clone() else {
+        let Intent::SwapExactIn {
+            account,
+            asset_in,
+            path,
+            amount_in,
+            ..
+        } = a.clone()
+        else {
             unreachable!()
         };
         let weakened = Intent::SwapExactIn {
@@ -221,21 +327,32 @@ mod tests {
             amount_in,
             min_out: Fixed::whole(1),
         };
-        assert_ne!(typed_intent(&a).struct_hash(), typed_intent(&weakened).struct_hash());
+        assert_ne!(
+            typed_intent(&a).struct_hash(),
+            typed_intent(&weakened).struct_hash()
+        );
     }
 
     /// Two different operations must never share a digest, whatever their
     /// fields — the type name is part of the hash.
     #[test]
     fn operations_are_distinguished_by_name() {
-        let a = typed_intent(&Intent::CancelWithdrawal { account: [1u8; 32], asset: XZEC });
-        let b = typed_intent(&Intent::BurnItem { holder: [1u8; 32], asset: XZEC });
+        let a = typed_intent(&Intent::CancelWithdrawal {
+            account: [1u8; 32],
+            asset: XZEC,
+        });
+        let b = typed_intent(&Intent::BurnItem {
+            holder: [1u8; 32],
+            asset: XZEC,
+        });
         assert_ne!(a.struct_hash(), b.struct_hash());
     }
 
     #[test]
     fn a_symbol_is_shown_without_its_padding() {
-        let Value::String(s) = symbol(b"CAT\0\0\0\0\0") else { panic!("wrong variant") };
+        let Value::String(s) = symbol(&crate::state::symbol(b"CAT")) else {
+            panic!("wrong variant")
+        };
         assert_eq!(s, "CAT");
     }
 

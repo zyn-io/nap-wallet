@@ -28,16 +28,18 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use alloc::collections::BTreeMap;
 use crate::amm;
 use crate::fixed::Fixed;
 use crate::merkle::{fold_intent, Hash};
 use crate::state::{
-    symbol as make_symbol, Binding, Checkpoint, PendingCredit, PendingExit, Phase, Pool, Reference,
-    SwapState,
-    Symbol, TokenInfo, Order};
+    symbol as make_symbol, Binding, Checkpoint, Order, PendingCredit, PendingExit, Phase, Pool,
+    Reference, SwapState, Symbol, TokenInfo,
+};
 use crate::tx::{Hop, Intent, Receipt, Reject, SequencedIntent};
-use crate::types::{AccountId, AssetId, CollectionId, OfferId, Params, PoolId, XZEC};
+use crate::types::{
+    AccountId, AssetId, CollectionId, OfferId, Params, PoolId, ADDRESS_SCOPE_V1, XZEC,
+};
+use alloc::collections::BTreeMap;
 
 const ARITH: Reject = Reject::ArithmeticFailure;
 
@@ -87,7 +89,9 @@ pub fn apply_committed(
     // advances here: an intent that was never in the history must not appear in
     // the epoch's commitment either.
     if si.seq != state.seq + 1 {
-        return vec![Receipt::Rejected { reason: Reject::OutOfOrder }];
+        return vec![Receipt::Rejected {
+            reason: Reject::OutOfOrder,
+        }];
     }
 
     // Record the intent in the chain's history *before* executing it, so the
@@ -98,12 +102,19 @@ pub fn apply_committed(
     state.epoch_intents = state.epoch_intents.saturating_add(1);
 
     let result = match &si.intent {
-        Intent::CreditDeposit { account, asset, amount, index, external_ref } => {
-            credit_deposit(state, *account, *asset, *amount, *index, *external_ref)
-        }
-        Intent::Transfer { from, to, asset, amount } => {
-            transfer(state, *from, *to, *asset, *amount)
-        }
+        Intent::CreditDeposit {
+            account,
+            asset,
+            amount,
+            index,
+            external_ref,
+        } => credit_deposit(state, *account, *asset, *amount, *index, *external_ref),
+        Intent::Transfer {
+            from,
+            to,
+            asset,
+            amount,
+        } => transfer(state, *from, *to, *asset, *amount),
         Intent::AcceptOffer {
             maker,
             taker,
@@ -120,22 +131,122 @@ pub fn apply_committed(
             *want_asset,
             *want_amount,
         ),
-        Intent::MintItem { creator, symbol, supply, bond, content } => {
-            mint_item(state, *creator, *symbol, *supply, *bond, *content)
-        }
+        Intent::MintItem {
+            creator,
+            symbol,
+            supply,
+            bond,
+            content,
+        } => mint_item(state, *creator, *symbol, *supply, *bond, *content),
         Intent::BurnItem { holder, asset } => burn_item(state, *holder, *asset),
-        Intent::CreateCollection { creator, symbol, cap, fee_bps } => create_collection(state, *creator, *symbol, *cap, *fee_bps),
-        Intent::MintCollectionItem { creator, collection, to, symbol, content } => mint_collection_item(state, *creator, *collection, *to, *symbol, *content),
-        Intent::AdvanceCollection { creator, collection, to } => advance_collection(state, *creator, *collection, *to),
-        Intent::FundCollection { from, collection, amount } => fund_collection(state, *from, *collection, *amount),
-        Intent::RedeemCollectionItem { holder, asset } => redeem_collection_item(state, *holder, *asset),
-        Intent::PlaceOffer { maker, offer_asset, offer_amount, want_asset, want_amount, expires_at_epoch } => {
-            place_offer(state, *maker, *offer_asset, *offer_amount, *want_asset, *want_amount, *expires_at_epoch)
+        Intent::LaunchCurve {
+            creator,
+            symbol,
+            display_name,
+            metadata_hash,
+            fee_bps,
+            dev_buy,
+            max_zec,
+        } => crate::cave::create(
+            state,
+            *creator,
+            *symbol,
+            display_name.clone(),
+            *metadata_hash,
+            *fee_bps,
+            *dev_buy,
+            *max_zec,
+        ),
+        Intent::BuyCurve {
+            buyer,
+            asset,
+            tokens,
+            max_zec,
+        } => crate::cave::buy(state, *buyer, *asset, *tokens, *max_zec),
+        Intent::SellCurve {
+            seller,
+            asset,
+            tokens,
+            min_zec,
+        } => crate::cave::sell(state, *seller, *asset, *tokens, *min_zec),
+        Intent::CreateCollection {
+            creator,
+            symbol,
+            cap,
+            fee_bps,
+        } => create_collection(state, *creator, *symbol, *cap, *fee_bps),
+        Intent::MintCollectionItem {
+            creator,
+            collection,
+            serial,
+            to,
+            symbol,
+            content,
+        } => mint_collection_item(
+            state,
+            *creator,
+            *collection,
+            *serial,
+            *to,
+            *symbol,
+            *content,
+        ),
+        Intent::MintCollectionItemLegacy {
+            creator,
+            collection,
+            to,
+            symbol,
+            content,
+        } => {
+            let serial = state
+                .collections
+                .get(collection)
+                .map(|entry| entry.minted)
+                .unwrap_or(0);
+            mint_collection_item(state, *creator, *collection, serial, *to, *symbol, *content)
         }
+        Intent::AdvanceCollection {
+            creator,
+            collection,
+            to,
+        } => advance_collection(state, *creator, *collection, *to),
+        Intent::FundCollection {
+            from,
+            collection,
+            amount,
+        } => fund_collection(state, *from, *collection, *amount),
+        Intent::RedeemCollectionItem { holder, asset } => {
+            redeem_collection_item(state, *holder, *asset)
+        }
+        Intent::PlaceOffer {
+            maker,
+            offer_asset,
+            offer_amount,
+            want_asset,
+            want_amount,
+            expires_at_epoch,
+        } => place_offer(
+            state,
+            *maker,
+            *offer_asset,
+            *offer_amount,
+            *want_asset,
+            *want_amount,
+            *expires_at_epoch,
+        ),
         Intent::TakeOffer { taker, offer } => take_offer(state, *taker, *offer),
         Intent::CancelOffer { maker, offer } => cancel_offer(state, *maker, *offer),
-        Intent::CreateBridgedAsset { symbol, origin } => create_bridged_asset(state, *symbol, *origin),
-        Intent::CreateBridgedItem { symbol, origin, content } => create_bridged_item(state, *symbol, *origin, *content),
+        Intent::CreateBridgedAsset {
+            symbol,
+            origin,
+            origin_network,
+            origin_asset,
+        } => create_bridged_asset(state, *symbol, *origin, origin_network, origin_asset),
+        Intent::CreateBridgedItem {
+            symbol,
+            origin,
+            content,
+        } => create_bridged_item(state, *symbol, *origin, *content),
         Intent::Reblind { account, blind } => reblind(state, *account, *blind),
         Intent::CreateToken {
             creator,
@@ -155,30 +266,59 @@ pub fn apply_committed(
             *token_liquidity,
             *fee_bps,
         ),
-        Intent::CreatePool { creator, asset_a, asset_b, amount_a, amount_b, fee_bps } => {
-            create_pool(state, *creator, *asset_a, *asset_b, *amount_a, *amount_b, *fee_bps)
-        }
-        Intent::AddLiquidity { account, pool, max0, max1, min_shares } => {
-            add_liquidity(state, *account, *pool, *max0, *max1, *min_shares)
-        }
-        Intent::RemoveLiquidity { account, pool, shares, min0, min1 } => {
-            remove_liquidity(state, *account, *pool, *shares, *min0, *min1)
-        }
-        Intent::SwapExactIn { account, asset_in, path, amount_in, min_out } => {
-            swap_exact_in(state, *account, *asset_in, path, *amount_in, *min_out)
-        }
-        Intent::SwapExactOut { account, asset_in, path, amount_out, max_in } => {
-            swap_exact_out(state, *account, *asset_in, path, *amount_out, *max_in)
-        }
-        Intent::RequestWithdrawal { account, asset, amount, destination } => {
-            request_withdrawal(state, *account, *asset, *amount, *destination)
-        }
-        Intent::BindWithdrawal { account, destination } => {
-            bind_withdrawal(state, *account, *destination)
-        }
-        Intent::ConfirmWithdrawal { account, asset, amount } => {
-            confirm_withdrawal(state, *account, *asset, *amount)
-        }
+        Intent::CreatePool {
+            creator,
+            asset_a,
+            asset_b,
+            amount_a,
+            amount_b,
+            fee_bps,
+        } => create_pool(
+            state, *creator, *asset_a, *asset_b, *amount_a, *amount_b, *fee_bps,
+        ),
+        Intent::AddLiquidity {
+            account,
+            pool,
+            max0,
+            max1,
+            min_shares,
+        } => add_liquidity(state, *account, *pool, *max0, *max1, *min_shares),
+        Intent::RemoveLiquidity {
+            account,
+            pool,
+            shares,
+            min0,
+            min1,
+        } => remove_liquidity(state, *account, *pool, *shares, *min0, *min1),
+        Intent::SwapExactIn {
+            account,
+            asset_in,
+            path,
+            amount_in,
+            min_out,
+        } => swap_exact_in(state, *account, *asset_in, path, *amount_in, *min_out),
+        Intent::SwapExactOut {
+            account,
+            asset_in,
+            path,
+            amount_out,
+            max_in,
+        } => swap_exact_out(state, *account, *asset_in, path, *amount_out, *max_in),
+        Intent::RequestWithdrawal {
+            account,
+            asset,
+            amount,
+            destination,
+        } => request_withdrawal(state, *account, *asset, *amount, *destination),
+        Intent::BindWithdrawal {
+            account,
+            destination,
+        } => bind_withdrawal(state, *account, *destination),
+        Intent::ConfirmWithdrawal {
+            account,
+            asset,
+            amount,
+        } => confirm_withdrawal(state, *account, *asset, *amount),
         Intent::CancelWithdrawal { account, asset } => cancel_withdrawal(state, *account, *asset),
         Intent::AttestVaultBalance { asset, observed } => attest_vault(state, *asset, *observed),
         Intent::ConfirmAnchor { epoch } => confirm_anchor(state, *epoch),
@@ -211,11 +351,16 @@ pub fn apply_committed(
                     l.params = *params;
                     crate::launch::undo_partial(state).map(|_| vec![Receipt::LaunchSet])
                 }
-                (Ok(()), None) => { state.launch = Some(crate::launch::LaunchState::new(*params)); Ok(vec![Receipt::LaunchSet]) }
+                (Ok(()), None) => {
+                    state.launch = Some(crate::launch::LaunchState::new(*params));
+                    Ok(vec![Receipt::LaunchSet])
+                }
             }
         }
         Intent::ZcashHeight { height } => crate::launch::observe_height(state, *height),
-        Intent::UpdateAssetReference { asset, price } => crate::launch::observe_asset_reference(state, *asset, *price),
+        Intent::UpdateAssetReference { asset, price } => {
+            crate::launch::observe_asset_reference(state, *asset, *price)
+        }
         Intent::UpdateReference { pool, price } => update_reference(state, *pool, *price),
         Intent::SetParams { params } => set_params(state, *params),
     };
@@ -223,7 +368,12 @@ pub fn apply_committed(
     // Only the accounts this intent could have emptied are considered, so
     // pruning stays O(1) rather than sweeping every account on the chain.
     for id in accounts_named(&si.intent) {
-        if state.accounts.get(&id).map(|a| a.is_empty()).unwrap_or(false) {
+        if state
+            .accounts
+            .get(&id)
+            .map(|a| a.is_empty())
+            .unwrap_or(false)
+        {
             state.accounts.remove(&id);
         }
     }
@@ -247,10 +397,14 @@ pub fn apply_batch(
     let mut all = Vec::with_capacity(batch.len());
     for si in batch {
         let receipts = apply(&mut scratch, si);
-        if receipts
-            .iter()
-            .any(|r| matches!(r, Receipt::Rejected { reason: Reject::ArithmeticFailure }))
-        {
+        if receipts.iter().any(|r| {
+            matches!(
+                r,
+                Receipt::Rejected {
+                    reason: Reject::ArithmeticFailure
+                }
+            )
+        }) {
             return Err(Reject::ArithmeticFailure);
         }
         all.extend(receipts);
@@ -300,7 +454,10 @@ fn seal_epoch(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
     // and never stops the seal.
     let mut scratch = state.clone();
     match crate::launch::tick(&mut scratch) {
-        Ok(r) => { *state = scratch; receipts.extend(r); }
+        Ok(r) => {
+            *state = scratch;
+            receipts.extend(r);
+        }
         Err(reason) => receipts.push(Receipt::LaunchSkipped { reason }),
     }
     receipts.push(Receipt::Checkpointed(checkpoint(state)));
@@ -315,8 +472,6 @@ struct Side {
     gross: Fixed,
     /// Sum of inputs after the fee — what the curve is asked to price.
     net: Fixed,
-    /// Sum of fees, of which a share may go to the treasury.
-    fee: Fixed,
 }
 
 fn clear_orders(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
@@ -334,18 +489,24 @@ fn clear_orders(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
     pool_ids.dedup();
 
     let (seq_now, staleness) = (state.seq, state.params.reference_staleness);
-    let share = state.params.protocol_fee_share_bps;
-    let treasury = state.params.treasury;
-
     for pid in pool_ids {
         let Some(pool) = state.pools.get(&pid) else {
             for (i, o) in orders.iter().enumerate() {
-                if o.pool == pid { outcome[i] = Some(unfilled(o, Reject::UnknownPool)); }
+                if o.pool == pid {
+                    outcome[i] = Some(unfilled(o, Reject::UnknownPool));
+                }
             }
             continue;
         };
-        let (asset0, asset1, fee_bps) = (pool.asset0, pool.asset1, effective_fee(pool, seq_now, staleness));
-        let mut live: Vec<usize> = (0..orders.len()).filter(|&i| orders[i].pool == pid).collect();
+        let (asset0, asset1, fee_bps) = (
+            pool.asset0,
+            pool.asset1,
+            effective_fee(pool, seq_now, staleness),
+        );
+        let graduated = crate::cave::graduated_creator(state, pid).is_some();
+        let mut live: Vec<usize> = (0..orders.len())
+            .filter(|&i| orders[i].pool == pid)
+            .collect();
 
         // Drop what cannot pay, counting each account's orders together.
         {
@@ -354,7 +515,13 @@ fn clear_orders(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
                 let o = &orders[i];
                 let key = (o.account, o.asset_in);
                 let so_far = reserved.get(&key).copied().unwrap_or(Fixed::ZERO);
-                let need = match so_far.add(o.amount_in) { Some(n) => n, None => { outcome[i] = Some(unfilled(o, Reject::ArithmeticFailure)); return false } };
+                let need = match so_far.add(o.amount_in) {
+                    Some(n) => n,
+                    None => {
+                        outcome[i] = Some(unfilled(o, Reject::ArithmeticFailure));
+                        return false;
+                    }
+                };
                 if state.balance(&o.account, o.asset_in) < need {
                     outcome[i] = Some(unfilled(o, Reject::InsufficientBalance));
                     return false;
@@ -371,37 +538,75 @@ fn clear_orders(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
                 break None;
             }
             let side = |asset: AssetId| -> Result<Side, Reject> {
-                let mut s = Side { orders: Vec::new(), gross: Fixed::ZERO, net: Fixed::ZERO, fee: Fixed::ZERO };
+                let mut s = Side {
+                    orders: Vec::new(),
+                    gross: Fixed::ZERO,
+                    net: Fixed::ZERO,
+                };
                 for &i in &live {
                     let o = &orders[i];
-                    if o.asset_in != asset { continue }
-                    let fee = amm::fee_taken(o.amount_in, fee_bps).ok_or(ARITH)?;
+                    if o.asset_in != asset {
+                        continue;
+                    }
+                    // Graduated token sellers pay from gross ZEC output, so
+                    // their entire token input participates in batch pricing.
+                    let fee = if graduated && asset != XZEC {
+                        Fixed::ZERO
+                    } else {
+                        amm::fee_taken(o.amount_in, fee_bps).ok_or(ARITH)?
+                    };
                     s.orders.push(i);
                     s.gross = s.gross.add(o.amount_in).ok_or(ARITH)?;
                     s.net = s.net.add(o.amount_in.sub(fee).ok_or(ARITH)?).ok_or(ARITH)?;
-                    s.fee = s.fee.add(fee).ok_or(ARITH)?;
                 }
                 Ok(s)
             };
             let (s0, s1) = (side(asset0)?, side(asset1)?);
             let pool = state.pools.get(&pid).ok_or(ARITH)?;
-            let Some((out1, out0)) = clear_pool(pool.reserve0, pool.reserve1, s0.net, s1.net) else {
+            let Some((out1, out0)) = clear_pool(pool.reserve0, pool.reserve1, s0.net, s1.net)
+            else {
                 // Nothing prices — refuse the batch rather than guess.
-                for &i in &live { outcome[i] = Some(unfilled(&orders[i], Reject::InsufficientReserves)); }
+                for &i in &live {
+                    outcome[i] = Some(unfilled(&orders[i], Reject::InsufficientReserves));
+                }
                 break None;
             };
             // Pro rata by gross input; the remainder from rounding stays in the pool.
-            let mut fills: Vec<(usize, Fixed)> = Vec::with_capacity(live.len());
+            let mut fills: Vec<(usize, Hop)> = Vec::with_capacity(live.len());
             let mut dropped = false;
             for (s, total_out) in [(&s0, out1), (&s1, out0)] {
                 for &i in &s.orders {
                     let o = &orders[i];
-                    let out = if s.gross.is_positive() { total_out.mul_div(o.amount_in, s.gross).ok_or(ARITH)? } else { Fixed::ZERO };
+                    let asset_out = if o.asset_in == asset0 { asset1 } else { asset0 };
+                    let gross_out = if s.gross.is_positive() {
+                        total_out.mul_div(o.amount_in, s.gross).ok_or(ARITH)?
+                    } else {
+                        Fixed::ZERO
+                    };
+                    let (out, fee_asset, fee) = if graduated && asset_out == XZEC {
+                        let fee = amm::fee_taken(gross_out, fee_bps).ok_or(ARITH)?;
+                        (gross_out.sub(fee).ok_or(ARITH)?, XZEC, fee)
+                    } else {
+                        let fee = amm::fee_taken(o.amount_in, fee_bps).ok_or(ARITH)?;
+                        (gross_out, o.asset_in, fee)
+                    };
                     if out < o.min_out || !out.is_positive() {
                         outcome[i] = Some(unfilled(o, Reject::SlippageExceeded));
                         dropped = true;
                     } else {
-                        fills.push((i, out));
+                        fills.push((
+                            i,
+                            hop_with_fee(
+                                state,
+                                pid,
+                                o.asset_in,
+                                asset_out,
+                                o.amount_in,
+                                out,
+                                fee_asset,
+                                fee,
+                            )?,
+                        ));
                     }
                 }
             }
@@ -409,52 +614,99 @@ fn clear_orders(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
                 live.retain(|i| outcome[*i].is_none());
                 continue;
             }
-            break Some((s0, s1, out1, out0, fills));
+            break Some((s0, s1, fills));
         };
 
-        let Some((s0, s1, out1, out0, fills)) = fill else { continue };
+        let Some((s0, s1, fills)) = fill else {
+            continue;
+        };
 
-        // Settle: inputs in (less the protocol's share of the fee), outputs out.
-        let cut0 = protocol_cut(s0.fee, share).ok_or(ARITH)?;
-        let cut1 = protocol_cut(s1.fee, share).ok_or(ARITH)?;
-        if s0.fee.is_positive() { crate::launch::note_pool_fee(state, pid, asset0, s0.fee); }
-        if s1.fee.is_positive() { crate::launch::note_pool_fee(state, pid, asset1, s1.fee); }
+        // Start with all user inputs entering the pool. Input-leg external fees
+        // reduce those credits; output-leg external fees increase the reserve
+        // debit alongside the user's net output. Whatever remains of each fee
+        // stays in the pool, and pro-rata output dust is never debited.
+        let mut credit0 = s0.gross;
+        let mut credit1 = s1.gross;
+        let mut debit0 = Fixed::ZERO;
+        let mut debit1 = Fixed::ZERO;
+        for (_, h) in &fills {
+            if h.asset_out == asset0 {
+                debit0 = debit0.add(h.amount_out).ok_or(ARITH)?;
+            } else {
+                debit1 = debit1.add(h.amount_out).ok_or(ARITH)?;
+            }
+            if h.fee_asset == h.asset_in {
+                if h.asset_in == asset0 {
+                    credit0 = credit0.sub(h.protocol_fee).ok_or(ARITH)?;
+                } else {
+                    credit1 = credit1.sub(h.protocol_fee).ok_or(ARITH)?;
+                }
+            } else if h.fee_asset == h.asset_out {
+                if h.asset_out == asset0 {
+                    debit0 = debit0.add(h.protocol_fee).ok_or(ARITH)?;
+                } else {
+                    debit1 = debit1.add(h.protocol_fee).ok_or(ARITH)?;
+                }
+            } else {
+                return Err(ARITH);
+            }
+        }
         {
             let pool = state.pools.get_mut(&pid).ok_or(ARITH)?;
-            if s0.gross.is_positive() { pool.credit_reserve(asset0, s0.gross.sub(cut0).ok_or(ARITH)?).ok_or(ARITH)?; }
-            if s1.gross.is_positive() { pool.credit_reserve(asset1, s1.gross.sub(cut1).ok_or(ARITH)?).ok_or(ARITH)?; }
-            if out1.is_positive() { pool.debit_reserve(asset1, out1).ok_or(ARITH)?; }
-            if out0.is_positive() { pool.debit_reserve(asset0, out0).ok_or(ARITH)?; }
+            if credit0.is_positive() {
+                pool.credit_reserve(asset0, credit0).ok_or(ARITH)?;
+            }
+            if credit1.is_positive() {
+                pool.credit_reserve(asset1, credit1).ok_or(ARITH)?;
+            }
+            if debit0.is_positive() {
+                pool.debit_reserve(asset0, debit0).ok_or(ARITH)?;
+            }
+            if debit1.is_positive() {
+                pool.debit_reserve(asset1, debit1).ok_or(ARITH)?;
+            }
         }
-        if cut0.is_positive() { state.account_mut(&treasury).credit(asset0, cut0).ok_or(ARITH)?; }
-        if cut1.is_positive() { state.account_mut(&treasury).credit(asset1, cut1).ok_or(ARITH)?; }
-        // Rounding dust: what was debited from the reserves but not paid out
-        // is returned to them, so the reserves and the curve stay honest.
-        let mut paid0 = Fixed::ZERO;
-        let mut paid1 = Fixed::ZERO;
-        for &(i, out) in &fills {
+        for &(i, h) in &fills {
             let o = &orders[i];
-            let asset_out = if o.asset_in == asset0 { asset1 } else { asset0 };
-            state.account_mut(&o.account).debit(o.asset_in, o.amount_in).ok_or(ARITH)?;
-            state.account_mut(&o.account).credit(asset_out, out).ok_or(ARITH)?;
-            if asset_out == asset1 { paid1 = paid1.add(out).ok_or(ARITH)?; } else { paid0 = paid0.add(out).ok_or(ARITH)?; }
-            let fee = amm::fee_taken(o.amount_in, fee_bps).ok_or(ARITH)?;
-            let hop = Hop { pool: pid, asset_in: o.asset_in, asset_out, amount_in: o.amount_in, amount_out: out, fee, protocol_fee: protocol_cut(fee, share).ok_or(ARITH)? };
-            state.epoch_gross_volume = state.epoch_gross_volume.add(xzec_leg(core::slice::from_ref(&hop))).ok_or(ARITH)?;
-            outcome[i] = Some(Receipt::Swapped { account: o.account, asset_in: o.asset_in, asset_out, amount_in: o.amount_in, amount_out: out, hops: vec![hop] });
+            state
+                .account_mut(&o.account)
+                .debit(o.asset_in, o.amount_in)
+                .ok_or(ARITH)?;
+            state
+                .account_mut(&o.account)
+                .credit(h.asset_out, h.amount_out)
+                .ok_or(ARITH)?;
+            crate::launch::note_pool_fee(state, pid, h.fee_asset, h.fee);
+            credit_external_pool_fee(state, &h)?;
+            state.epoch_gross_volume = state
+                .epoch_gross_volume
+                .add(xzec_leg(core::slice::from_ref(&h)))
+                .ok_or(ARITH)?;
+            outcome[i] = Some(Receipt::Swapped {
+                account: o.account,
+                asset_in: o.asset_in,
+                asset_out: h.asset_out,
+                amount_in: o.amount_in,
+                amount_out: h.amount_out,
+                hops: vec![h],
+            });
         }
-        let pool = state.pools.get_mut(&pid).ok_or(ARITH)?;
-        let dust1 = out1.sub(paid1).ok_or(ARITH)?;
-        let dust0 = out0.sub(paid0).ok_or(ARITH)?;
-        if dust1.is_positive() { pool.credit_reserve(asset1, dust1).ok_or(ARITH)?; }
-        if dust0.is_positive() { pool.credit_reserve(asset0, dust0).ok_or(ARITH)?; }
     }
 
-    Ok(outcome.into_iter().map(|r| r.expect("every order has an outcome")).collect())
+    Ok(outcome
+        .into_iter()
+        .map(|r| r.expect("every order has an outcome"))
+        .collect())
 }
 
 fn unfilled(o: &Order, reason: Reject) -> Receipt {
-    Receipt::SwapUnfilled { account: o.account, pool: o.pool, asset_in: o.asset_in, amount_in: o.amount_in, reason }
+    Receipt::SwapUnfilled {
+        account: o.account,
+        pool: o.pool,
+        asset_in: o.asset_in,
+        amount_in: o.amount_in,
+        reason,
+    }
 }
 
 /// Clear `u` of asset0 sold and `v` of asset1 sold (both after fees) against
@@ -480,19 +732,37 @@ pub fn clear_pool(r0: Fixed, r1: Fixed, u: Fixed, v: Fixed) -> Option<(Fixed, Fi
     // Which side is in surplus, compared without overflow: u·r1 ≥ v·r0.
     if u.mul_div(r1, r0)? >= v {
         let denom = r1.add(v)?;
-        let x = u.mul_div(r1, denom)?.sub(v.mul_div(r0, denom)?)?.max(Fixed::ZERO);
-        let out_res = if x.is_positive() { r1.mul_div(x, r0.add(x)?)? } else { Fixed::ZERO };
+        let x = u
+            .mul_div(r1, denom)?
+            .sub(v.mul_div(r0, denom)?)?
+            .max(Fixed::ZERO);
+        let out_res = if x.is_positive() {
+            r1.mul_div(x, r0.add(x)?)?
+        } else {
+            Fixed::ZERO
+        };
         let out1 = out_res.add(v)?;
         let out0 = u.sub(x)?;
-        if out_res >= r1 || out0.is_negative() { return None }
+        if out_res >= r1 || out0.is_negative() {
+            return None;
+        }
         Some((out1, out0))
     } else {
         let denom = r0.add(u)?;
-        let y = v.mul_div(r0, denom)?.sub(u.mul_div(r1, denom)?)?.max(Fixed::ZERO);
-        let out_res = if y.is_positive() { r0.mul_div(y, r1.add(y)?)? } else { Fixed::ZERO };
+        let y = v
+            .mul_div(r0, denom)?
+            .sub(u.mul_div(r1, denom)?)?
+            .max(Fixed::ZERO);
+        let out_res = if y.is_positive() {
+            r0.mul_div(y, r1.add(y)?)?
+        } else {
+            Fixed::ZERO
+        };
         let out0 = out_res.add(u)?;
         let out1 = v.sub(y)?;
-        if out_res >= r0 || out1.is_negative() { return None }
+        if out_res >= r0 || out1.is_negative() {
+            return None;
+        }
         Some((out1, out0))
     }
 }
@@ -535,23 +805,45 @@ pub fn checkpoint(state: &mut SwapState) -> Checkpoint {
 /// Accounts an intent could leave empty, so pruning need not sweep the map.
 fn accounts_named(i: &Intent) -> Vec<AccountId> {
     match i {
-        Intent::MintCollectionItem { creator, to, .. } => alloc::vec![*creator, *to],
+        Intent::MintCollectionItem { creator, to, .. }
+        | Intent::MintCollectionItemLegacy { creator, to, .. } => alloc::vec![*creator, *to],
         // The escrow can be left empty by the last take or cancel, like any
         // other account this moves value out of.
         Intent::TakeOffer { taker, .. } => alloc::vec![*taker, crate::launch::POT_OFFERS],
         Intent::PlaceOffer { maker: account, .. } | Intent::CancelOffer { maker: account, .. } => {
             alloc::vec![*account, crate::launch::POT_OFFERS]
         }
-        Intent::AdvanceCollection { creator: account, .. }
-        | Intent::CreateCollection { creator: account, .. }
+        Intent::AdvanceCollection {
+            creator: account, ..
+        }
+        | Intent::CreateCollection {
+            creator: account, ..
+        }
         | Intent::FundCollection { from: account, .. }
-        | Intent::RedeemCollectionItem { holder: account, .. }
+        | Intent::RedeemCollectionItem {
+            holder: account, ..
+        }
         | Intent::CreditDeposit { account, .. }
         | Intent::Reblind { account, .. }
-        | Intent::CreateToken { creator: account, .. }
-        | Intent::MintItem { creator: account, .. }
-        | Intent::BurnItem { holder: account, .. }
-        | Intent::CreatePool { creator: account, .. }
+        | Intent::CreateToken {
+            creator: account, ..
+        }
+        | Intent::LaunchCurve {
+            creator: account, ..
+        }
+        | Intent::BuyCurve { buyer: account, .. }
+        | Intent::SellCurve {
+            seller: account, ..
+        }
+        | Intent::MintItem {
+            creator: account, ..
+        }
+        | Intent::BurnItem {
+            holder: account, ..
+        }
+        | Intent::CreatePool {
+            creator: account, ..
+        }
         | Intent::AddLiquidity { account, .. }
         | Intent::RemoveLiquidity { account, .. }
         | Intent::SwapExactIn { account, .. }
@@ -603,7 +895,9 @@ fn credit_deposit(
     }
     // The custody rules are the component's; what is ZynZap's is moving its own
     // supply and balance in the same step.
-    vault.credit(amount, index, state.epoch).map_err(bridge_reject)?;
+    vault
+        .credit(amount, index, state.epoch)
+        .map_err(bridge_reject)?;
 
     let epoch = state.epoch;
     state.mint(asset, amount).ok_or(ARITH)?;
@@ -616,7 +910,13 @@ fn credit_deposit(
     };
     if let Some((fee, pot)) = fee_to {
         let p = state.account_mut(&pot);
-        let credit = p.incoming.get(&asset).copied().unwrap_or(PendingCredit::new(Fixed::ZERO, epoch)).extend(fee, epoch).map_err(bridge_reject)?;
+        let credit = p
+            .incoming
+            .get(&asset)
+            .copied()
+            .unwrap_or(PendingCredit::new(Fixed::ZERO, epoch))
+            .extend(fee, epoch)
+            .map_err(bridge_reject)?;
         p.incoming.insert(asset, credit);
         crate::launch::note_fee(state, account, asset, fee);
     }
@@ -662,11 +962,21 @@ fn transfer(
     // A self-transfer must be a no-op on balances, not a debit followed by a
     // credit against a stale read.
     if from == to {
-        return Ok(vec![Receipt::Transferred { from, to, asset, amount }]);
+        return Ok(vec![Receipt::Transferred {
+            from,
+            to,
+            asset,
+            amount,
+        }]);
     }
     state.account_mut(&from).debit(asset, amount).ok_or(ARITH)?;
     state.account_mut(&to).credit(asset, amount).ok_or(ARITH)?;
-    Ok(vec![Receipt::Transferred { from, to, asset, amount }])
+    Ok(vec![Receipt::Transferred {
+        from,
+        to,
+        asset,
+        amount,
+    }])
 }
 
 /// Commit an asset at a price and leave it resting.
@@ -700,7 +1010,15 @@ fn place_offer(
     // Refuse now what the take would refuse later: an item priced in anything
     // but xZEC has no fee the chain can compute, and an offer that can never
     // be taken should not be placed.
-    collection_fee_of(state, offer_asset, offer_amount, want_asset, want_amount, maker, maker)?;
+    collection_fee_of(
+        state,
+        offer_asset,
+        offer_amount,
+        want_asset,
+        want_amount,
+        maker,
+        maker,
+    )?;
     if state.balance(&maker, offer_asset) < offer_amount {
         return Err(Reject::InsufficientBalance);
     }
@@ -708,14 +1026,27 @@ fn place_offer(
         return Err(Reject::OfferExpired);
     }
 
-    state.account_mut(&maker).debit(offer_asset, offer_amount).ok_or(ARITH)?;
-    state.account_mut(&crate::launch::POT_OFFERS).credit(offer_asset, offer_amount).ok_or(ARITH)?;
+    state
+        .account_mut(&maker)
+        .debit(offer_asset, offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&crate::launch::POT_OFFERS)
+        .credit(offer_asset, offer_amount)
+        .ok_or(ARITH)?;
 
     let offer = state.next_offer_id;
     state.next_offer_id = offer.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
     state.offers.insert(
         offer,
-        crate::state::Offer { maker, offer_asset, offer_amount, want_asset, want_amount, expires_at_epoch },
+        crate::state::Offer {
+            maker,
+            offer_asset,
+            offer_amount,
+            want_asset,
+            want_amount,
+            expires_at_epoch,
+        },
     );
     Ok(alloc::vec![Receipt::OfferPlaced {
         offer,
@@ -732,7 +1063,11 @@ fn place_offer(
 ///
 /// Signed by the taker alone: the maker agreed when they placed it, and the
 /// asset has been out of their hands ever since.
-fn take_offer(state: &mut SwapState, taker: AccountId, offer: OfferId) -> Result<Vec<Receipt>, Reject> {
+fn take_offer(
+    state: &mut SwapState,
+    taker: AccountId,
+    offer: OfferId,
+) -> Result<Vec<Receipt>, Reject> {
     let o = *state.offers.get(&offer).ok_or(Reject::NoSuchOffer)?;
     if state.epoch > o.expires_at_epoch {
         return Err(Reject::OfferExpired);
@@ -741,7 +1076,15 @@ fn take_offer(state: &mut SwapState, taker: AccountId, offer: OfferId) -> Result
         return Err(Reject::CannotTakeOwnOffer);
     }
 
-    let fee = collection_fee_of(state, o.offer_asset, o.offer_amount, o.want_asset, o.want_amount, o.maker, taker)?;
+    let fee = collection_fee_of(
+        state,
+        o.offer_asset,
+        o.offer_amount,
+        o.want_asset,
+        o.want_amount,
+        o.maker,
+        taker,
+    )?;
     // The taker needs the price and their side of the fee.
     let mut owed = o.want_amount;
     if let Some((_, _, each, payer, _)) = fee {
@@ -767,17 +1110,33 @@ fn take_offer(state: &mut SwapState, taker: AccountId, offer: OfferId) -> Result
     }
     if let Some((_, _, each, _, payee)) = fee {
         let held = state.balance(&payee, XZEC);
-        let credited = if o.want_asset == XZEC && payee == o.maker { o.want_amount } else { Fixed::ZERO };
+        let credited = if o.want_asset == XZEC && payee == o.maker {
+            o.want_amount
+        } else {
+            Fixed::ZERO
+        };
         if held.add(credited).ok_or(ARITH)? < each {
             return Err(Reject::InsufficientBalance);
         }
     }
 
     // Validation complete; both legs now land or the batch is abandoned.
-    state.account_mut(&crate::launch::POT_OFFERS).debit(o.offer_asset, o.offer_amount).ok_or(ARITH)?;
-    state.account_mut(&taker).credit(o.offer_asset, o.offer_amount).ok_or(ARITH)?;
-    state.account_mut(&taker).debit(o.want_asset, o.want_amount).ok_or(ARITH)?;
-    state.account_mut(&o.maker).credit(o.want_asset, o.want_amount).ok_or(ARITH)?;
+    state
+        .account_mut(&crate::launch::POT_OFFERS)
+        .debit(o.offer_asset, o.offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&taker)
+        .credit(o.offer_asset, o.offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&taker)
+        .debit(o.want_asset, o.want_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&o.maker)
+        .credit(o.want_asset, o.want_amount)
+        .ok_or(ARITH)?;
     state.offers.remove(&offer);
 
     let mut out = alloc::vec![Receipt::OfferTaken {
@@ -798,15 +1157,30 @@ fn take_offer(state: &mut SwapState, taker: AccountId, offer: OfferId) -> Result
 /// Withdraw a resting offer and take the asset back.
 ///
 /// Allowed after expiry: expiry stops an offer being taken, not reclaimed.
-fn cancel_offer(state: &mut SwapState, maker: AccountId, offer: OfferId) -> Result<Vec<Receipt>, Reject> {
+fn cancel_offer(
+    state: &mut SwapState,
+    maker: AccountId,
+    offer: OfferId,
+) -> Result<Vec<Receipt>, Reject> {
     let o = *state.offers.get(&offer).ok_or(Reject::NoSuchOffer)?;
     if o.maker != maker {
         return Err(Reject::NotTheMaker);
     }
-    state.account_mut(&crate::launch::POT_OFFERS).debit(o.offer_asset, o.offer_amount).ok_or(ARITH)?;
-    state.account_mut(&maker).credit(o.offer_asset, o.offer_amount).ok_or(ARITH)?;
+    state
+        .account_mut(&crate::launch::POT_OFFERS)
+        .debit(o.offer_asset, o.offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&maker)
+        .credit(o.offer_asset, o.offer_amount)
+        .ok_or(ARITH)?;
     state.offers.remove(&offer);
-    Ok(alloc::vec![Receipt::OfferCancelled { offer, maker, offer_asset: o.offer_asset, offer_amount: o.offer_amount }])
+    Ok(alloc::vec![Receipt::OfferCancelled {
+        offer,
+        maker,
+        offer_asset: o.offer_asset,
+        offer_amount: o.offer_amount
+    }])
 }
 
 /// What a collection charges on one trade: which collection, its creator, what
@@ -834,7 +1208,9 @@ fn collection_fee_of(
     let collection = [offer_asset, want_asset]
         .into_iter()
         .find_map(|a| state.token(a).and_then(|t| t.collection));
-    let Some(id) = collection else { return Ok(None) };
+    let Some(id) = collection else {
+        return Ok(None);
+    };
     let c = state.collections.get(&id).ok_or(Reject::NoSuchCollection)?;
     let (bps, creator) = (c.fee_bps, c.creator);
     let (xzec_amount, xzec_payer, xzec_payee) = if want_asset == XZEC {
@@ -850,25 +1226,47 @@ fn collection_fee_of(
     Ok((each.is_positive()).then_some((id, creator, each, xzec_payer, xzec_payee)))
 }
 
-/// Take it. Both sides pay `each`; half of the total goes to the pool and half
-/// to the creator.
+/// Take it. Both sides pay `each`; 50% of the total goes to future ZYN POL,
+/// 40% raises the collection floor and 10% goes to the creator. Shares round
+/// down and the atomic remainder goes to POL.
 fn charge_collection_fee(state: &mut SwapState, fee: CollectionFee) -> Result<Receipt, Reject> {
     let (id, creator, each, payer, payee) = fee;
     state.account_mut(&payer).debit(XZEC, each).ok_or(ARITH)?;
     state.account_mut(&payee).debit(XZEC, each).ok_or(ARITH)?;
     let taken = each.add(each).ok_or(ARITH)?;
-    // Half to the holders, half to the creator. The holders' half is not paid
-    // to anyone: it goes into the pool, which raises the floor for every
-    // outstanding item at once and needs no bookkeeping per holder.
-    let to_pool = Fixed::raw(taken.0 / 2);
-    let to_creator = taken.sub(to_pool).ok_or(ARITH)?;
-    let c = state.collections.get_mut(&id).ok_or(Reject::NoSuchCollection)?;
+    let to_pool = protocol_cut(taken, 4_000).ok_or(ARITH)?;
+    let to_creator = protocol_cut(taken, 1_000).ok_or(ARITH)?;
+    let to_pol = taken
+        .sub(to_pool)
+        .and_then(|v| v.sub(to_creator))
+        .ok_or(ARITH)?;
+    let c = state
+        .collections
+        .get_mut(&id)
+        .ok_or(Reject::NoSuchCollection)?;
     c.pool = c.pool.add(to_pool).ok_or(ARITH)?;
     let (pool, redeem_price) = (c.pool, c.redeem_price());
-    if to_creator.is_positive() {
-        state.account_mut(&creator).credit(XZEC, to_creator).ok_or(ARITH)?;
+    if to_pol.is_positive() {
+        state
+            .account_mut(&crate::types::ZYN_POL)
+            .credit(XZEC, to_pol)
+            .ok_or(ARITH)?;
     }
-    Ok(Receipt::CollectionFeeTaken { collection: id, taken, to_pool, to_creator, pool, redeem_price })
+    if to_creator.is_positive() {
+        state
+            .account_mut(&creator)
+            .credit(XZEC, to_creator)
+            .ok_or(ARITH)?;
+    }
+    Ok(Receipt::CollectionFeeTaken {
+        collection: id,
+        taken,
+        to_pol,
+        to_pool,
+        to_creator,
+        pool,
+        redeem_price,
+    })
 }
 
 /// Settle a negotiated trade in one step.
@@ -905,11 +1303,25 @@ fn accept_offer(
     // a token has no price the chain can read, and a fee it cannot compute is
     // a fee it cannot take. Refusing is the honest answer — the alternative is
     // a free channel around the fee that only the well-informed would find.
-    let fee = collection_fee_of(state, offer_asset, offer_amount, want_asset, want_amount, maker, taker)?;
+    let fee = collection_fee_of(
+        state,
+        offer_asset,
+        offer_amount,
+        want_asset,
+        want_amount,
+        maker,
+        taker,
+    )?;
 
     // The buyer needs the price and their side of the fee.
     if let Some((_, _, each, payer, _)) = fee {
-        let owed = if payer == taker { want_amount } else { offer_amount }.add(each).ok_or(ARITH)?;
+        let owed = if payer == taker {
+            want_amount
+        } else {
+            offer_amount
+        }
+        .add(each)
+        .ok_or(ARITH)?;
         if state.balance(&payer, XZEC) < owed {
             return Err(Reject::InsufficientBalance);
         }
@@ -921,10 +1333,22 @@ fn accept_offer(
     }
 
     // Validation complete; both legs now land or the batch is abandoned.
-    state.account_mut(&maker).debit(offer_asset, offer_amount).ok_or(ARITH)?;
-    state.account_mut(&taker).credit(offer_asset, offer_amount).ok_or(ARITH)?;
-    state.account_mut(&taker).debit(want_asset, want_amount).ok_or(ARITH)?;
-    state.account_mut(&maker).credit(want_asset, want_amount).ok_or(ARITH)?;
+    state
+        .account_mut(&maker)
+        .debit(offer_asset, offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&taker)
+        .credit(offer_asset, offer_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&taker)
+        .debit(want_asset, want_amount)
+        .ok_or(ARITH)?;
+    state
+        .account_mut(&maker)
+        .credit(want_asset, want_amount)
+        .ok_or(ARITH)?;
 
     let mut out = vec![Receipt::OfferAccepted {
         maker,
@@ -957,7 +1381,11 @@ fn attest_vault(
     vault.attest(observed, epoch).map_err(bridge_reject)?;
     let headroom = vault.observed_headroom();
     state.tokens.get_mut(&asset).ok_or(ARITH)?.vault = Some(vault);
-    Ok(vec![Receipt::VaultAttested { asset, observed, headroom }])
+    Ok(vec![Receipt::VaultAttested {
+        asset,
+        observed,
+        headroom,
+    }])
 }
 
 /// Record that an epoch reached Zcash under a threshold certificate.
@@ -996,7 +1424,11 @@ fn confirm_anchor(state: &mut SwapState, epoch: u64) -> Result<Vec<Receipt>, Rej
         let a = state.account_mut(&account);
         a.incoming.remove(&asset);
         a.credit(asset, amount).ok_or(ARITH)?;
-        receipts.push(Receipt::DepositClaimed { account, asset, amount });
+        receipts.push(Receipt::DepositClaimed {
+            account,
+            asset,
+            amount,
+        });
     }
     Ok(receipts)
 }
@@ -1057,7 +1489,13 @@ fn request_withdrawal(
         state.account_mut(&pot).credit(asset, fee).ok_or(ARITH)?;
         crate::launch::note_fee(state, account, asset, fee);
     }
-    Ok(vec![Receipt::WithdrawalRequested { account, asset, amount: net, pending, destination }])
+    Ok(vec![Receipt::WithdrawalRequested {
+        account,
+        asset,
+        amount: net,
+        pending,
+        destination,
+    }])
 }
 
 /// Bind where an account's exits may go, or ask to move that binding.
@@ -1078,7 +1516,11 @@ fn bind_withdrawal(
         Some(b) => (b.request(destination, epoch), false),
     };
     a.binding = Some(binding);
-    Ok(vec![Receipt::WithdrawalBound { account, destination, effective }])
+    Ok(vec![Receipt::WithdrawalBound {
+        account,
+        destination,
+        effective,
+    }])
 }
 
 /// The custodying chain confirmed the exit: burn the units and release the
@@ -1110,7 +1552,12 @@ fn confirm_withdrawal(
     state.tokens.get_mut(&asset).ok_or(ARITH)?.vault = Some(vault);
     let a = state.account_mut(&account);
     a.set_pending(asset, left.amount, left.since);
-    Ok(vec![Receipt::WithdrawalConfirmed { account, asset, amount, backing: vault.confirmed }])
+    Ok(vec![Receipt::WithdrawalConfirmed {
+        account,
+        asset,
+        amount,
+        backing: vault.confirmed,
+    }])
 }
 
 /// Take back an exit the custodying chain never settled.
@@ -1133,13 +1580,20 @@ fn cancel_withdrawal(
         .and_then(|a| a.pending.get(&asset))
         .copied()
         .ok_or(Reject::InsufficientPending)?;
-    let waited = exit.may_cancel(state.epoch, timeout).map_err(bridge_reject)?;
+    let waited = exit
+        .may_cancel(state.epoch, timeout)
+        .map_err(bridge_reject)?;
     let amount = exit.amount;
 
     let a = state.account_mut(&account);
     a.set_pending(asset, Fixed::ZERO, exit.since);
     a.credit(asset, amount).ok_or(ARITH)?;
-    Ok(vec![Receipt::WithdrawalCancelled { account, asset, amount, waited }])
+    Ok(vec![Receipt::WithdrawalCancelled {
+        account,
+        asset,
+        amount,
+        waited,
+    }])
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,7 +1602,11 @@ fn cancel_withdrawal(
 
 /// Mint an indivisible item against a refundable bond.
 /// Fold a holder-chosen secret into the account's published leaf.
-fn reblind(state: &mut SwapState, account: AccountId, blind: [u8; 32]) -> Result<Vec<Receipt>, Reject> {
+fn reblind(
+    state: &mut SwapState,
+    account: AccountId,
+    blind: [u8; 32],
+) -> Result<Vec<Receipt>, Reject> {
     if blind == [0u8; 32] {
         return Err(Reject::NonPositiveAmount);
     }
@@ -1173,13 +1631,30 @@ fn create_collection(
     if fee_bps >= amm::BPS as u16 {
         return Err(Reject::InvalidFee);
     }
-    let id = state.next_collection_id;
-    state.next_collection_id = id.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
+    let id = zyn_vm::collection_address(ADDRESS_SCOPE_V1, &creator, symbol.as_bytes());
+    if state.collections.contains_key(&id) {
+        return Err(Reject::DuplicateSymbol);
+    }
     state.collections.insert(
         id,
-        crate::state::Collection { creator, symbol, cap, minted: 0, outstanding: 0, pool: Fixed::ZERO, fee_bps, phase: Phase::Depositing },
+        crate::state::Collection {
+            creator,
+            symbol,
+            cap,
+            minted: 0,
+            outstanding: 0,
+            pool: Fixed::ZERO,
+            fee_bps,
+            phase: Phase::Depositing,
+        },
     );
-    Ok(alloc::vec![Receipt::CollectionCreated { collection: id, creator, symbol, cap, fee_bps }])
+    Ok(alloc::vec![Receipt::CollectionCreated {
+        collection: id,
+        creator,
+        symbol,
+        cap,
+        fee_bps
+    }])
 }
 
 /// Mint one item into a collection.
@@ -1191,11 +1666,15 @@ fn mint_collection_item(
     state: &mut SwapState,
     by: AccountId,
     collection: CollectionId,
+    serial: u32,
     to: AccountId,
     symbol: Symbol,
     content: [u8; 32],
 ) -> Result<Vec<Receipt>, Reject> {
-    let c = state.collections.get(&collection).ok_or(Reject::NoSuchCollection)?;
+    let c = state
+        .collections
+        .get(&collection)
+        .ok_or(Reject::NoSuchCollection)?;
     if c.creator != by {
         return Err(Reject::NotTheCreator);
     }
@@ -1205,8 +1684,13 @@ fn mint_collection_item(
     if c.minted >= c.cap {
         return Err(Reject::CollectionFull);
     }
-    let asset = state.next_asset_id;
-    state.next_asset_id = asset.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
+    if serial >= c.cap {
+        return Err(Reject::CollectionFull);
+    }
+    let asset = zyn_vm::item_address(ADDRESS_SCOPE_V1, &collection, serial);
+    if state.tokens.contains_key(&asset) {
+        return Err(Reject::DuplicateSymbol);
+    }
     state.tokens.insert(
         asset,
         TokenInfo {
@@ -1223,11 +1707,20 @@ fn mint_collection_item(
     );
     let a = state.account_mut(&to);
     a.credit(asset, Fixed::ONE).ok_or(ARITH)?;
-    let c = state.collections.get_mut(&collection).expect("checked above");
+    let c = state
+        .collections
+        .get_mut(&collection)
+        .expect("checked above");
     c.minted += 1;
     c.outstanding += 1;
     let (minted, outstanding) = (c.minted, c.outstanding);
-    Ok(alloc::vec![Receipt::CollectionItemMinted { collection, asset, to, minted, outstanding }])
+    Ok(alloc::vec![Receipt::CollectionItemMinted {
+        collection,
+        asset,
+        to,
+        minted,
+        outstanding
+    }])
 }
 
 /// Move a collection on in its life. Forward only, creator only.
@@ -1238,7 +1731,10 @@ fn advance_collection(
     to: u8,
 ) -> Result<Vec<Receipt>, Reject> {
     let to = Phase::from_code(to).ok_or(Reject::WrongCollectionPhase)?;
-    let c = state.collections.get(&collection).ok_or(Reject::NoSuchCollection)?;
+    let c = state
+        .collections
+        .get(&collection)
+        .ok_or(Reject::NoSuchCollection)?;
     if c.creator != creator {
         return Err(Reject::NotTheCreator);
     }
@@ -1247,10 +1743,19 @@ fn advance_collection(
     if c.phase.next() != Some(to) {
         return Err(Reject::WrongCollectionPhase);
     }
-    let c = state.collections.get_mut(&collection).expect("checked above");
+    let c = state
+        .collections
+        .get_mut(&collection)
+        .expect("checked above");
     c.phase = to;
     let (outstanding, pool, redeem_price) = (c.outstanding, c.pool, c.redeem_price());
-    Ok(alloc::vec![Receipt::CollectionPhaseChanged { collection, phase: to.code(), outstanding, pool, redeem_price }])
+    Ok(alloc::vec![Receipt::CollectionPhaseChanged {
+        collection,
+        phase: to.code(),
+        outstanding,
+        pool,
+        redeem_price
+    }])
 }
 
 /// Pay xZEC into a collection's pool. The floor rises for everyone at once.
@@ -1270,10 +1775,18 @@ fn fund_collection(
         return Err(Reject::InsufficientBalance);
     }
     state.account_mut(&from).debit(XZEC, amount).ok_or(ARITH)?;
-    let c = state.collections.get_mut(&collection).expect("checked above");
+    let c = state
+        .collections
+        .get_mut(&collection)
+        .expect("checked above");
     c.pool = c.pool.add(amount).ok_or(ARITH)?;
     let (pool, redeem_price) = (c.pool, c.redeem_price());
-    Ok(alloc::vec![Receipt::CollectionFunded { collection, amount, pool, redeem_price }])
+    Ok(alloc::vec![Receipt::CollectionFunded {
+        collection,
+        amount,
+        pool,
+        redeem_price
+    }])
 }
 
 /// Destroy one collection item and take its share of the pool.
@@ -1293,7 +1806,10 @@ fn redeem_collection_item(
     if state.balance(&holder, asset) != supply || !supply.is_positive() {
         return Err(Reject::NotTheWholeItem);
     }
-    let c = state.collections.get(&collection).ok_or(Reject::NoSuchCollection)?;
+    let c = state
+        .collections
+        .get(&collection)
+        .ok_or(Reject::NoSuchCollection)?;
     if c.phase != Phase::Live {
         return Err(Reject::WrongCollectionPhase);
     }
@@ -1304,16 +1820,28 @@ fn redeem_collection_item(
 
     // The item goes first: nothing is paid out against an item that still
     // exists, so a failure here can never leave the pool short.
-    state.account_mut(&holder).debit(asset, supply).ok_or(ARITH)?;
+    state
+        .account_mut(&holder)
+        .debit(asset, supply)
+        .ok_or(ARITH)?;
     state.tokens.remove(&asset);
-    let c = state.collections.get_mut(&collection).expect("checked above");
+    let c = state
+        .collections
+        .get_mut(&collection)
+        .expect("checked above");
     c.outstanding -= 1;
     c.pool = c.pool.sub(paid).ok_or(ARITH)?;
     let outstanding = c.outstanding;
     if paid.is_positive() {
         state.account_mut(&holder).credit(XZEC, paid).ok_or(ARITH)?;
     }
-    Ok(alloc::vec![Receipt::CollectionItemRedeemed { collection, asset, holder, paid, outstanding }])
+    Ok(alloc::vec![Receipt::CollectionItemRedeemed {
+        collection,
+        asset,
+        holder,
+        paid,
+        outstanding
+    }])
 }
 
 fn mint_item(
@@ -1338,10 +1866,10 @@ fn mint_item(
     if state.balance(&creator, XZEC) < bond {
         return Err(Reject::InsufficientBalance);
     }
-    let asset = state.next_asset_id;
-    let next = asset.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
-
-    state.next_asset_id = next;
+    let asset = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &creator, sym.as_bytes());
+    if state.tokens.contains_key(&asset) {
+        return Err(Reject::DuplicateSymbol);
+    }
     state.tokens.insert(
         asset,
         TokenInfo {
@@ -1351,14 +1879,22 @@ fn mint_item(
             genesis_pool: None,
             unit: Fixed::ONE,
             bond,
-            vault: None, content: Some(content), collection: None
+            vault: None,
+            content: Some(content),
+            collection: None,
         },
     );
     let a = state.account_mut(&creator);
     a.debit(XZEC, bond).ok_or(ARITH)?;
     a.credit(asset, supply).ok_or(ARITH)?;
 
-    Ok(vec![Receipt::ItemMinted { asset, creator, symbol: sym, supply, bond }])
+    Ok(vec![Receipt::ItemMinted {
+        asset,
+        creator,
+        symbol: sym,
+        supply,
+        bond,
+    }])
 }
 
 /// Destroy an item and refund its bond, reclaiming the state it held.
@@ -1432,14 +1968,106 @@ fn create_bridged_asset(
     state: &mut SwapState,
     symbol: crate::state::Symbol,
     origin: crate::types::ChainOrigin,
+    origin_network: &[u8],
+    origin_asset: &[u8],
 ) -> Result<Vec<Receipt>, Reject> {
-    if state.tokens.values().any(|t| t.symbol == symbol) {
+    if !valid_bridge_origin(origin_network, origin_asset) {
+        return Err(Reject::InvalidMetadata);
+    }
+    let asset = zyn_vm::bridged_address(ADDRESS_SCOPE_V1, origin_network, origin_asset);
+    if state.tokens.contains_key(&asset) {
         return Err(Reject::DuplicateSymbol);
     }
-    let asset = state.next_asset_id;
-    state.next_asset_id = state.next_asset_id.checked_add(1).ok_or(ARITH)?;
-    state.tokens.insert(asset, crate::state::TokenInfo::bridged(symbol, origin));
-    Ok(vec![Receipt::BridgedAssetCreated { asset, symbol, origin }])
+    state
+        .tokens
+        .insert(asset, crate::state::TokenInfo::bridged(symbol, origin));
+    Ok(vec![Receipt::BridgedAssetCreated {
+        asset,
+        symbol,
+        origin,
+        origin_network: origin_network.to_vec(),
+        origin_asset: origin_asset.to_vec(),
+    }])
+}
+
+fn valid_bridge_origin(network: &[u8], asset: &[u8]) -> bool {
+    match network {
+        b"solana" | b"solana-devnet" => asset.is_empty() || asset.len() == 32,
+        b"zcash" | b"zcash-test" | b"bitcoin" | b"bitcoin-test" | b"bitcoin-signet" => {
+            asset.is_empty()
+        }
+        _ => {
+            let Some(chain) = network.strip_prefix(b"eip155:") else {
+                return false;
+            };
+            !chain.is_empty()
+                && chain.iter().all(u8::is_ascii_digit)
+                && (chain.len() == 1 || chain[0] != b'0')
+                && asset.len() <= 20
+                && (asset.is_empty() || asset.len() == 20)
+        }
+    }
+}
+
+#[cfg(test)]
+mod bridge_identity_tests {
+    use super::*;
+    use crate::state::{symbol, SwapState};
+
+    #[test]
+    fn bridge_creation_uses_the_public_origin_preimage_exactly() {
+        let mut state = SwapState::new(26_460, Params::v1());
+        let bold = [
+            0x64, 0x40, 0xf1, 0x44, 0xb7, 0xe5, 0x0d, 0x6a, 0x84, 0x39, 0x33, 0x65, 0x10, 0x31,
+            0x2d, 0x2f, 0x54, 0xbe, 0xb0, 0x1d,
+        ];
+        let made = create_bridged_asset(
+            &mut state,
+            symbol(b"BOLD.zy"),
+            crate::types::ORIGIN_ETHEREUM,
+            b"eip155:1",
+            &bold,
+        )
+        .unwrap();
+        assert!(matches!(
+            made[0],
+            Receipt::BridgedAssetCreated {
+                asset: crate::types::BOLD_ZY_ETHEREUM,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            create_bridged_asset(
+                &mut state,
+                symbol(b"ETH.zy"),
+                crate::types::ORIGIN_ETHEREUM,
+                b"ethereum",
+                b""
+            ),
+            Err(Reject::InvalidMetadata),
+        );
+        assert_eq!(
+            create_bridged_asset(
+                &mut state,
+                symbol(b"ETH.zy"),
+                crate::types::ORIGIN_ETHEREUM,
+                b"eip155:01",
+                b""
+            ),
+            Err(Reject::InvalidMetadata),
+        );
+        assert_eq!(
+            create_bridged_asset(
+                &mut state,
+                symbol(b"BAD.zy"),
+                crate::types::ORIGIN_SOLANA,
+                b"solana",
+                &[1; 20]
+            ),
+            Err(Reject::InvalidMetadata),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1452,16 +2080,25 @@ fn create_bridged_item(
     origin: crate::types::ChainOrigin,
     content: [u8; 32],
 ) -> Result<Vec<Receipt>, Reject> {
-    if state.tokens.values().any(|t| t.symbol == symbol || t.content == Some(content)) {
+    if state.tokens.values().any(|t| t.content == Some(content)) {
         return Err(Reject::DuplicateSymbol);
     }
-    let asset = state.next_asset_id;
-    state.next_asset_id = state.next_asset_id.checked_add(1).ok_or(ARITH)?;
+    let origin_seed = origin.to_be_bytes();
+    let asset = zyn_vm::bridged_address(ADDRESS_SCOPE_V1, &origin_seed, &content);
+    if state.tokens.contains_key(&asset) {
+        return Err(Reject::DuplicateSymbol);
+    }
     let mut info = crate::state::TokenInfo::bridged(symbol, origin);
     info.unit = Fixed::ONE;
     info.content = Some(content);
     state.tokens.insert(asset, info);
-    Ok(vec![Receipt::BridgedAssetCreated { asset, symbol, origin }])
+    Ok(vec![Receipt::BridgedAssetCreated {
+        asset,
+        symbol,
+        origin,
+        origin_network: origin.to_be_bytes().to_vec(),
+        origin_asset: content.to_vec(),
+    }])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1496,17 +2133,17 @@ fn launch_token(
         return Err(Reject::InsufficientBalance);
     }
 
-    let info =
-        TokenInfo {
-            symbol: sym,
-            supply,
-            lp_of: None,
-            genesis_pool: None,
-            unit,
-            bond: Fixed::ZERO,
-            vault: None,
-            content: None, collection: None,
-        };
+    let info = TokenInfo {
+        symbol: sym,
+        supply,
+        lp_of: None,
+        genesis_pool: None,
+        unit,
+        bond: Fixed::ZERO,
+        vault: None,
+        content: None,
+        collection: None,
+    };
     if !info.admits(supply) || !info.admits(token_liquidity) {
         return Err(Reject::Indivisible);
     }
@@ -1515,13 +2152,12 @@ fn launch_token(
         return Err(Reject::Indivisible);
     }
 
-    // Reserve every id before committing anything, so a rejected launch leaves
-    // no counter advanced.
-    let asset = state.next_asset_id;
-    let pool_id = state.next_pool_id;
-    let lp_asset = asset.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
-    let next_asset_id = lp_asset.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
-    let next_pool_id = pool_id.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
+    let asset = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &creator, sym.as_bytes());
+    let pool_id = zyn_vm::pool_address(ADDRESS_SCOPE_V1, &asset, &XZEC);
+    let lp_asset = zyn_vm::lp_address(ADDRESS_SCOPE_V1, &pool_id);
+    if state.tokens.contains_key(&asset) || state.pools.contains_key(&pool_id) {
+        return Err(Reject::DuplicateSymbol);
+    }
 
     // Canonical orientation: xZEC is asset 1, so it is always side 0 here.
     let (asset0, asset1, amount0, amount1) = if XZEC < asset {
@@ -1544,11 +2180,14 @@ fn launch_token(
         return Err(Reject::BelowLaunchBond);
     }
 
-    // Validation complete.
-    state.next_asset_id = next_asset_id;
-    state.next_pool_id = next_pool_id;
     // The launch pool is the token's canonical market, fixed for its lifetime.
-    state.tokens.insert(asset, TokenInfo { genesis_pool: Some(pool_id), ..info });
+    state.tokens.insert(
+        asset,
+        TokenInfo {
+            genesis_pool: Some(pool_id),
+            ..info
+        },
+    );
     state.tokens.insert(
         lp_asset,
         TokenInfo {
@@ -1559,7 +2198,8 @@ fn launch_token(
             unit: Fixed::raw(1),
             bond: Fixed::ZERO,
             vault: None,
-            content: None, collection: None,
+            content: None,
+            collection: None,
         },
     );
     state.pools.insert(
@@ -1567,6 +2207,7 @@ fn launch_token(
         Pool {
             asset0,
             asset1,
+            vault: zyn_vm::vault_address(ADDRESS_SCOPE_V1, &pool_id),
             reserve0: amount0,
             reserve1: amount1,
             fee_bps,
@@ -1575,19 +2216,32 @@ fn launch_token(
             locked,
             min_in0: Fixed::raw(1),
             min_in1: Fixed::raw(1),
-                reference: None,
+            reference: None,
         },
     );
 
     let a = state.account_mut(&creator);
     // The creator keeps whatever supply was not seeded.
-    a.credit(asset, supply.sub(token_liquidity).ok_or(ARITH)?).ok_or(ARITH)?;
+    a.credit(asset, supply.sub(token_liquidity).ok_or(ARITH)?)
+        .ok_or(ARITH)?;
     a.debit(XZEC, xzec_liquidity).ok_or(ARITH)?;
     a.credit(lp_asset, creator_shares).ok_or(ARITH)?;
 
     Ok(vec![
-        Receipt::TokenCreated { asset, creator, symbol: sym, supply, unit },
-        Receipt::PoolCreated { pool: pool_id, asset0, asset1, lp_asset, fee_bps },
+        Receipt::TokenCreated {
+            asset,
+            creator,
+            symbol: sym,
+            supply,
+            unit,
+        },
+        Receipt::PoolCreated {
+            pool: pool_id,
+            asset0,
+            asset1,
+            lp_asset,
+            fee_bps,
+        },
         Receipt::LiquidityAdded {
             account: creator,
             pool: pool_id,
@@ -1601,24 +2255,8 @@ fn launch_token(
 /// The symbol an LP asset is created with. Purely cosmetic — the binding that
 /// matters is `TokenInfo::lp_of`, which the state root commits to.
 fn lp_symbol(pool: PoolId) -> Symbol {
-    let mut out = make_symbol(b"LP-");
-    // Pool id in decimal, right-padded, truncated at 8 bytes like any symbol.
-    let mut digits = [0u8; 5];
-    let mut n = pool;
-    let mut len = 0;
-    if n == 0 {
-        digits[0] = b'0';
-        len = 1;
-    }
-    while n > 0 && len < 5 {
-        digits[len] = b'0' + (n % 10) as u8;
-        n /= 10;
-        len += 1;
-    }
-    for i in 0..len {
-        out[3 + i] = digits[len - 1 - i];
-    }
-    out
+    let _ = pool;
+    make_symbol(b"LP")
 }
 
 /// Create a pool over a pair and seed it in the same step.
@@ -1629,7 +2267,15 @@ fn lp_symbol(pool: PoolId) -> Symbol {
 #[allow(clippy::too_many_arguments)]
 /// Pool creation on behalf of a pot. The same rules as a user's, except the
 /// launch bond: the genesis pot *is* the bond, whatever its size.
-pub(crate) fn create_pool_for(state: &mut SwapState, creator: AccountId, a: AssetId, b: AssetId, amount_a: Fixed, amount_b: Fixed, fee_bps: u16) -> Result<Vec<Receipt>, Reject> {
+pub(crate) fn create_pool_for(
+    state: &mut SwapState,
+    creator: AccountId,
+    a: AssetId,
+    b: AssetId,
+    amount_a: Fixed,
+    amount_b: Fixed,
+    fee_bps: u16,
+) -> Result<Vec<Receipt>, Reject> {
     let bond = state.params.min_pool_xzec;
     state.params.min_pool_xzec = Fixed::ZERO;
     // `params` is in the header leaf; it is restored before anything can
@@ -1639,7 +2285,14 @@ pub(crate) fn create_pool_for(state: &mut SwapState, creator: AccountId, a: Asse
     r
 }
 
-pub(crate) fn add_liquidity_for(state: &mut SwapState, account: AccountId, pool: PoolId, max0: Fixed, max1: Fixed, min_shares: Fixed) -> Result<Vec<Receipt>, Reject> {
+pub(crate) fn add_liquidity_for(
+    state: &mut SwapState,
+    account: AccountId,
+    pool: PoolId,
+    max0: Fixed,
+    max1: Fixed,
+    min_shares: Fixed,
+) -> Result<Vec<Receipt>, Reject> {
     add_liquidity(state, account, pool, max0, max1, min_shares)
 }
 
@@ -1721,18 +2374,11 @@ fn create_pool(
         return Err(Reject::BelowLaunchBond);
     }
 
-    // Reserve both ids without committing either. Taking one and then failing
-    // to take the other would advance a counter inside a rejected intent, and a
-    // rejected intent must leave state exactly as it found it.
-    let pool_id = state.next_pool_id;
-    let next_pool_id = pool_id.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
-    let lp_asset = state.next_asset_id;
-    let next_asset_id = lp_asset.checked_add(1).ok_or(Reject::IdSpaceExhausted)?;
+    let pool_id = zyn_vm::pool_address(ADDRESS_SCOPE_V1, &asset0, &asset1);
+    let lp_asset = zyn_vm::lp_address(ADDRESS_SCOPE_V1, &pool_id);
 
     // Validation is complete; from here every step must succeed or the batch is
     // abandoned wholesale.
-    state.next_pool_id = next_pool_id;
-    state.next_asset_id = next_asset_id;
     let a = state.account_mut(&creator);
     a.debit(asset0, amount0).ok_or(ARITH)?;
     a.debit(asset1, amount1).ok_or(ARITH)?;
@@ -1748,7 +2394,8 @@ fn create_pool(
             unit: Fixed::raw(1),
             bond: Fixed::ZERO,
             vault: None,
-            content: None, collection: None,
+            content: None,
+            collection: None,
         },
     );
     state.pools.insert(
@@ -1756,6 +2403,7 @@ fn create_pool(
         Pool {
             asset0,
             asset1,
+            vault: zyn_vm::vault_address(ADDRESS_SCOPE_V1, &pool_id),
             reserve0: amount0,
             reserve1: amount1,
             fee_bps,
@@ -1764,13 +2412,25 @@ fn create_pool(
             locked,
             min_in0: Fixed::raw(1),
             min_in1: Fixed::raw(1),
-                reference: None,
+            reference: None,
         },
     );
 
     Ok(vec![
-        Receipt::PoolCreated { pool: pool_id, asset0, asset1, lp_asset, fee_bps },
-        Receipt::LiquidityAdded { account: creator, pool: pool_id, amount0, amount1, shares },
+        Receipt::PoolCreated {
+            pool: pool_id,
+            asset0,
+            asset1,
+            lp_asset,
+            fee_bps,
+        },
+        Receipt::LiquidityAdded {
+            account: creator,
+            pool: pool_id,
+            amount0,
+            amount1,
+            shares,
+        },
     ])
 }
 
@@ -1838,7 +2498,13 @@ fn add_liquidity(
     pool.lp_supply = pool.lp_supply.add(shares).ok_or(ARITH)?;
     state.mint(p.lp_asset, shares).ok_or(ARITH)?;
 
-    Ok(vec![Receipt::LiquidityAdded { account, pool: pool_id, amount0, amount1, shares }])
+    Ok(vec![Receipt::LiquidityAdded {
+        account,
+        pool: pool_id,
+        amount0,
+        amount1,
+        shares,
+    }])
 }
 
 /// Burn shares back to the underlying pair.
@@ -1890,7 +2556,13 @@ fn remove_liquidity(
     }
     state.burn(p.lp_asset, shares).ok_or(ARITH)?;
 
-    Ok(vec![Receipt::LiquidityRemoved { account, pool: pool_id, amount0, amount1, shares }])
+    Ok(vec![Receipt::LiquidityRemoved {
+        account,
+        pool: pool_id,
+        amount0,
+        amount1,
+        shares,
+    }])
 }
 
 // ---------------------------------------------------------------------------
@@ -1951,41 +2623,188 @@ fn protocol_cut(fee: Fixed, share_bps: u16) -> Option<Fixed> {
     )
 }
 
+#[derive(Clone, Copy)]
+struct FeeBreakdown {
+    fee_asset: AssetId,
+    fee: Fixed,
+    pool_fee: Fixed,
+    protocol_fee: Fixed,
+    creator_fee: Fixed,
+    pol_fee: Fixed,
+}
+
+/// Split one already-computed fee without losing an atomic unit.
+///
+/// Graduated Cave pools are special only in the denomination and destination:
+/// the fee is always ZEC.zy, the creator and pool shares round down, and POL
+/// receives the remainder. Ordinary pools preserve the existing input-asset
+/// treasury cut.
+fn fee_breakdown(
+    state: &SwapState,
+    pool: PoolId,
+    fee_asset: AssetId,
+    fee: Fixed,
+) -> Option<FeeBreakdown> {
+    if crate::cave::graduated_creator(state, pool).is_some() {
+        if fee_asset != XZEC {
+            return None;
+        }
+        let creator_fee = protocol_cut(fee, 1_000)?;
+        let pool_fee = protocol_cut(fee, 4_500)?;
+        let pol_fee = fee.sub(creator_fee)?.sub(pool_fee)?;
+        let protocol_fee = creator_fee.add(pol_fee)?;
+        Some(FeeBreakdown {
+            fee_asset,
+            fee,
+            pool_fee,
+            protocol_fee,
+            creator_fee,
+            pol_fee,
+        })
+    } else {
+        let protocol_fee = protocol_cut(fee, state.params.protocol_fee_share_bps)?;
+        let pool_fee = fee.sub(protocol_fee)?;
+        Some(FeeBreakdown {
+            fee_asset,
+            fee,
+            pool_fee,
+            protocol_fee,
+            creator_fee: Fixed::ZERO,
+            pol_fee: Fixed::ZERO,
+        })
+    }
+}
+
+fn hop_with_fee(
+    state: &SwapState,
+    pool: PoolId,
+    asset_in: AssetId,
+    asset_out: AssetId,
+    amount_in: Fixed,
+    amount_out: Fixed,
+    fee_asset: AssetId,
+    fee: Fixed,
+) -> Result<Hop, Reject> {
+    let split = fee_breakdown(state, pool, fee_asset, fee).ok_or(ARITH)?;
+    Ok(Hop {
+        pool,
+        asset_in,
+        asset_out,
+        amount_in,
+        amount_out,
+        fee_asset: split.fee_asset,
+        fee: split.fee,
+        pool_fee: split.pool_fee,
+        protocol_fee: split.protocol_fee,
+        creator_fee: split.creator_fee,
+        pol_fee: split.pol_fee,
+    })
+}
+
+fn credit_external_pool_fee(state: &mut SwapState, h: &Hop) -> Result<(), Reject> {
+    if !h.protocol_fee.is_positive() {
+        return Ok(());
+    }
+    if let Some(creator) = crate::cave::graduated_creator(state, h.pool) {
+        if h.fee_asset != XZEC
+            || h.creator_fee.add(h.pol_fee) != Some(h.protocol_fee)
+            || h.pool_fee.add(h.protocol_fee) != Some(h.fee)
+        {
+            return Err(ARITH);
+        }
+        state
+            .account_mut(&creator)
+            .credit(XZEC, h.creator_fee)
+            .ok_or(ARITH)?;
+        state
+            .account_mut(&crate::types::ZYN_POL)
+            .credit(XZEC, h.pol_fee)
+            .ok_or(ARITH)?;
+    } else {
+        if h.creator_fee.is_positive() || h.pol_fee.is_positive() {
+            return Err(ARITH);
+        }
+        let treasury = state.params.treasury;
+        state
+            .account_mut(&treasury)
+            .credit(h.fee_asset, h.protocol_fee)
+            .ok_or(ARITH)?;
+    }
+    Ok(())
+}
+
+fn price_hop_exact_in(
+    state: &SwapState,
+    pool_id: PoolId,
+    asset_in: AssetId,
+    amount_in: Fixed,
+    seq_now: u64,
+    staleness: u64,
+) -> Result<Hop, Reject> {
+    let pool = state.pools.get(&pool_id).ok_or(Reject::UnknownPool)?;
+    let asset_out = pool.other(asset_in).ok_or(Reject::InvalidPath)?;
+    let (r_in, r_out) = pool.oriented(asset_in).ok_or(Reject::InvalidPath)?;
+    let fee_bps = effective_fee(pool, seq_now, staleness);
+    let graduated = crate::cave::graduated_creator(state, pool_id).is_some();
+
+    if graduated && asset_out == XZEC {
+        // A Cave sell sends the full token input through the curve. The fee is
+        // then taken from gross ZEC output, never accumulated in the token.
+        let gross_out =
+            amm::out_given_in(amount_in, r_in, r_out, 0).ok_or(Reject::InsufficientReserves)?;
+        let fee = amm::fee_taken(gross_out, fee_bps).ok_or(ARITH)?;
+        let amount_out = gross_out.sub(fee).ok_or(ARITH)?;
+        if !amount_out.is_positive() || gross_out >= r_out {
+            return Err(Reject::InsufficientReserves);
+        }
+        hop_with_fee(
+            state, pool_id, asset_in, asset_out, amount_in, amount_out, XZEC, fee,
+        )
+    } else {
+        let amount_out = amm::out_given_in(amount_in, r_in, r_out, fee_bps)
+            .ok_or(Reject::InsufficientReserves)?;
+        if !amount_out.is_positive() || amount_out >= r_out {
+            return Err(Reject::InsufficientReserves);
+        }
+        let fee = amm::fee_taken(amount_in, fee_bps).ok_or(ARITH)?;
+        hop_with_fee(
+            state, pool_id, asset_in, asset_out, amount_in, amount_out, asset_in, fee,
+        )
+    }
+}
+
 /// Commit a priced route to state: move the payer's balances, each pool's
 /// reserves, and the treasury's share of the fees. Every hop was priced against
 /// reserves this function then updates, which is sound only because
 /// `resolve_path` refuses a repeated pool.
 ///
-/// The protocol's cut is deducted from what the pool receives, not from what
-/// the trader pays. The pool therefore retains `amount_in - cut`, which is
-/// still at least the `in_after_fee` the curve was priced from — so `k` remains
-/// non-decreasing for any share below 100%, and the trader's output is
-/// identical whether the rail is on or off.
-fn settle_route(
-    state: &mut SwapState,
-    account: AccountId,
-    hops: &[Hop],
-) -> Result<(), Reject> {
+/// For an input-denominated fee, the external cut is deducted from what the
+/// pool receives. For a graduated token sell, the pool debits the trader's net
+/// ZEC.zy output plus the external creator/POL cut, retaining `pool_fee` from
+/// the gross output. In both forms the full fee reconciles and `k` cannot be
+/// reduced by the external transfer.
+fn settle_route(state: &mut SwapState, account: AccountId, hops: &[Hop]) -> Result<(), Reject> {
     let first = hops.first().ok_or(ARITH)?;
     let last = hops.last().ok_or(ARITH)?;
-    let treasury = state.params.treasury;
-
     state
         .account_mut(&account)
         .debit(first.asset_in, first.amount_in)
         .ok_or(ARITH)?;
     for h in hops {
-        crate::launch::note_pool_fee(state, h.pool, h.asset_in, h.fee);
-        let to_pool = h.amount_in.sub(h.protocol_fee).ok_or(ARITH)?;
+        crate::launch::note_pool_fee(state, h.pool, h.fee_asset, h.fee);
         let pool = state.pools.get_mut(&h.pool).ok_or(ARITH)?;
-        pool.credit_reserve(h.asset_in, to_pool).ok_or(ARITH)?;
-        pool.debit_reserve(h.asset_out, h.amount_out).ok_or(ARITH)?;
-        if h.protocol_fee.is_positive() {
-            state
-                .account_mut(&treasury)
-                .credit(h.asset_in, h.protocol_fee)
+        if h.fee_asset == h.asset_in {
+            pool.credit_reserve(h.asset_in, h.amount_in.sub(h.protocol_fee).ok_or(ARITH)?)
                 .ok_or(ARITH)?;
+            pool.debit_reserve(h.asset_out, h.amount_out).ok_or(ARITH)?;
+        } else if h.fee_asset == h.asset_out {
+            pool.credit_reserve(h.asset_in, h.amount_in).ok_or(ARITH)?;
+            pool.debit_reserve(h.asset_out, h.amount_out.add(h.protocol_fee).ok_or(ARITH)?)
+                .ok_or(ARITH)?;
+        } else {
+            return Err(ARITH);
         }
+        credit_external_pool_fee(state, h)?;
     }
     state
         .account_mut(&account)
@@ -2005,7 +2824,11 @@ fn xzec_leg(hops: &[Hop]) -> Fixed {
             return h.amount_in;
         }
         if h.asset_out == XZEC {
-            return h.amount_out;
+            return if h.fee_asset == XZEC {
+                h.amount_out.add(h.fee).unwrap_or(Fixed::raw(i128::MAX))
+            } else {
+                h.amount_out
+            };
         }
     }
     Fixed::ZERO
@@ -2026,7 +2849,6 @@ fn price_hops(
     path: &[PoolId],
     amount_in: Fixed,
 ) -> Result<Vec<Hop>, Reject> {
-    let share = state.params.protocol_fee_share_bps;
     let (seq_now, staleness) = (state.seq, state.params.reference_staleness);
 
     let mut hops = Vec::with_capacity(path.len());
@@ -2036,24 +2858,9 @@ fn price_hops(
         if carried < pool.min_in(assets[i]).ok_or(Reject::InvalidPath)? {
             return Err(Reject::BelowMinimumTrade);
         }
-        let (r_in, r_out) = pool.oriented(assets[i]).ok_or(Reject::InvalidPath)?;
-        let fee_bps = effective_fee(pool, seq_now, staleness);
-        let out = amm::out_given_in(carried, r_in, r_out, fee_bps)
-            .ok_or(Reject::InsufficientReserves)?;
-        if !out.is_positive() || out >= r_out {
-            return Err(Reject::InsufficientReserves);
-        }
-        let fee = amm::fee_taken(carried, fee_bps).ok_or(ARITH)?;
-        hops.push(Hop {
-            pool: *id,
-            asset_in: assets[i],
-            asset_out: assets[i + 1],
-            amount_in: carried,
-            amount_out: out,
-            fee,
-            protocol_fee: protocol_cut(fee, share).ok_or(ARITH)?,
-        });
-        carried = out;
+        let hop = price_hop_exact_in(state, *id, assets[i], carried, seq_now, staleness)?;
+        carried = hop.amount_out;
+        hops.push(hop);
     }
     Ok(hops)
 }
@@ -2127,10 +2934,21 @@ fn best_case(
         let pool = state.pools.get(id).ok_or(Reject::UnknownPool)?;
         let (r_in, r_out) = pool.oriented(assets[i]).ok_or(Reject::InvalidPath)?;
         let fee_bps = effective_fee(pool, seq_now, staleness);
-        let kept = carried.sub(amm::fee_taken(carried, fee_bps).ok_or(ARITH)?).ok_or(ARITH)?;
-        // Marginal rate: what an infinitesimal trade would receive, applied to
-        // the whole amount.
-        carried = kept.mul(r_out).ok_or(ARITH)?.div(r_in).ok_or(ARITH)?;
+        let graduated_sell =
+            crate::cave::graduated_creator(state, *id).is_some() && assets[i + 1] == XZEC;
+        if graduated_sell {
+            let gross = carried.mul(r_out).ok_or(ARITH)?.div(r_in).ok_or(ARITH)?;
+            carried = gross
+                .sub(amm::fee_taken(gross, fee_bps).ok_or(ARITH)?)
+                .ok_or(ARITH)?;
+        } else {
+            let kept = carried
+                .sub(amm::fee_taken(carried, fee_bps).ok_or(ARITH)?)
+                .ok_or(ARITH)?;
+            // Marginal rate: what an infinitesimal trade would receive,
+            // applied to the whole amount.
+            carried = kept.mul(r_out).ok_or(ARITH)?.div(r_in).ok_or(ARITH)?;
+        }
     }
     Ok(carried)
 }
@@ -2159,8 +2977,22 @@ fn swap_exact_in(
             return Err(Reject::BelowMinimumTrade);
         }
         let seq = state.seq;
-        state.orders.push(Order { seq, account, pool: path[0], asset_in, amount_in, min_out });
-        return Ok(vec![Receipt::SwapQueued { account, pool: path[0], asset_in, amount_in, min_out, seq }]);
+        state.orders.push(Order {
+            seq,
+            account,
+            pool: path[0],
+            asset_in,
+            amount_in,
+            min_out,
+        });
+        return Ok(vec![Receipt::SwapQueued {
+            account,
+            pool: path[0],
+            asset_in,
+            amount_in,
+            min_out,
+            seq,
+        }]);
     }
     swap_now(state, account, asset_in, path, amount_in, min_out)
 }
@@ -2190,10 +3022,7 @@ pub(crate) fn swap_now(
     }
 
     settle_route(state, account, &hops)?;
-    state.epoch_gross_volume = state
-        .epoch_gross_volume
-        .add(xzec_leg(&hops))
-        .ok_or(ARITH)?;
+    state.epoch_gross_volume = state.epoch_gross_volume.add(xzec_leg(&hops)).ok_or(ARITH)?;
 
     Ok(vec![Receipt::Swapped {
         account,
@@ -2223,7 +3052,6 @@ fn swap_exact_out(
         return Err(Reject::NonPositiveAmount);
     }
     let assets = resolve_path(state, asset_in, path)?;
-    let share = state.params.protocol_fee_share_bps;
     let (seq_now, staleness) = (state.seq, state.params.reference_staleness);
 
     // Walk the route in reverse, accumulating the input each hop demands.
@@ -2237,21 +3065,36 @@ fn swap_exact_out(
             return Err(Reject::InsufficientReserves);
         }
         let fee_bps = effective_fee(pool, seq_now, staleness);
-        let input = amm::in_given_out(needed, r_in, r_out, fee_bps)
-            .ok_or(Reject::InsufficientReserves)?;
+        let graduated_sell =
+            crate::cave::graduated_creator(state, id).is_some() && assets[i + 1] == XZEC;
+        let (input, fee_asset, fee) = if graduated_sell {
+            let keep = Fixed::whole((amm::BPS - fee_bps as u64) as i64);
+            let gross_out = needed
+                .mul_div_ceil(Fixed::whole(amm::BPS as i64), keep)
+                .ok_or(ARITH)?;
+            let fee = gross_out.sub(needed).ok_or(ARITH)?;
+            let input =
+                amm::in_given_out(gross_out, r_in, r_out, 0).ok_or(Reject::InsufficientReserves)?;
+            (input, XZEC, fee)
+        } else {
+            let input = amm::in_given_out(needed, r_in, r_out, fee_bps)
+                .ok_or(Reject::InsufficientReserves)?;
+            let fee = amm::fee_taken(input, fee_bps).ok_or(ARITH)?;
+            (input, assets[i], fee)
+        };
         if input < pool.min_in(assets[i]).ok_or(Reject::InvalidPath)? {
             return Err(Reject::BelowMinimumTrade);
         }
-        let fee = amm::fee_taken(input, fee_bps).ok_or(ARITH)?;
-        rev.push(Hop {
-            pool: id,
-            asset_in: assets[i],
-            asset_out: assets[i + 1],
-            amount_in: input,
-            amount_out: needed,
+        rev.push(hop_with_fee(
+            state,
+            id,
+            assets[i],
+            assets[i + 1],
+            input,
+            needed,
+            fee_asset,
             fee,
-            protocol_fee: protocol_cut(fee, share).ok_or(ARITH)?,
-        });
+        )?);
         needed = input;
     }
     rev.reverse();
@@ -2266,10 +3109,7 @@ fn swap_exact_out(
     }
 
     settle_route(state, account, &hops)?;
-    state.epoch_gross_volume = state
-        .epoch_gross_volume
-        .add(xzec_leg(&hops))
-        .ok_or(ARITH)?;
+    state.epoch_gross_volume = state.epoch_gross_volume.add(xzec_leg(&hops)).ok_or(ARITH)?;
 
     Ok(vec![Receipt::Swapped {
         account,
@@ -2318,7 +3158,11 @@ fn update_reference(
     let pool = state.pools.get_mut(&pool_id).ok_or(Reject::UnknownPool)?;
     pool.reference = Some(Reference { price, seq });
     let fee_bps = effective_fee(pool, seq, staleness);
-    Ok(vec![Receipt::ReferenceUpdated { pool: pool_id, price, fee_bps }])
+    Ok(vec![Receipt::ReferenceUpdated {
+        pool: pool_id,
+        price,
+        fee_bps,
+    }])
 }
 
 // ---------------------------------------------------------------------------
@@ -2345,14 +3189,27 @@ mod quote_tests {
         let mut at = 0u64;
         let go = |s: &mut SwapState, at: &mut u64, i: Intent| -> Vec<Receipt> {
             *at += 1;
-            apply(s, &SequencedIntent { seq: *at, intent: i })
+            apply(
+                s,
+                &SequencedIntent {
+                    seq: *at,
+                    intent: i,
+                },
+            )
         };
 
         // Observe, credit, then anchor: a deposit is unspendable until the
         // epoch containing it is anchored.
         let amount = Fixed::whole(100_000);
         let observed = s.backing_of(XZEC).add(amount).unwrap();
-        go(&mut s, &mut at, Intent::AttestVaultBalance { asset: XZEC, observed });
+        go(
+            &mut s,
+            &mut at,
+            Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         let d = Intent::next_deposit(&s, [1u8; 32], XZEC, amount, [0u8; 32]);
         go(&mut s, &mut at, d);
         let epoch = s.epoch;
@@ -2364,7 +3221,7 @@ mod quote_tests {
             &mut at,
             Intent::CreateToken {
                 creator: [1u8; 32],
-                symbol: *b"CAT\0\0\0\0\0",
+                symbol: crate::state::symbol(b"CAT\0\0\0\0\0"),
                 supply: Fixed::whole(10_000_000),
                 unit: Fixed::raw(1),
                 xzec_liquidity: Fixed::whole(10_000),
@@ -2439,8 +3296,14 @@ mod quote_tests {
     #[test]
     fn a_quote_refuses_what_a_swap_would_refuse() {
         let (s, pool, _) = market();
-        assert_eq!(quote(&s, XZEC, &[pool], Fixed::ZERO), Err(Reject::NonPositiveAmount));
-        assert_eq!(quote(&s, XZEC, &[9_999], Fixed::whole(1)), Err(Reject::UnknownPool));
+        assert_eq!(
+            quote(&s, XZEC, &[pool], Fixed::ZERO),
+            Err(Reject::NonPositiveAmount)
+        );
+        assert_eq!(
+            quote(&s, XZEC, &[crate::types::legacy_id(9_999)], Fixed::whole(1)),
+            Err(Reject::UnknownPool)
+        );
     }
 
     /// The range an aggregator would be quoted: a floor it can rely on and a
@@ -2465,9 +3328,16 @@ mod quote_tests {
         let (s, pool, _) = market();
         let spread = |n: i64| {
             let q = quote(&s, XZEC, &[pool], Fixed::whole(n)).unwrap();
-            q.best_case.sub(q.amount_out).unwrap().div(q.best_case).unwrap()
+            q.best_case
+                .sub(q.amount_out)
+                .unwrap()
+                .div(q.best_case)
+                .unwrap()
         };
-        assert!(spread(1_000) > spread(10), "price impact did not grow with size");
+        assert!(
+            spread(1_000) > spread(10),
+            "price impact did not grow with size"
+        );
     }
 
     /// Fees are charged either way. Netting removes slippage, not the cost of
@@ -2480,7 +3350,10 @@ mod quote_tests {
         let p = &s.pools[&pool];
         let (r_in, r_out) = p.oriented(XZEC).unwrap();
         let feeless = amount.mul(r_out).unwrap().div(r_in).unwrap();
-        assert!(q.best_case < feeless, "the ceiling was quoted without the fee");
+        assert!(
+            q.best_case < feeless,
+            "the ceiling was quoted without the fee"
+        );
     }
 
     /// Price impact is visible: a larger trade gets a worse rate per unit.
@@ -2516,7 +3389,13 @@ mod clearing_tests {
         let mut s = SwapState::new(7, Params::v1());
         let amount = Fixed::whole(100_000);
         let observed = s.backing_of(XZEC).add(amount).unwrap().add(amount).unwrap();
-        go(&mut s, Intent::AttestVaultBalance { asset: XZEC, observed });
+        go(
+            &mut s,
+            Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         let d = Intent::next_deposit(&s, A, XZEC, amount, [0u8; 32]);
         go(&mut s, d);
         let d = Intent::next_deposit(&s, B, XZEC, amount, [9u8; 32]);
@@ -2524,19 +3403,45 @@ mod clearing_tests {
         let epoch = s.epoch;
         go(&mut s, Intent::Checkpoint);
         go(&mut s, Intent::ConfirmAnchor { epoch });
-        let r = go(&mut s, Intent::CreateToken {
-            creator: A, symbol: *b"CAT\0\0\0\0\0", supply: Fixed::whole(10_000_000), unit: Fixed::raw(1),
-            xzec_liquidity: Fixed::whole(10_000), token_liquidity: Fixed::whole(5_000_000), fee_bps: 30,
-        });
-        let token = match r[0] { Receipt::TokenCreated { asset, .. } => asset, _ => panic!("{:?}", r) };
-        let pool = match r[1] { Receipt::PoolCreated { pool, .. } => pool, _ => panic!("{:?}", r) };
+        let r = go(
+            &mut s,
+            Intent::CreateToken {
+                creator: A,
+                symbol: crate::state::symbol(b"CAT\0\0\0\0\0"),
+                supply: Fixed::whole(10_000_000),
+                unit: Fixed::raw(1),
+                xzec_liquidity: Fixed::whole(10_000),
+                token_liquidity: Fixed::whole(5_000_000),
+                fee_bps: 30,
+            },
+        );
+        let token = match r[0] {
+            Receipt::TokenCreated { asset, .. } => asset,
+            _ => panic!("{:?}", r),
+        };
+        let pool = match r[1] {
+            Receipt::PoolCreated { pool, .. } => pool,
+            _ => panic!("{:?}", r),
+        };
         let r = go(&mut s, Intent::SetClearing { on: true });
         assert!(matches!(r[0], Receipt::ClearingSet { on: true }));
         (s, pool, token)
     }
 
-    fn swap(account: AccountId, asset_in: AssetId, pool: PoolId, amount_in: Fixed, min_out: Fixed) -> Intent {
-        Intent::SwapExactIn { account, asset_in, path: vec![pool], amount_in, min_out }
+    fn swap(
+        account: AccountId,
+        asset_in: AssetId,
+        pool: PoolId,
+        amount_in: Fixed,
+        min_out: Fixed,
+    ) -> Intent {
+        Intent::SwapExactIn {
+            account,
+            asset_in,
+            path: vec![pool],
+            amount_in,
+            min_out,
+        }
     }
 
     fn product(s: &SwapState, pool: PoolId) -> (Fixed, Fixed) {
@@ -2557,7 +3462,11 @@ mod clearing_tests {
         assert!(matches!(r[0], Receipt::SwapQueued { .. }), "{:?}", r);
         assert_eq!(product(&s, pool), before, "the pool moved before the seal");
         assert_eq!(s.orders.len(), 1);
-        assert_eq!(s.balance(&A, token), Fixed::whole(5_000_000), "nothing paid out yet");
+        assert_eq!(
+            s.balance(&A, token),
+            Fixed::whole(5_000_000),
+            "nothing paid out yet"
+        );
         s.check_invariants().unwrap();
     }
 
@@ -2569,9 +3478,15 @@ mod clearing_tests {
         go(&mut s, swap(A, XZEC, pool, amount, Fixed::ZERO));
         let before_cat = s.balance(&A, token);
         let r = go(&mut s, Intent::Checkpoint);
-        let got = match &r[0] { Receipt::Swapped { amount_out, .. } => *amount_out, other => panic!("{:?}", other) };
+        let got = match &r[0] {
+            Receipt::Swapped { amount_out, .. } => *amount_out,
+            other => panic!("{:?}", other),
+        };
         assert!(matches!(r.last(), Some(Receipt::Checkpointed(_))));
-        assert_eq!(got, q.amount_out, "alone in the batch, the curve's price is the price");
+        assert_eq!(
+            got, q.amount_out,
+            "alone in the batch, the curve's price is the price"
+        );
         assert_eq!(s.balance(&A, token), before_cat.add(got).unwrap());
         assert!(s.orders.is_empty());
         s.check_invariants().unwrap();
@@ -2584,26 +3499,56 @@ mod clearing_tests {
         let solo = quote(&s, XZEC, &[pool], x_in).unwrap();
         // B sells 10 xZEC for CAT; A sells CAT worth about 10 xZEC.
         go(&mut s, swap(B, XZEC, pool, x_in, Fixed::ZERO));
-        go(&mut s, swap(A, token, pool, Fixed::whole(5_000), Fixed::ZERO));
+        go(
+            &mut s,
+            swap(A, token, pool, Fixed::whole(5_000), Fixed::ZERO),
+        );
         let before = product(&s, pool);
         let r = go(&mut s, Intent::Checkpoint);
         let (mut b_out, mut a_out) = (Fixed::ZERO, Fixed::ZERO);
         for x in &r {
-            if let Receipt::Swapped { account, amount_out, .. } = x {
-                if *account == B { b_out = *amount_out } else { a_out = *amount_out }
+            if let Receipt::Swapped {
+                account,
+                amount_out,
+                ..
+            } = x
+            {
+                if *account == B {
+                    b_out = *amount_out
+                } else {
+                    a_out = *amount_out
+                }
             }
         }
         assert!(b_out.is_positive() && a_out.is_positive(), "{:?}", r);
-        assert!(b_out > solo.amount_out, "netted, B must do better than the curve alone: {} vs {}", b_out, solo.amount_out);
-        assert!(b_out <= solo.best_case, "and no better than the marginal rate: {} vs {}", b_out, solo.best_case);
+        assert!(
+            b_out > solo.amount_out,
+            "netted, B must do better than the curve alone: {} vs {}",
+            b_out,
+            solo.amount_out
+        );
+        assert!(
+            b_out <= solo.best_case,
+            "and no better than the marginal rate: {} vs {}",
+            b_out,
+            solo.best_case
+        );
         // Both sides paid the same price, within rounding, on what entered
         // the curve (the fee comes off the input on both sides): CAT per xZEC.
         let x_net = x_in.sub(amm::fee_taken(x_in, 30).unwrap()).unwrap();
-        let c_net = Fixed::whole(5_000).sub(amm::fee_taken(Fixed::whole(5_000), 30).unwrap()).unwrap();
+        let c_net = Fixed::whole(5_000)
+            .sub(amm::fee_taken(Fixed::whole(5_000), 30).unwrap())
+            .unwrap();
         let p_b = b_out.div(x_net).unwrap();
         let p_a = c_net.div(a_out).unwrap();
         let ratio = p_b.div(p_a).unwrap();
-        assert!(ratio > Fixed::raw(999_000_000_000_000_000) && ratio < Fixed::raw(1_001_000_000_000_000_000), "prices differ: {} vs {}", p_b, p_a);
+        assert!(
+            ratio > Fixed::raw(999_000_000_000_000_000)
+                && ratio < Fixed::raw(1_001_000_000_000_000_000),
+            "prices differ: {} vs {}",
+            p_b,
+            p_a
+        );
         assert!(invariant_kept(before, product(&s, pool)));
         s.check_invariants().unwrap();
     }
@@ -2611,12 +3556,37 @@ mod clearing_tests {
     #[test]
     fn an_unmet_limit_does_not_fill_and_the_rest_still_clear() {
         let (mut s, pool, token) = market();
-        go(&mut s, swap(B, XZEC, pool, Fixed::whole(10), Fixed::whole(1_000_000)));
-        go(&mut s, swap(A, token, pool, Fixed::whole(5_000), Fixed::ZERO));
+        go(
+            &mut s,
+            swap(B, XZEC, pool, Fixed::whole(10), Fixed::whole(1_000_000)),
+        );
+        go(
+            &mut s,
+            swap(A, token, pool, Fixed::whole(5_000), Fixed::ZERO),
+        );
         let r = go(&mut s, Intent::Checkpoint);
-        assert!(matches!(r[0], Receipt::SwapUnfilled { account: B, reason: Reject::SlippageExceeded, .. }), "{:?}", r[0]);
-        assert!(matches!(r[1], Receipt::Swapped { account: A, .. }), "{:?}", r[1]);
-        assert_eq!(s.balance(&B, XZEC), Fixed::whole(100_000), "an unfilled order costs nothing");
+        assert!(
+            matches!(
+                r[0],
+                Receipt::SwapUnfilled {
+                    account: B,
+                    reason: Reject::SlippageExceeded,
+                    ..
+                }
+            ),
+            "{:?}",
+            r[0]
+        );
+        assert!(
+            matches!(r[1], Receipt::Swapped { account: A, .. }),
+            "{:?}",
+            r[1]
+        );
+        assert_eq!(
+            s.balance(&B, XZEC),
+            Fixed::whole(100_000),
+            "an unfilled order costs nothing"
+        );
         s.check_invariants().unwrap();
     }
 
@@ -2624,16 +3594,38 @@ mod clearing_tests {
     fn an_order_the_account_cannot_pay_by_the_seal_is_unfilled() {
         let (mut s, pool, _) = market();
         go(&mut s, swap(B, XZEC, pool, Fixed::whole(10), Fixed::ZERO));
-        go(&mut s, Intent::Transfer { from: B, to: A, asset: XZEC, amount: Fixed::whole(99_995) });
+        go(
+            &mut s,
+            Intent::Transfer {
+                from: B,
+                to: A,
+                asset: XZEC,
+                amount: Fixed::whole(99_995),
+            },
+        );
         let r = go(&mut s, Intent::Checkpoint);
-        assert!(matches!(r[0], Receipt::SwapUnfilled { reason: Reject::InsufficientBalance, .. }), "{:?}", r[0]);
+        assert!(
+            matches!(
+                r[0],
+                Receipt::SwapUnfilled {
+                    reason: Reject::InsufficientBalance,
+                    ..
+                }
+            ),
+            "{:?}",
+            r[0]
+        );
         s.check_invariants().unwrap();
     }
 
     #[test]
     fn orders_are_committed_and_survive_the_codec() {
         let (mut s, pool, _) = market();
-        let root_off = { let mut t = s.clone(); t.batch_clearing = false; t.state_root() };
+        let root_off = {
+            let mut t = s.clone();
+            t.batch_clearing = false;
+            t.state_root()
+        };
         assert_ne!(root_off, s.state_root(), "the switch is part of the root");
         let quiet = s.state_root();
         go(&mut s, swap(B, XZEC, pool, Fixed::whole(1), Fixed::ZERO));
@@ -2654,18 +3646,41 @@ mod clearing_tests {
             (500, 500, 0, 100),
         ];
         for (r0, r1, u, v) in cases {
-            let (r0, r1, u, v) = (Fixed::whole(r0), Fixed::whole(r1), Fixed::whole(u), Fixed::whole(v));
+            let (r0, r1, u, v) = (
+                Fixed::whole(r0),
+                Fixed::whole(r1),
+                Fixed::whole(u),
+                Fixed::whole(v),
+            );
             let (out1, out0) = clear_pool(r0, r1, u, v).expect("prices");
             // What a side is paid can exceed a reserve — the other side
             // supplied it — but the reserves themselves must stay positive.
-            let after = (r0.add(u).unwrap().sub(out0).unwrap(), r1.add(v).unwrap().sub(out1).unwrap());
-            assert!(after.0.is_positive() && after.1.is_positive(), "a reserve was emptied for {:?}", (r0, r1, u, v));
-            assert!(invariant_kept((r0, r1), after), "invariant fell for {:?}", (r0, r1, u, v));
+            let after = (
+                r0.add(u).unwrap().sub(out0).unwrap(),
+                r1.add(v).unwrap().sub(out1).unwrap(),
+            );
+            assert!(
+                after.0.is_positive() && after.1.is_positive(),
+                "a reserve was emptied for {:?}",
+                (r0, r1, u, v)
+            );
+            assert!(
+                invariant_kept((r0, r1), after),
+                "invariant fell for {:?}",
+                (r0, r1, u, v)
+            );
             if u.is_positive() && v.is_positive() {
                 let p_sell0 = out1.div(u).unwrap();
                 let p_sell1 = v.div(out0).unwrap();
                 let ratio = p_sell0.div(p_sell1).unwrap();
-                assert!(ratio > Fixed::raw(990_000_000_000_000_000) && ratio < Fixed::raw(1_010_000_000_000_000_000), "prices differ for {:?}: {} vs {}", (r0, r1, u, v), p_sell0, p_sell1);
+                assert!(
+                    ratio > Fixed::raw(990_000_000_000_000_000)
+                        && ratio < Fixed::raw(1_010_000_000_000_000_000),
+                    "prices differ for {:?}: {} vs {}",
+                    (r0, r1, u, v),
+                    p_sell0,
+                    p_sell1
+                );
             }
         }
     }
@@ -2692,7 +3707,13 @@ mod collection_tests {
         let mut s = SwapState::new(7, Params::v1());
         let amount = Fixed::whole(1_000);
         let observed = s.backing_of(XZEC).add(amount).unwrap().add(amount).unwrap();
-        go(&mut s, Intent::AttestVaultBalance { asset: XZEC, observed });
+        go(
+            &mut s,
+            Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         let d = Intent::next_deposit(&s, A, XZEC, amount, [0u8; 32]);
         go(&mut s, d);
         let d = Intent::next_deposit(&s, B, XZEC, amount, [9u8; 32]);
@@ -2705,38 +3726,67 @@ mod collection_tests {
 
     /// A collection with the sale already over, so items can be claimed.
     /// Tests that care about the sale itself advance it themselves.
-    pub(super) fn collection(s: &mut SwapState, cap: u32) -> u32 {
+    pub(super) fn collection(s: &mut SwapState, cap: u32) -> CollectionId {
         let c = selling(s, cap);
         open_minting(s, c);
         c
     }
 
     /// A collection still taking deposits.
-    fn selling(s: &mut SwapState, cap: u32) -> u32 {
-        match go(s, Intent::CreateCollection { creator: A, symbol: *b"NAP\0\0\0\0\0", cap, fee_bps: 100 }).as_slice() {
+    fn selling(s: &mut SwapState, cap: u32) -> CollectionId {
+        match go(
+            s,
+            Intent::CreateCollection {
+                creator: A,
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                cap,
+                fee_bps: 100,
+            },
+        )
+        .as_slice()
+        {
             [Receipt::CollectionCreated { collection, .. }] => *collection,
             other => panic!("{:?}", other),
         }
     }
 
-    fn advance(s: &mut SwapState, c: u32, to: Phase) -> Vec<Receipt> {
-        go(s, Intent::AdvanceCollection { creator: A, collection: c, to: to.code() })
+    fn advance(s: &mut SwapState, c: CollectionId, to: Phase) -> Vec<Receipt> {
+        go(
+            s,
+            Intent::AdvanceCollection {
+                creator: A,
+                collection: c,
+                to: to.code(),
+            },
+        )
     }
 
     /// The sale ends and claiming opens.
-    fn open_minting(s: &mut SwapState, c: u32) {
+    fn open_minting(s: &mut SwapState, c: CollectionId) {
         advance(s, c, Phase::Minting);
     }
 
     /// Claiming closes, then the market opens — the collection's last two
     /// moments.
-    pub(super) fn list(s: &mut SwapState, c: u32) {
+    pub(super) fn list(s: &mut SwapState, c: CollectionId) {
         advance(s, c, Phase::Closed);
         advance(s, c, Phase::Live);
     }
 
-    pub(super) fn mint(s: &mut SwapState, c: u32, to: AccountId, n: u8) -> AssetId {
-        match go(s, Intent::MintCollectionItem { creator: A, collection: c, to, symbol: *b"NAP\0\0\0\0\0", content: [n; 32] }).as_slice() {
+    pub(super) fn mint(s: &mut SwapState, c: CollectionId, to: AccountId, n: u8) -> AssetId {
+        match go(
+            s,
+            Intent::MintCollectionItem {
+                creator: A,
+                collection: c,
+                serial: n as u32,
+                to,
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                content: [n; 32],
+            },
+        )
+        .as_slice()
+        {
             [Receipt::CollectionItemMinted { asset, .. }] => *asset,
             other => panic!("{:?}", other),
         }
@@ -2750,7 +3800,14 @@ mod collection_tests {
         let mut s = funded();
         let c = collection(&mut s, 4);
         let items: Vec<AssetId> = (0..4).map(|i| mint(&mut s, c, A, i)).collect();
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(40) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(40),
+            },
+        );
         list(&mut s, c);
 
         let floor = s.collections[&c].redeem_price();
@@ -2758,9 +3815,17 @@ mod collection_tests {
 
         for (n, asset) in items.iter().enumerate() {
             let before = s.balance(&A, XZEC);
-            let r = go(&mut s, Intent::RedeemCollectionItem { holder: A, asset: *asset });
+            let r = go(
+                &mut s,
+                Intent::RedeemCollectionItem {
+                    holder: A,
+                    asset: *asset,
+                },
+            );
             match r.as_slice() {
-                [Receipt::CollectionItemRedeemed { paid, outstanding, .. }] => {
+                [Receipt::CollectionItemRedeemed {
+                    paid, outstanding, ..
+                }] => {
                     assert_eq!(*paid, floor, "item {} paid the floor", n);
                     assert_eq!(*outstanding as usize, 3 - n);
                 }
@@ -2770,11 +3835,21 @@ mod collection_tests {
             // The floor is unchanged for whoever is left.
             let left = &s.collections[&c];
             if left.outstanding > 0 {
-                assert_eq!(left.redeem_price(), floor, "the floor moved after {} redemptions", n + 1);
+                assert_eq!(
+                    left.redeem_price(),
+                    floor,
+                    "the floor moved after {} redemptions",
+                    n + 1
+                );
             }
-            s.check_invariants().expect("backing identity holds mid-redemption");
+            s.check_invariants()
+                .expect("backing identity holds mid-redemption");
         }
-        assert_eq!(s.collections[&c].pool, Fixed::ZERO, "the last item took the rest");
+        assert_eq!(
+            s.collections[&c].pool,
+            Fixed::ZERO,
+            "the last item took the rest"
+        );
         assert_eq!(s.collections[&c].outstanding, 0);
         // Minted never falls: the collection's final size is a fact about it.
         assert_eq!(s.collections[&c].minted, 4);
@@ -2786,19 +3861,47 @@ mod collection_tests {
     fn funding_the_pool_raises_the_floor_for_every_holder_at_once() {
         let mut s = funded();
         let c = collection(&mut s, 4);
-        let held: Vec<AssetId> = (0..4).map(|i| mint(&mut s, c, if i % 2 == 0 { A } else { B }, i)).collect();
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(40) });
+        let held: Vec<AssetId> = (0..4)
+            .map(|i| mint(&mut s, c, if i % 2 == 0 { A } else { B }, i))
+            .collect();
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(40),
+            },
+        );
         list(&mut s, c);
         assert_eq!(s.collections[&c].redeem_price(), Fixed::whole(10));
 
         // A trade fee arrives. Nobody is credited; the floor simply rises.
-        go(&mut s, Intent::FundCollection { from: B, collection: c, amount: Fixed::whole(8) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: B,
+                collection: c,
+                amount: Fixed::whole(8),
+            },
+        );
         assert_eq!(s.collections[&c].redeem_price(), Fixed::whole(12));
 
         // And B, who holds two, can take the new floor for each.
         let before = s.balance(&B, XZEC);
-        go(&mut s, Intent::RedeemCollectionItem { holder: B, asset: held[1] });
-        go(&mut s, Intent::RedeemCollectionItem { holder: B, asset: held[3] });
+        go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: B,
+                asset: held[1],
+            },
+        );
+        go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: B,
+                asset: held[3],
+            },
+        );
         assert_eq!(s.balance(&B, XZEC), before.add(Fixed::whole(24)).unwrap());
         s.check_invariants().unwrap();
     }
@@ -2812,7 +3915,14 @@ mod collection_tests {
         let c = collection(&mut s, 2);
         mint(&mut s, c, A, 0);
         s.check_invariants().unwrap();
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(25) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(25),
+            },
+        );
         assert_eq!(s.total_pooled().unwrap(), Fixed::whole(25));
         s.check_invariants().expect("the pool is counted");
     }
@@ -2827,21 +3937,90 @@ mod collection_tests {
 
         // Minting is over once the market is open — a late item would dilute
         // a claim people are already redeeming against.
-        let r = go(&mut s, Intent::MintCollectionItem { creator: A, collection: c, to: A, symbol: *b"NAP\0\0\0\0\0", content: [9; 32] });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::MintCollectionItem {
+                creator: A,
+                collection: c,
+                serial: 0,
+                to: A,
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                content: [9; 32],
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         // Only the holder may redeem.
-        let r = go(&mut s, Intent::RedeemCollectionItem { holder: B, asset: one });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NotTheWholeItem, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: B,
+                asset: one,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NotTheWholeItem,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         // An ordinary asset is not redeemable against a pool it never joined.
-        let r = go(&mut s, Intent::RedeemCollectionItem { holder: A, asset: XZEC });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NotACollectionItem, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: A,
+                asset: XZEC,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NotACollectionItem,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         // Funding something that does not exist takes nobody's money.
         let before = s.balance(&A, XZEC);
-        let r = go(&mut s, Intent::FundCollection { from: A, collection: 999, amount: Fixed::whole(1) });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NoSuchCollection, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: crate::types::legacy_id(999),
+                amount: Fixed::whole(1),
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NoSuchCollection,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&A, XZEC), before);
         s.check_invariants().unwrap();
     }
@@ -2874,26 +4053,77 @@ mod collection_tests {
         let mut s = funded();
         let c = collection(&mut s, 4);
         let first = mint(&mut s, c, B, 0);
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(40) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(40),
+            },
+        );
 
         // The naive quotient here would be 40 xZEC for one item.
         assert_eq!(s.collections[&c].outstanding, 1);
         assert_eq!(s.collections[&c].pool, Fixed::whole(40));
-        assert_eq!(s.collections[&c].redeem_price(), Fixed::ZERO, "no floor before the market");
+        assert_eq!(
+            s.collections[&c].redeem_price(),
+            Fixed::ZERO,
+            "no floor before the market"
+        );
 
         let before = s.balance(&B, XZEC);
-        let r = go(&mut s, Intent::RedeemCollectionItem { holder: B, asset: first });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
-        assert_eq!(s.balance(&B, XZEC), before, "not a single zatoshi left the pool");
+        let r = go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: B,
+                asset: first,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
+        assert_eq!(
+            s.balance(&B, XZEC),
+            before,
+            "not a single zatoshi left the pool"
+        );
 
         // Closing claiming is not enough either: the market has not opened.
         advance(&mut s, c, Phase::Closed);
-        let r = go(&mut s, Intent::RedeemCollectionItem { holder: B, asset: first });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: B,
+                asset: first,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         // Once it has, the floor is over the final denominator — not over one.
         advance(&mut s, c, Phase::Live);
-        assert_eq!(s.collections[&c].redeem_price(), Fixed::whole(40), "one claimant, one claim");
+        assert_eq!(
+            s.collections[&c].redeem_price(),
+            Fixed::whole(40),
+            "one claimant, one claim"
+        );
         s.check_invariants().unwrap();
     }
 
@@ -2904,21 +4134,68 @@ mod collection_tests {
         let c = collection(&mut s, 2);
         mint(&mut s, c, A, 0);
 
-        let r = go(&mut s, Intent::AdvanceCollection { creator: B, collection: c, to: Phase::Closed.code() });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NotTheCreator, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::AdvanceCollection {
+                creator: B,
+                collection: c,
+                to: Phase::Closed.code(),
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NotTheCreator,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         // Cannot skip a step: the market opens after claiming closes.
         let r = advance(&mut s, c, Phase::Live);
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         advance(&mut s, c, Phase::Closed);
         // Submitting the same step twice is refused, not silently skipped
         // ahead — which is why the destination is named rather than implied.
         let r = advance(&mut s, c, Phase::Closed);
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         advance(&mut s, c, Phase::Live);
         let r = advance(&mut s, c, Phase::Live);
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         // And there is nothing after the market.
         assert_eq!(s.collections[&c].phase.next(), None);
     }
@@ -2934,12 +4211,39 @@ mod collection_tests {
         assert_eq!(s.collections[&c].phase, Phase::Depositing);
 
         // Money may come in — that is what this phase is for.
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(20) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(20),
+            },
+        );
         assert_eq!(s.collections[&c].pool, Fixed::whole(20));
 
         // But nothing is handed out.
-        let r = go(&mut s, Intent::MintCollectionItem { creator: A, collection: c, to: B, symbol: *b"NAP\0\0\0\0\0", content: [1; 32] });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::WrongCollectionPhase, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::MintCollectionItem {
+                creator: A,
+                collection: c,
+                serial: 0,
+                to: B,
+                symbol: crate::state::symbol(b"NAP\0\0\0\0\0"),
+                content: [1; 32],
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::WrongCollectionPhase,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.collections[&c].minted, 0);
 
         // The sale ends, and only then does claiming open.
@@ -2950,30 +4254,51 @@ mod collection_tests {
         s.check_invariants().unwrap();
     }
 
-    /// Every trade feeds the floor. Half the fee goes into the pool, which is
-    /// what makes volume raise the redeem price without paying 4,444 people.
+    /// Every trade feeds the floor. Forty percent of the combined two-sided
+    /// fee enters the collection pool, raising the redeem price without paying
+    /// 4,444 people one by one; the rest follows the POL/creator split.
     #[test]
-    fn a_trade_pays_the_collection_and_half_of_it_raises_the_floor() {
+    fn a_trade_routes_fifty_forty_ten_and_raises_the_floor() {
         let mut s = funded();
         let c = collection(&mut s, 2);
         let item = mint(&mut s, c, A, 0);
         mint(&mut s, c, A, 1);
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::whole(20) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::whole(20),
+            },
+        );
         list(&mut s, c);
         assert_eq!(s.collections[&c].redeem_price(), Fixed::whole(10));
 
         // B buys the item from A for 100 xZEC, fee 100 bps each side.
         let (a0, b0) = (s.balance(&A, XZEC), s.balance(&B, XZEC));
-        let r = go(&mut s, Intent::AcceptOffer {
-            maker: A, taker: B,
-            offer_asset: item, offer_amount: Fixed::ONE,
-            want_asset: XZEC, want_amount: Fixed::whole(100),
-        });
+        let r = go(
+            &mut s,
+            Intent::AcceptOffer {
+                maker: A,
+                taker: B,
+                offer_asset: item,
+                offer_amount: Fixed::ONE,
+                want_asset: XZEC,
+                want_amount: Fixed::whole(100),
+            },
+        );
         let fee = match r.as_slice() {
-            [Receipt::OfferAccepted { .. }, Receipt::CollectionFeeTaken { taken, to_pool, to_creator, .. }] => {
+            [Receipt::OfferAccepted { .. }, Receipt::CollectionFeeTaken {
+                taken,
+                to_pol,
+                to_pool,
+                to_creator,
+                ..
+            }] => {
                 assert_eq!(*taken, Fixed::whole(2), "1% from each side of 100");
-                assert_eq!(*to_pool, Fixed::whole(1));
-                assert_eq!(*to_creator, Fixed::whole(1));
+                assert_eq!(*to_pol, Fixed::whole(1));
+                assert_eq!(*to_pool, Fixed::raw(800_000_000_000_000_000));
+                assert_eq!(*to_creator, Fixed::raw(200_000_000_000_000_000));
                 *taken
             }
             other => panic!("{:?}", other),
@@ -2981,14 +4306,28 @@ mod collection_tests {
         assert_eq!(fee, Fixed::whole(2));
 
         // The buyer paid the price and their 1%; the seller received the
-        // price less theirs. A is also the creator, so A takes the other half.
+        // price less theirs. A is also the creator, so A receives 10% of the
+        // total fee while the protocol and collection retain the rest.
         assert_eq!(s.balance(&B, XZEC), b0.sub(Fixed::whole(101)).unwrap());
-        assert_eq!(s.balance(&A, XZEC), a0.add(Fixed::whole(99)).unwrap().add(Fixed::whole(1)).unwrap());
+        assert_eq!(
+            s.balance(&A, XZEC),
+            a0.add(Fixed::whole(99))
+                .unwrap()
+                .add(Fixed::raw(200_000_000_000_000_000))
+                .unwrap()
+        );
+        assert_eq!(s.balance(&crate::types::ZYN_POL, XZEC), Fixed::whole(1));
         assert_eq!(s.balance(&B, item), Fixed::ONE);
 
         // And the floor moved for both items, without crediting anybody.
-        assert_eq!(s.collections[&c].pool, Fixed::whole(21));
-        assert_eq!(s.collections[&c].redeem_price(), Fixed::raw(Fixed::whole(21).0 / 2));
+        let expected_pool = Fixed::whole(20)
+            .add(Fixed::raw(800_000_000_000_000_000))
+            .unwrap();
+        assert_eq!(s.collections[&c].pool, expected_pool);
+        assert_eq!(
+            s.collections[&c].redeem_price(),
+            Fixed::raw(expected_pool.0 / 2)
+        );
         s.check_invariants().unwrap();
     }
 
@@ -3001,12 +4340,28 @@ mod collection_tests {
         let one = mint(&mut s, c, A, 0);
         let two = mint(&mut s, c, B, 1);
         list(&mut s, c);
-        let r = go(&mut s, Intent::AcceptOffer {
-            maker: A, taker: B,
-            offer_asset: one, offer_amount: Fixed::ONE,
-            want_asset: two, want_amount: Fixed::ONE,
-        });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::ItemNeedsAPrice, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::AcceptOffer {
+                maker: A,
+                taker: B,
+                offer_asset: one,
+                offer_amount: Fixed::ONE,
+                want_asset: two,
+                want_amount: Fixed::ONE,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::ItemNeedsAPrice,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&A, one), Fixed::ONE, "nothing moved");
         s.check_invariants().unwrap();
     }
@@ -3020,12 +4375,28 @@ mod collection_tests {
         let item = mint(&mut s, c, A, 0);
         list(&mut s, c);
         let all = s.balance(&B, XZEC);
-        let r = go(&mut s, Intent::AcceptOffer {
-            maker: A, taker: B,
-            offer_asset: item, offer_amount: Fixed::ONE,
-            want_asset: XZEC, want_amount: all,
-        });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::InsufficientBalance, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::AcceptOffer {
+                maker: A,
+                taker: B,
+                offer_asset: item,
+                offer_amount: Fixed::ONE,
+                want_asset: XZEC,
+                want_amount: all,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::InsufficientBalance,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&B, XZEC), all);
         assert_eq!(s.balance(&A, item), Fixed::ONE);
         s.check_invariants().unwrap();
@@ -3039,9 +4410,22 @@ mod collection_tests {
         let c = collection(&mut s, 3);
         let items: Vec<AssetId> = (0..3).map(|i| mint(&mut s, c, A, i)).collect();
         // 10 raw units over 3 items: 3 each, 1 left behind.
-        go(&mut s, Intent::FundCollection { from: A, collection: c, amount: Fixed::raw(10) });
+        go(
+            &mut s,
+            Intent::FundCollection {
+                from: A,
+                collection: c,
+                amount: Fixed::raw(10),
+            },
+        );
         list(&mut s, c);
-        go(&mut s, Intent::RedeemCollectionItem { holder: A, asset: items[0] });
+        go(
+            &mut s,
+            Intent::RedeemCollectionItem {
+                holder: A,
+                asset: items[0],
+            },
+        );
         assert_eq!(s.collections[&c].pool, Fixed::raw(7));
         assert_eq!(s.collections[&c].redeem_price(), Fixed::raw(3));
         s.check_invariants().unwrap();
@@ -3060,15 +4444,24 @@ mod offer_tests {
     const B: AccountId = [2u8; 32];
     const C: AccountId = [3u8; 32];
 
-    fn place(s: &mut SwapState, maker: AccountId, asset: AssetId, price: Fixed, until: u64) -> OfferId {
-        match go(s, Intent::PlaceOffer {
-            maker,
-            offer_asset: asset,
-            offer_amount: Fixed::ONE,
-            want_asset: XZEC,
-            want_amount: price,
-            expires_at_epoch: until,
-        })
+    fn place(
+        s: &mut SwapState,
+        maker: AccountId,
+        asset: AssetId,
+        price: Fixed,
+        until: u64,
+    ) -> OfferId {
+        match go(
+            s,
+            Intent::PlaceOffer {
+                maker,
+                offer_asset: asset,
+                offer_amount: Fixed::ONE,
+                want_asset: XZEC,
+                want_amount: price,
+                expires_at_epoch: until,
+            },
+        )
         .as_slice()
         {
             [Receipt::OfferPlaced { offer, .. }] => *offer,
@@ -3088,7 +4481,11 @@ mod offer_tests {
         let o = place(&mut s, A, item, price, u64::MAX);
 
         let r = go(&mut s, Intent::TakeOffer { taker: B, offer: o });
-        assert!(matches!(r.first(), Some(Receipt::OfferTaken { .. })), "{:?}", r);
+        assert!(
+            matches!(r.first(), Some(Receipt::OfferTaken { .. })),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&B, item), Fixed::ONE, "the taker has it");
         assert_eq!(s.balance(&POT_OFFERS, item), Fixed::ZERO, "escrow is empty");
         assert!(s.offers.is_empty(), "the offer is gone");
@@ -3105,11 +4502,33 @@ mod offer_tests {
         list(&mut s, c);
         place(&mut s, A, item, Fixed::whole(10), u64::MAX);
 
-        assert_eq!(s.balance(&A, item), Fixed::ZERO, "no longer the maker's to spend");
+        assert_eq!(
+            s.balance(&A, item),
+            Fixed::ZERO,
+            "no longer the maker's to spend"
+        );
         assert_eq!(s.balance(&POT_OFFERS, item), Fixed::ONE, "held in escrow");
         // And the maker cannot hand it to anyone behind the offer's back.
-        let r = go(&mut s, Intent::Transfer { from: A, to: C, asset: item, amount: Fixed::ONE });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::InsufficientBalance, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::Transfer {
+                from: A,
+                to: C,
+                asset: item,
+                amount: Fixed::ONE,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::InsufficientBalance,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         s.check_invariants().unwrap();
     }
 
@@ -3125,7 +4544,17 @@ mod offer_tests {
         go(&mut s, Intent::TakeOffer { taker: B, offer: o });
 
         let r = go(&mut s, Intent::TakeOffer { taker: C, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NoSuchOffer, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NoSuchOffer,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&C, item), Fixed::ZERO);
         s.check_invariants().unwrap();
     }
@@ -3139,11 +4568,25 @@ mod offer_tests {
         let o = place(&mut s, A, item, Fixed::whole(10), u64::MAX);
 
         let r = go(&mut s, Intent::CancelOffer { maker: B, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::NotTheMaker, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::NotTheMaker,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&POT_OFFERS, item), Fixed::ONE, "still escrowed");
 
         let r = go(&mut s, Intent::CancelOffer { maker: A, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::OfferCancelled { .. }]), "{:?}", r);
+        assert!(
+            matches!(r.as_slice(), [Receipt::OfferCancelled { .. }]),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&A, item), Fixed::ONE);
         assert!(s.offers.is_empty());
         s.check_invariants().unwrap();
@@ -3162,10 +4605,24 @@ mod offer_tests {
         go(&mut s, Intent::Checkpoint);
 
         let r = go(&mut s, Intent::TakeOffer { taker: B, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::OfferExpired, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::OfferExpired,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
 
         let r = go(&mut s, Intent::CancelOffer { maker: A, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::OfferCancelled { .. }]), "{:?}", r);
+        assert!(
+            matches!(r.as_slice(), [Receipt::OfferCancelled { .. }]),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&A, item), Fixed::ONE);
         s.check_invariants().unwrap();
     }
@@ -3179,7 +4636,17 @@ mod offer_tests {
         let o = place(&mut s, A, item, Fixed::whole(10), u64::MAX);
 
         let r = go(&mut s, Intent::TakeOffer { taker: A, offer: o });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::CannotTakeOwnOffer, .. }]), "{:?}", r);
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::CannotTakeOwnOffer,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         s.check_invariants().unwrap();
     }
 
@@ -3196,16 +4663,23 @@ mod offer_tests {
         let o = place(&mut s, A, item, price, u64::MAX);
         let r = go(&mut s, Intent::TakeOffer { taker: B, offer: o });
 
-        // 100 bps of 10, from each side: half of the 0.2 total to the pool.
+        // 100 bps of 10, from each side: 40% of the 0.2 total to the pool.
         let each = Fixed::raw(price.0 / 100);
         let taken = each.add(each).unwrap();
-        let to_pool = Fixed::raw(taken.0 / 2);
+        let to_pool = taken
+            .mul_div(Fixed::whole(4_000), Fixed::whole(10_000))
+            .unwrap();
         assert!(
-            r.iter().any(|x| matches!(x, Receipt::CollectionFeeTaken { taken: t, .. } if *t == taken)),
+            r.iter()
+                .any(|x| matches!(x, Receipt::CollectionFeeTaken { taken: t, .. } if *t == taken)),
             "{:?}",
             r
         );
-        assert_eq!(s.collections[&c].pool, pool_before.add(to_pool).unwrap(), "the floor rose");
+        assert_eq!(
+            s.collections[&c].pool,
+            pool_before.add(to_pool).unwrap(),
+            "the floor rose"
+        );
         s.check_invariants().unwrap();
     }
 
@@ -3218,15 +4692,28 @@ mod offer_tests {
         let one = mint(&mut s, c, A, 0);
         let two = mint(&mut s, c, B, 1);
         list(&mut s, c);
-        let r = go(&mut s, Intent::PlaceOffer {
-            maker: A,
-            offer_asset: one,
-            offer_amount: Fixed::ONE,
-            want_asset: two,
-            want_amount: Fixed::ONE,
-            expires_at_epoch: u64::MAX,
-        });
-        assert!(matches!(r.as_slice(), [Receipt::Rejected { reason: Reject::ItemNeedsAPrice, .. }]), "{:?}", r);
+        let r = go(
+            &mut s,
+            Intent::PlaceOffer {
+                maker: A,
+                offer_asset: one,
+                offer_amount: Fixed::ONE,
+                want_asset: two,
+                want_amount: Fixed::ONE,
+                expires_at_epoch: u64::MAX,
+            },
+        );
+        assert!(
+            matches!(
+                r.as_slice(),
+                [Receipt::Rejected {
+                    reason: Reject::ItemNeedsAPrice,
+                    ..
+                }]
+            ),
+            "{:?}",
+            r
+        );
         assert_eq!(s.balance(&A, one), Fixed::ONE, "nothing escrowed");
         s.check_invariants().unwrap();
     }
@@ -3246,7 +4733,11 @@ mod offer_tests {
         let without = s.sections().len();
 
         let o = place(&mut s, A, item, Fixed::whole(10), u64::MAX);
-        assert_eq!(s.sections().len(), without + 1, "a resting offer is committed state");
+        assert_eq!(
+            s.sections().len(),
+            without + 1,
+            "a resting offer is committed state"
+        );
 
         go(&mut s, Intent::CancelOffer { maker: A, offer: o });
         assert_eq!(s.sections().len(), without, "and leaves no section behind");

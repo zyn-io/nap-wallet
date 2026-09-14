@@ -77,7 +77,10 @@ pub enum Value {
     /// empty array still has a type. A swap route with no hops and a swap
     /// route through one pool must produce different type strings for the
     /// same reason they produce different trades.
-    Array { elem_type: String, items: Vec<Value> },
+    Array {
+        elem_type: String,
+        items: Vec<Value>,
+    },
 }
 
 impl Value {
@@ -170,7 +173,10 @@ pub struct TypedData {
 
 impl TypedData {
     pub fn new(name: &str) -> TypedData {
-        TypedData { name: name.to_string(), fields: Vec::new() }
+        TypedData {
+            name: name.to_string(),
+            fields: Vec::new(),
+        }
     }
 
     pub fn field(mut self, name: &str, value: Value) -> Self {
@@ -310,7 +316,11 @@ impl Domain {
 /// module docs for why those two leading bytes are the safety property rather
 /// than a formality.
 pub fn digest(domain: &Domain, message: &TypedData) -> Word {
-    keccak(&[&[0x19, 0x01], &domain.separator()[..], &message.struct_hash()[..]])
+    keccak(&[
+        &[0x19, 0x01],
+        &domain.separator()[..],
+        &message.struct_hash()[..],
+    ])
 }
 
 #[cfg(test)]
@@ -323,10 +333,16 @@ mod tests {
     fn mail() -> TypedData {
         let cow = TypedData::new("Person")
             .field("name", Value::String("Cow".to_string()))
-            .field("wallet", Value::Address(hex20("CD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826")));
+            .field(
+                "wallet",
+                Value::Address(hex20("CD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826")),
+            );
         let bob = TypedData::new("Person")
             .field("name", Value::String("Bob".to_string()))
-            .field("wallet", Value::Address(hex20("bBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB")));
+            .field(
+                "wallet",
+                Value::Address(hex20("bBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB")),
+            );
         TypedData::new("Mail")
             .field("from", Value::Struct(cow))
             .field("to", Value::Struct(bob))
@@ -339,7 +355,10 @@ mod tests {
     }
 
     pub(crate) fn hex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     #[test]
@@ -369,8 +388,12 @@ mod tests {
     /// could disagree.
     #[test]
     fn reordering_fields_changes_the_hash() {
-        let a = TypedData::new("T").field("x", Value::uint(1)).field("y", Value::uint(2));
-        let b = TypedData::new("T").field("y", Value::uint(2)).field("x", Value::uint(1));
+        let a = TypedData::new("T")
+            .field("x", Value::uint(1))
+            .field("y", Value::uint(2));
+        let b = TypedData::new("T")
+            .field("y", Value::uint(2))
+            .field("x", Value::uint(1));
         assert_ne!(a.struct_hash(), b.struct_hash());
     }
 
@@ -394,7 +417,10 @@ mod tests {
     #[test]
     fn an_array_is_typed_hashed_and_order_sensitive() {
         let t = |v: Value| TypedData::new("Swap").field("path", v);
-        assert_eq!(t(Value::uints([1u64, 2])).encode_type(), "Swap(uint256[] path)");
+        assert_eq!(
+            t(Value::uints([1u64, 2])).encode_type(),
+            "Swap(uint256[] path)"
+        );
         assert_ne!(
             t(Value::uints([1u64, 2])).struct_hash(),
             t(Value::uints([2u64, 1])).struct_hash(),
@@ -406,14 +432,21 @@ mod tests {
         );
         // An empty array still types, and is not the same as a one-hop route.
         assert_eq!(t(Value::uints([])).encode_type(), "Swap(uint256[] path)");
-        assert_ne!(t(Value::uints([])).struct_hash(), t(Value::uints([0u64])).struct_hash());
+        assert_ne!(
+            t(Value::uints([])).struct_hash(),
+            t(Value::uints([0u64])).struct_hash()
+        );
     }
 
     #[test]
     fn negative_amounts_sign_extend() {
-        let Value::Int256(w) = Value::int(-1) else { panic!("wrong variant") };
+        let Value::Int256(w) = Value::int(-1) else {
+            panic!("wrong variant")
+        };
         assert_eq!(w, [0xFF; 32]);
-        let Value::Int256(z) = Value::int(0) else { panic!("wrong variant") };
+        let Value::Int256(z) = Value::int(0) else {
+            panic!("wrong variant")
+        };
         assert_eq!(z, [0x00; 32]);
         // A negative int256 is not the same word as the u64 of its magnitude.
         assert_ne!(Value::int(-5).encode(), Value::uint(5).encode());
@@ -459,7 +492,11 @@ mod tests {
         let m = mail();
         assert_eq!(
             digest(&d, &m),
-            keccak(&[&[0x19u8, 0x01][..], &d.separator()[..], &m.struct_hash()[..]])
+            keccak(&[
+                &[0x19u8, 0x01][..],
+                &d.separator()[..],
+                &m.struct_hash()[..]
+            ])
         );
         assert_ne!(digest(&d, &m), m.struct_hash());
     }

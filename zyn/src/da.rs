@@ -102,7 +102,11 @@ impl<V: MicrochainVm> Snapshot<V> {
     /// never for publication (`Published` is the public form).
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Encoder::new();
-        e.bytes(SNAPSHOT_MAGIC).u32(self.chain_id).u64(self.epoch).u64(self.seq).bytes(&self.root);
+        e.bytes(SNAPSHOT_MAGIC)
+            .u32(self.chain_id)
+            .u64(self.epoch)
+            .u64(self.seq)
+            .bytes(&self.root);
         e.u32(self.sections.len() as u32);
         for s in &self.sections {
             e.bytes(s);
@@ -147,7 +151,15 @@ impl<V: MicrochainVm> Snapshot<V> {
         if d.remaining() != 0 {
             return None;
         }
-        Some(Snapshot { chain_id, epoch, seq, root, sections, records, _vm: PhantomData })
+        Some(Snapshot {
+            chain_id,
+            epoch,
+            seq,
+            root,
+            sections,
+            records,
+            _vm: PhantomData,
+        })
     }
 
     /// Publish the accounts tree as one checkpoint sealed it.
@@ -187,7 +199,11 @@ impl<V: MicrochainVm> Snapshot<V> {
                 return Err(SnapshotError::OutOfOrder);
             }
         }
-        Ok(self.records.iter().map(|(_, r)| V::leaf_of_record(r)).collect())
+        Ok(self
+            .records
+            .iter()
+            .map(|(_, r)| V::leaf_of_record(r))
+            .collect())
     }
 
     /// The accounts root implied by this snapshot's contents.
@@ -232,7 +248,10 @@ impl<V: MicrochainVm> Snapshot<V> {
 
     /// One holder's published record, in the VM's encoding.
     pub fn record(&self, id: &AccountId) -> Option<&[u8]> {
-        self.records.iter().find(|(a, _)| a == id).map(|(_, r)| r.as_slice())
+        self.records
+            .iter()
+            .find(|(a, _)| a == id)
+            .map(|(_, r)| r.as_slice())
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &AccountId> {
@@ -303,7 +322,10 @@ impl Published {
     /// The bytes a mirror stores and a replica checks.
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Encoder::new();
-        e.bytes(PUBLISHED_MAGIC).u32(self.chain_id).u64(self.epoch).bytes(&self.root);
+        e.bytes(PUBLISHED_MAGIC)
+            .u32(self.chain_id)
+            .u64(self.epoch)
+            .bytes(&self.root);
         e.u32(self.sections.len() as u32);
         for s in &self.sections {
             e.bytes(s);
@@ -342,7 +364,13 @@ impl Published {
         if d.remaining() != 0 {
             return None;
         }
-        Some(Published { chain_id, epoch, root, sections, leaves })
+        Some(Published {
+            chain_id,
+            epoch,
+            root,
+            sections,
+            leaves,
+        })
     }
 
     pub fn rebuild_root(&self) -> Result<Hash, SnapshotError> {
@@ -376,24 +404,30 @@ impl<V: MicrochainVm> Snapshot<V> {
 
     /// A holder's own record with its leaf index and path — served only on a
     /// request the holder signed.
-    pub fn record_proof(&self, id: &AccountId) -> Result<(Vec<u8>, u32, Vec<ProofStep>), SnapshotError> {
-        let index = self.records.iter().position(|(a, _)| a == id).ok_or(SnapshotError::UnknownAccount)?;
+    pub fn record_proof(
+        &self,
+        id: &AccountId,
+    ) -> Result<(Vec<u8>, u32, Vec<ProofStep>), SnapshotError> {
+        let index = self
+            .records
+            .iter()
+            .position(|(a, _)| a == id)
+            .ok_or(SnapshotError::UnknownAccount)?;
         let (_, path) = self.proof(id)?;
         Ok((self.records[index].1.clone(), index as u32, path))
     }
 }
 
-pub fn verify_record<V: MicrochainVm>(
-    record: &[u8],
-    path: &[ProofStep],
-    anchored: Hash,
-) -> bool {
+pub fn verify_record<V: MicrochainVm>(record: &[u8], path: &[ProofStep], anchored: Hash) -> bool {
     verify_proof(V::leaf_of_record(record), path, anchored)
 }
 
 /// A holder's own proof taken straight from a live VM, bypassing publication.
 pub fn proof_from<V: MicrochainVm>(state: &V, id: &AccountId) -> Option<(Vec<u8>, Vec<ProofStep>)> {
-    Some((state.account_record(id)?, Provable::account_proof(state, id)?))
+    Some((
+        state.account_record(id)?,
+        Provable::account_proof(state, id)?,
+    ))
 }
 
 #[cfg(test)]
@@ -407,7 +441,13 @@ mod tests {
     fn chain() -> SwapState {
         let mut s = SwapState::new(3, Params::v1());
         let observed = s.backing_of(XZEC).add(Fixed::whole(100)).unwrap();
-        s.apply(1, &Intent::AttestVaultBalance { asset: XZEC, observed });
+        s.apply(
+            1,
+            &Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         let d = Intent::next_deposit(&s, [1u8; 32], XZEC, Fixed::whole(5), [0u8; 32]);
         s.apply(2, &d);
         let d = Intent::next_deposit(&s, [2u8; 32], XZEC, Fixed::whole(7), [0u8; 32]);
@@ -433,7 +473,16 @@ mod tests {
 
     #[test]
     fn a_checkpoint_round_trips() {
-        let cp = Checkpoint { chain_id: 3, epoch: 9, parent_root: [1; 32], state_root: [2; 32], intent_root: [3; 32], seq: 77, intents: 12, gross_volume: Fixed::whole(4) };
+        let cp = Checkpoint {
+            chain_id: 3,
+            epoch: 9,
+            parent_root: [1; 32],
+            state_root: [2; 32],
+            intent_root: [3; 32],
+            seq: 77,
+            intents: 12,
+            gross_volume: Fixed::whole(4),
+        };
         let mut e = Encoder::new();
         encode_checkpoint(&mut e, &cp);
         let mut d = Decoder::new(e.finish());

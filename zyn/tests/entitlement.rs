@@ -8,7 +8,9 @@ use swapvm::state::SwapState;
 use swapvm::tx::Intent;
 use swapvm::types::XZEC;
 use swapvm::{Fixed, Params};
-use zyn::verify::{authorize_intent, Authority, AuthorityError, Authorized, Credential, VerifyError};
+use zyn::verify::{
+    authorize_intent, Authority, AuthorityError, Authorized, Credential, VerifyError,
+};
 use zyn_vm::auth::{account_of, signed_bytes_as, Authorization, Scheme, Signed};
 
 const CHAIN: u32 = 11;
@@ -30,14 +32,17 @@ fn credential(seed: u8, auth: &Authorization, intent: &Intent) -> Credential {
     let Signed::Message(msg) = signed_bytes_as::<SwapState>(Scheme::Ed25519, auth, intent) else {
         unreachable!()
     };
-    Credential::Ed25519 { key: k.verifying_key().to_bytes(), signature: k.sign(&msg).to_bytes() }
+    Credential::Ed25519 {
+        key: k.verifying_key().to_bytes(),
+        signature: k.sign(&msg).to_bytes(),
+    }
 }
 
 fn swap_for(acct: [u8; 32]) -> Intent {
     Intent::SwapExactIn {
         account: acct,
         asset_in: XZEC,
-        path: vec![1],
+        path: vec![swapvm::types::legacy_id(1)],
         amount_in: Fixed::whole(100),
         min_out: Fixed::whole(90),
     }
@@ -61,7 +66,8 @@ fn a_valid_signature_over_someone_elses_account_is_refused() {
 
     // And it authorises nothing.
     assert_eq!(
-        authorize_intent::<SwapState>(&[alice], &auth, bobs_swap, &st).map(|a| a.authority().clone()),
+        authorize_intent::<SwapState>(&[alice], &auth, bobs_swap, &st)
+            .map(|a| a.authority().clone()),
         Err(VerifyError::Authority(AuthorityError::MissingSignature))
     );
 }
@@ -86,7 +92,7 @@ fn a_two_party_trade_needs_both_parties() {
         taker: account(2),
         offer_asset: XZEC,
         offer_amount: Fixed::whole(10),
-        want_asset: 2,
+        want_asset: swapvm::types::legacy_id(2),
         want_amount: Fixed::whole(5),
     };
 
@@ -94,7 +100,8 @@ fn a_two_party_trade_needs_both_parties() {
     let taker = credential(2, &auth, &trade);
 
     assert_eq!(
-        authorize_intent::<SwapState>(core::slice::from_ref(&maker), &auth, trade.clone(), &st).err(),
+        authorize_intent::<SwapState>(core::slice::from_ref(&maker), &auth, trade.clone(), &st)
+            .err(),
         Some(VerifyError::Authority(AuthorityError::MissingSignature)),
         "one side settled a trade alone"
     );

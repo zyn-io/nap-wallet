@@ -31,7 +31,7 @@ pub use zyn_vm::commit::{
 use crate::fixed::Fixed;
 use crate::state::SwapState;
 use crate::types::{AccountId, Params};
-use crate::wire::encode_launch;
+use crate::wire::{encode_launch, SwapEncode};
 
 pub(crate) fn encode_params(e: &mut Encoder, p: &Params) {
     // **S5.** Every field here changes what a future transition does, so every
@@ -50,7 +50,6 @@ pub(crate) fn encode_params(e: &mut Encoder, p: &Params) {
         .u64(p.exit_timeout_epochs)
         .u64(p.reference_staleness);
 }
-
 
 /// Every account proof for one state root, served without rebuilding the tree.
 ///
@@ -90,8 +89,14 @@ impl AccountIndex {
         // they are already in order.
         let i = self.ids.binary_search(account).ok()?;
         let mut path = self.tree.proof(i)?;
-        path.push(ProofStep { sibling: self.header, node_is_right: true });
-        path.push(ProofStep { sibling: self.tail, node_is_right: false });
+        path.push(ProofStep {
+            sibling: self.header,
+            node_is_right: true,
+        });
+        path.push(ProofStep {
+            sibling: self.tail,
+            node_is_right: false,
+        });
         Some((self.tree.leaf(i)?, path))
     }
 }
@@ -108,9 +113,7 @@ impl SwapState {
             .bytes(&self.intent_acc)
             .u64(self.finalized_epoch)
             .u64(self.epoch_intents)
-            .fixed(self.epoch_gross_volume)
-            .u32(self.next_asset_id)
-            .u32(self.next_pool_id);
+            .fixed(self.epoch_gross_volume);
         encode_params(&mut e, &self.params);
         // Appended only when on, so a chain that never turned clearing on
         // keeps the header leaf — and the roots — it always had.
@@ -126,7 +129,13 @@ impl SwapState {
             .iter()
             .map(|o| {
                 let mut e = Encoder::new();
-                e.bytes(b"swapvm.order.v1").u64(o.seq).bytes(&o.account).u32(o.pool).u32(o.asset_in).fixed(o.amount_in).fixed(o.min_out);
+                e.bytes(b"swapvm.order.v1")
+                    .u64(o.seq)
+                    .bytes(&o.account)
+                    .id(o.pool)
+                    .id(o.asset_in)
+                    .fixed(o.amount_in)
+                    .fixed(o.min_out);
                 e.leaf()
             })
             .collect()
@@ -144,19 +153,21 @@ impl SwapState {
     pub fn account_record(&self, id: &AccountId) -> Option<Vec<u8>> {
         let a = self.accounts.get(id)?;
         let mut e = Encoder::new();
-        e.bytes(b"swapvm.account.v1").bytes(id).u32(a.balances.len() as u32);
+        e.bytes(b"swapvm.account.v1")
+            .bytes(id)
+            .u32(a.balances.len() as u32);
         for (asset, amount) in a.balances.iter() {
-            e.u32(*asset).fixed(*amount);
+            e.id(*asset).fixed(*amount);
         }
         // Exits in flight are part of what an account holds a claim on, so they
         // are part of what it proves.
         e.u32(a.pending.len() as u32);
         for (asset, exit) in a.pending.iter() {
-            e.u32(*asset).fixed(exit.amount).u64(exit.since);
+            e.id(*asset).fixed(exit.amount).u64(exit.since);
         }
         e.u32(a.incoming.len() as u32);
         for (asset, c) in a.incoming.iter() {
-            e.u32(*asset).fixed(c.amount).u64(c.epoch);
+            e.id(*asset).fixed(c.amount).u64(c.epoch);
         }
         let b = a.binding.unwrap_or(crate::state::Binding {
             destination: [0u8; 32],
@@ -195,18 +206,17 @@ impl SwapState {
             .map(|(id, t)| {
                 let mut e = Encoder::new();
                 e.bytes(b"swapvm.token.v1")
-                    .u32(*id)
-                    .bytes(&t.symbol)
+                    .id(*id)
+                    .symbol(&t.symbol)
                     .fixed(t.supply)
-                    .opt_u32(t.lp_of)
-                    .opt_u32(t.genesis_pool)
+                    .opt_hash(t.lp_of)
+                    .opt_hash(t.genesis_pool)
                     .fixed(t.unit)
                     .fixed(t.bond);
                 if let Some(c) = t.content {
                     e.bytes(b"content").bytes(&c);
                 }
-                e
-                    .u16(t.vault.map(|v| v.origin).unwrap_or(0))
+                e.u16(t.vault.map(|v| v.origin).unwrap_or(0))
                     .fixed(t.vault.map(|v| v.confirmed).unwrap_or(Fixed::ZERO))
                     .u64(t.vault.map(|v| v.deposits).unwrap_or(0))
                     .fixed(t.vault.map(|v| v.min_exit).unwrap_or(Fixed::ZERO))
@@ -228,13 +238,14 @@ impl SwapState {
             .map(|(id, p)| {
                 let mut e = Encoder::new();
                 e.bytes(b"swapvm.pool.v1")
-                    .u32(*id)
-                    .u32(p.asset0)
-                    .u32(p.asset1)
+                    .id(*id)
+                    .id(p.asset0)
+                    .id(p.asset1)
+                    .bytes(&p.vault)
                     .fixed(p.reserve0)
                     .fixed(p.reserve1)
                     .u16(p.fee_bps)
-                    .u32(p.lp_asset)
+                    .id(p.lp_asset)
                     .fixed(p.lp_supply)
                     .fixed(p.locked)
                     .fixed(p.min_in0)
@@ -253,9 +264,9 @@ impl SwapState {
             .map(|(id, c)| {
                 let mut e = Encoder::new();
                 e.bytes(b"swapvm.collection.v1")
-                    .u32(*id)
+                    .id(*id)
                     .bytes(&c.creator)
-                    .bytes(&c.symbol)
+                    .symbol(&c.symbol)
                     .u32(c.cap)
                     .u32(c.minted)
                     .u32(c.outstanding)
@@ -277,9 +288,9 @@ impl SwapState {
                 e.bytes(b"swapvm.offer.v1")
                     .u64(*id)
                     .bytes(&o.maker)
-                    .u32(o.offer_asset)
+                    .id(o.offer_asset)
                     .fixed(o.offer_amount)
-                    .u32(o.want_asset)
+                    .id(o.want_asset)
                     .fixed(o.want_amount)
                     .u64(o.expires_at_epoch);
                 e.leaf()
@@ -328,24 +339,80 @@ impl SwapState {
             let mut e = Encoder::new();
             e.bytes(b"swapvm.launch.v1");
             encode_launch(&mut e, &l.params);
-            e.u64(l.zcash_height).u64(l.graduated_at).u32(l.zyn).u32(l.genesis_pool).fixed(l.minted).u64(l.last_mint_height);
-            for (a, v) in &l.contributions { e.bytes(a).fixed(*v); }
-            for (a, v) in &l.epoch_bridge_fees { e.bytes(a).fixed(*v); }
-            for (p, v) in &l.epoch_pool_fees { e.u32(*p).fixed(*v); }
+            e.u64(l.zcash_height)
+                .u64(l.graduated_at)
+                .id(l.zyn)
+                .id(l.genesis_pool)
+                .fixed(l.minted)
+                .u64(l.last_mint_height);
+            for (a, v) in &l.contributions {
+                e.bytes(a).fixed(*v);
+            }
+            for (a, v) in &l.epoch_bridge_fees {
+                e.bytes(a).fixed(*v);
+            }
+            for (p, v) in &l.epoch_pool_fees {
+                e.id(*p).fixed(*v);
+            }
             for ((a, from), v) in &l.vesting {
                 e.bytes(a);
                 // Written only for a grant that came from a bridged market,
                 // so a chain that has only ever made the ZYN genesis grant
                 // keeps the leaf — and the root — it always had.
-                if *from != 0 { e.u32(*from); }
+                if *from != [0u8; 32] {
+                    e.id(*from);
+                }
                 e.fixed(v.total).fixed(v.released).u64(v.start).u64(v.end);
             }
             if !l.assets.is_empty() {
                 e.bytes(b"markets");
                 for (id, a) in &l.assets {
-                    e.u32(*id).fixed(a.reference.map(|r| r.price).unwrap_or(Fixed::ZERO)).u64(a.reference.map(|r| r.seq).unwrap_or(0))
-                        .u64(a.opened_at).u32(a.pool).fixed(a.grant);
-                    for (acct, v) in &a.contributions { e.bytes(acct).fixed(*v); }
+                    e.id(*id)
+                        .fixed(a.reference.map(|r| r.price).unwrap_or(Fixed::ZERO))
+                        .u64(a.reference.map(|r| r.seq).unwrap_or(0))
+                        .u64(a.opened_at)
+                        .id(a.pool)
+                        .fixed(a.grant);
+                    for (acct, v) in &a.contributions {
+                        e.bytes(acct).fixed(*v);
+                    }
+                }
+            }
+            parts.push(e.leaf());
+        }
+        if !self.curves.is_empty() || !self.creator_launches.is_empty() {
+            let mut e = Encoder::new();
+            e.bytes(b"swapvm.cave.curves.v1")
+                .u32(self.curves.len() as u32);
+            for (asset, c) in &self.curves {
+                e.id(*asset)
+                    .bytes(&c.creator)
+                    .symbol(&c.symbol)
+                    .u8(c.display_name.len() as u8)
+                    .bytes(&c.display_name)
+                    .bytes(&c.metadata_hash)
+                    .u16(c.fee_bps)
+                    .fixed(c.sold)
+                    .fixed(c.creator_fees)
+                    .fixed(c.graduation_fees)
+                    .fixed(c.graduated_token_liquidity)
+                    .fixed(c.graduated_zec_liquidity)
+                    .fixed(c.graduation_overflow)
+                    .fixed(c.graduated_locked_lp);
+                match c.status {
+                    crate::cave::CurveStatus::Trading => {
+                        e.u8(0);
+                    }
+                    crate::cave::CurveStatus::Graduated { pool } => {
+                        e.u8(1).id(pool);
+                    }
+                }
+            }
+            e.u32(self.creator_launches.len() as u32);
+            for (creator, epochs) in &self.creator_launches {
+                e.bytes(creator).u32(epochs.len() as u32);
+                for epoch in epochs {
+                    e.u64(*epoch);
                 }
             }
             parts.push(e.leaf());
@@ -396,7 +463,10 @@ impl SwapState {
     pub fn account_proof(&self, account: &AccountId) -> Option<Vec<ProofStep>> {
         let index = self.accounts.keys().position(|k| k == account)?;
         let mut path = merkle_proof(&self.account_leaves(), index);
-        path.push(ProofStep { sibling: self.header_leaf(), node_is_right: true });
+        path.push(ProofStep {
+            sibling: self.header_leaf(),
+            node_is_right: true,
+        });
         path.push(ProofStep {
             sibling: merkle_root(&[self.tokens_root(), self.pools_root()]),
             node_is_right: false,
@@ -420,7 +490,10 @@ impl SwapState {
 
     /// Hex rendering, for logs and the settlement bridge.
     pub fn state_root_hex(&self) -> String {
-        self.state_root().iter().map(|b| format!("{:02x}", b)).collect()
+        self.state_root()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
 }
 
@@ -436,12 +509,30 @@ mod root_agreement {
     #[test]
     fn the_two_roots_are_one() {
         let mut s = crate::state::SwapState::new(7, crate::types::Params::v1());
-        assert_eq!(s.state_root(), <crate::state::SwapState as MicrochainVm>::state_root(&s));
+        assert_eq!(
+            s.state_root(),
+            <crate::state::SwapState as MicrochainVm>::state_root(&s)
+        );
         s.batch_clearing = true;
-        s.orders.push(crate::state::Order { seq: 1, account: [1u8; 32], pool: 1, asset_in: 1, amount_in: Fixed::whole(1), min_out: Fixed::ZERO });
+        s.orders.push(crate::state::Order {
+            seq: 1,
+            account: [1u8; 32],
+            pool: crate::types::legacy_id(1),
+            asset_in: crate::types::legacy_id(1),
+            amount_in: Fixed::whole(1),
+            min_out: Fixed::ZERO,
+        });
         s.launch = Some(crate::launch::LaunchState::new(crate::launch::Launch::v1()));
-        assert_eq!(s.state_root(), <crate::state::SwapState as MicrochainVm>::state_root(&s), "every section must reach both");
-        assert_eq!(s.sections().len(), 6, "header, accounts, tokens, pools, orders, launch");
+        assert_eq!(
+            s.state_root(),
+            <crate::state::SwapState as MicrochainVm>::state_root(&s),
+            "every section must reach both"
+        );
+        assert_eq!(
+            s.sections().len(),
+            6,
+            "header, accounts, tokens, pools, orders, launch"
+        );
     }
 }
 
@@ -533,16 +624,20 @@ mod tests {
         assert_ne!(s.state_root(), root, "params must be committed");
 
         let mut s = base.clone();
-        s.next_pool_id += 1;
-        assert_ne!(s.state_root(), root, "id counters must be committed");
+        s.creator_launches.insert([9; 32], alloc::vec![7]);
+        assert_ne!(s.state_root(), root, "launch windows must be committed");
     }
 
     #[test]
     fn a_one_raw_unit_balance_change_moves_the_root() {
         let mut s = state();
-        s.account_mut(&[3u8; 32]).credit(XZEC, Fixed::whole(100)).unwrap();
+        s.account_mut(&[3u8; 32])
+            .credit(XZEC, Fixed::whole(100))
+            .unwrap();
         let before = s.state_root();
-        s.account_mut(&[3u8; 32]).credit(XZEC, Fixed::raw(1)).unwrap();
+        s.account_mut(&[3u8; 32])
+            .credit(XZEC, Fixed::raw(1))
+            .unwrap();
         assert_ne!(s.state_root(), before);
     }
 
@@ -550,14 +645,18 @@ mod tests {
     fn pool_reserves_are_committed() {
         let mut s = state();
         s.pools.insert(
-            1,
+            crate::types::legacy_id(1),
             Pool {
-                asset0: 1,
-                asset1: 2,
+                asset0: crate::types::legacy_id(1),
+                asset1: crate::types::legacy_id(2),
+                vault: zyn_vm::vault_address(
+                    crate::types::ADDRESS_SCOPE_V1,
+                    &crate::types::legacy_id(1),
+                ),
                 reserve0: Fixed::whole(10),
                 reserve1: Fixed::whole(1_000),
                 fee_bps: 30,
-                lp_asset: 3,
+                lp_asset: crate::types::legacy_id(3),
                 lp_supply: Fixed::whole(100),
                 locked: Fixed::raw(1_000),
                 min_in0: Fixed::raw(1),
@@ -566,19 +665,29 @@ mod tests {
             },
         );
         let before = s.state_root();
-        s.pools.get_mut(&1).unwrap().reserve0 = Fixed::whole(10).add(Fixed::raw(1)).unwrap();
-        assert_ne!(s.state_root(), before, "a reserve change did not move the root");
+        s.pools
+            .get_mut(&crate::types::legacy_id(1))
+            .unwrap()
+            .reserve0 = Fixed::whole(10).add(Fixed::raw(1)).unwrap();
+        assert_ne!(
+            s.state_root(),
+            before,
+            "a reserve change did not move the root"
+        );
     }
 
     #[test]
     fn token_supply_is_committed() {
         let mut s = state();
         s.tokens.insert(
-            2,
+            crate::types::legacy_id(2),
             TokenInfo::divisible(symbol(b"CAT"), Fixed::whole(1_000)),
         );
         let before = s.state_root();
-        s.tokens.get_mut(&2).unwrap().supply = Fixed::whole(1_001);
+        s.tokens
+            .get_mut(&crate::types::legacy_id(2))
+            .unwrap()
+            .supply = Fixed::whole(1_001);
         assert_ne!(s.state_root(), before);
     }
 
@@ -587,10 +696,17 @@ mod tests {
     #[test]
     fn balances_are_bound_to_their_asset() {
         let mut a = state();
-        a.tokens.insert(2, TokenInfo::divisible(symbol(b"CAT"), Fixed::ZERO));
+        a.tokens.insert(
+            crate::types::legacy_id(2),
+            TokenInfo::divisible(symbol(b"CAT"), Fixed::ZERO),
+        );
         let mut b = a.clone();
-        a.account_mut(&[1u8; 32]).credit(XZEC, Fixed::whole(5)).unwrap();
-        b.account_mut(&[1u8; 32]).credit(2, Fixed::whole(5)).unwrap();
+        a.account_mut(&[1u8; 32])
+            .credit(XZEC, Fixed::whole(5))
+            .unwrap();
+        b.account_mut(&[1u8; 32])
+            .credit(crate::types::legacy_id(2), Fixed::whole(5))
+            .unwrap();
         assert_ne!(a.state_root(), b.state_root());
     }
 
@@ -637,7 +753,8 @@ mod proof_tests {
                 assert!(
                     verify_proof(ls[i], &merkle_proof(&ls, i), root),
                     "size {} index {} failed to verify",
-                    n, i
+                    n,
+                    i
                 );
             }
         }
@@ -649,7 +766,10 @@ mod proof_tests {
         let root = merkle_root(&ls);
         let path = merkle_proof(&ls, 3);
         assert!(verify_proof(ls[3], &path, root));
-        assert!(!verify_proof(ls[4], &path, root), "path accepted a foreign leaf");
+        assert!(
+            !verify_proof(ls[4], &path, root),
+            "path accepted a foreign leaf"
+        );
         assert!(!verify_proof(hash_leaf(b"forged"), &path, root));
     }
 
@@ -659,11 +779,17 @@ mod proof_tests {
         let root = merkle_root(&ls);
         let mut path = merkle_proof(&ls, 3);
         path[0].node_is_right = !path[0].node_is_right;
-        assert!(!verify_proof(ls[3], &path, root), "flipped side still verified");
+        assert!(
+            !verify_proof(ls[3], &path, root),
+            "flipped side still verified"
+        );
 
         let mut path = merkle_proof(&ls, 3);
         path[1].sibling = hash_leaf(b"wrong");
-        assert!(!verify_proof(ls[3], &path, root), "swapped sibling still verified");
+        assert!(
+            !verify_proof(ls[3], &path, root),
+            "swapped sibling still verified"
+        );
     }
 
     #[test]
@@ -679,14 +805,19 @@ mod proof_tests {
         let accounts: Vec<AccountId> = (1u8..=9).map(|i| [i; 32]).collect();
         for (i, a) in accounts.iter().enumerate() {
             let acct = s.account_mut(a);
-            acct.credit(XZEC, Fixed::whole(1_000 * (i as i64 + 1))).unwrap();
+            acct.credit(XZEC, Fixed::whole(1_000 * (i as i64 + 1)))
+                .unwrap();
             acct.set_pending(XZEC, Fixed::whole(10 * (i as i64 + 1)), 0);
         }
         let root = s.state_root();
         let leaves = s.account_leaves();
         for (i, a) in accounts.iter().enumerate() {
             let path = s.account_proof(a).expect("account should be provable");
-            assert!(verify_proof(leaves[i], &path, root), "account {} did not verify", a[0]);
+            assert!(
+                verify_proof(leaves[i], &path, root),
+                "account {} did not verify",
+                a[0]
+            );
         }
     }
 
@@ -702,13 +833,19 @@ mod proof_tests {
     #[test]
     fn a_proof_is_bound_to_the_state_it_was_taken_from() {
         let mut s = SwapState::new(1, Params::v1());
-        s.account_mut(&[1u8; 32]).credit(XZEC, Fixed::whole(100)).unwrap();
-        s.account_mut(&[2u8; 32]).credit(XZEC, Fixed::whole(200)).unwrap();
+        s.account_mut(&[1u8; 32])
+            .credit(XZEC, Fixed::whole(100))
+            .unwrap();
+        s.account_mut(&[2u8; 32])
+            .credit(XZEC, Fixed::whole(200))
+            .unwrap();
         let path = s.account_proof(&[1u8; 32]).unwrap();
         let leaf = s.account_leaves()[0];
         assert!(verify_proof(leaf, &path, s.state_root()));
 
-        s.account_mut(&[2u8; 32]).credit(XZEC, Fixed::raw(1)).unwrap();
+        s.account_mut(&[2u8; 32])
+            .credit(XZEC, Fixed::raw(1))
+            .unwrap();
         assert!(
             !verify_proof(leaf, &path, s.state_root()),
             "a stale path verified against a newer root"
@@ -739,39 +876,89 @@ mod blind_tests {
         let mut s = SwapState::new(1, Params::testnet());
         let (a, b) = ([1u8; 32], [2u8; 32]);
         let before = s.account_record(&a);
-        go(&mut s, Intent::Reblind { account: a, blind: [7u8; 32] });
-        go(&mut s, Intent::Reblind { account: b, blind: [8u8; 32] });
+        go(
+            &mut s,
+            Intent::Reblind {
+                account: a,
+                blind: [7u8; 32],
+            },
+        );
+        go(
+            &mut s,
+            Intent::Reblind {
+                account: b,
+                blind: [8u8; 32],
+            },
+        );
         let ra = s.account_record(&a).unwrap();
         let rb = s.account_record(&b).unwrap();
         // Same holdings (none), different blinds: an observer cannot tell
         // these apart from any other record by hashing a guess.
-        assert_ne!(SwapState::leaf_of_record(&ra), SwapState::leaf_of_record(&rb));
+        assert_ne!(
+            SwapState::leaf_of_record(&ra),
+            SwapState::leaf_of_record(&rb)
+        );
         assert!(ra.ends_with(&[7u8; 32]) && rb.ends_with(&[8u8; 32]));
         // The record a guesser would hash — id and empty balances, no blind —
         // is not the record in the tree.
         let mut guess = ra.clone();
         guess.truncate(ra.len() - 5 - 32);
-        assert_ne!(SwapState::leaf_of_record(&guess), SwapState::leaf_of_record(&ra));
+        assert_ne!(
+            SwapState::leaf_of_record(&guess),
+            SwapState::leaf_of_record(&ra)
+        );
         // An account that never shielded itself is encoded exactly as before
         // blinds existed, so a chain's existing roots are untouched.
         assert_eq!(before, None);
         let c = [3u8; 32];
         s.account_mut(&c);
-        assert!(!s.account_record(&c).unwrap().windows(5).any(|w| w == b"blind"));
+        assert!(!s
+            .account_record(&c)
+            .unwrap()
+            .windows(5)
+            .any(|w| w == b"blind"));
     }
 
     /// A mirrored item is indivisible, backed by a vault, and unique per token.
     #[test]
     fn a_mirrored_item_is_whole_units_with_a_vault_and_unique() {
         let mut s = SwapState::new(1, Params::testnet());
-        go(&mut s, Intent::CreateBridgedItem { symbol: crate::state::symbol(b"PUNK.zy"), origin: crate::types::ORIGIN_SOLANA, content: [4u8; 32] });
-        let (id, t) = s.tokens.iter().find(|(_, t)| t.content == Some([4u8; 32])).map(|(i, t)| (*i, *t)).unwrap();
+        go(
+            &mut s,
+            Intent::CreateBridgedItem {
+                symbol: crate::state::symbol(b"PUNK.zy"),
+                origin: crate::types::ORIGIN_SOLANA,
+                content: [4u8; 32],
+            },
+        );
+        let (id, t) = s
+            .tokens
+            .iter()
+            .find(|(_, t)| t.content == Some([4u8; 32]))
+            .map(|(i, t)| (*i, *t))
+            .unwrap();
         assert_eq!(t.unit, crate::Fixed::ONE);
         assert!(t.vault.is_some() && t.supply.is_zero());
-        assert!(!t.admits(crate::Fixed::raw(5)), "a fraction of an item is not a quantity");
+        assert!(
+            !t.admits(crate::Fixed::raw(5)),
+            "a fraction of an item is not a quantity"
+        );
         let seq = s.seq + 1;
-        let r = vm::apply(&mut s, &SequencedIntent { seq, intent: Intent::CreateBridgedItem { symbol: crate::state::symbol(b"OTHER"), origin: crate::types::ORIGIN_SOLANA, content: [4u8; 32] } });
-        assert!(r.iter().any(|x| x.is_rejection()), "the same token mirrored twice");
+        let r = vm::apply(
+            &mut s,
+            &SequencedIntent {
+                seq,
+                intent: Intent::CreateBridgedItem {
+                    symbol: crate::state::symbol(b"OTHER"),
+                    origin: crate::types::ORIGIN_SOLANA,
+                    content: [4u8; 32],
+                },
+            },
+        );
+        assert!(
+            r.iter().any(|x| x.is_rejection()),
+            "the same token mirrored twice"
+        );
         let _ = id;
     }
 
@@ -779,14 +966,42 @@ mod blind_tests {
     fn a_zero_blind_is_refused_and_an_item_keeps_its_content() {
         let mut s = SwapState::new(1, Params::testnet());
         let seq = s.seq + 1;
-        let r = vm::apply(&mut s, &SequencedIntent { seq, intent: Intent::Reblind { account: [1u8; 32], blind: [0u8; 32] } });
-        assert!(r.iter().any(|x| x.is_rejection()), "a zero blind is no blind");
+        let r = vm::apply(
+            &mut s,
+            &SequencedIntent {
+                seq,
+                intent: Intent::Reblind {
+                    account: [1u8; 32],
+                    blind: [0u8; 32],
+                },
+            },
+        );
+        assert!(
+            r.iter().any(|x| x.is_rejection()),
+            "a zero blind is no blind"
+        );
 
         let creator = [5u8; 32];
-        s.account_mut(&creator).balances.insert(crate::types::XZEC, crate::Fixed::whole(1));
+        s.account_mut(&creator)
+            .balances
+            .insert(crate::types::XZEC, crate::Fixed::whole(1));
         s.tokens.get_mut(&crate::types::XZEC).unwrap().supply = crate::Fixed::whole(1);
-        go(&mut s, Intent::MintItem { creator, symbol: crate::state::symbol(b"ART"), supply: crate::Fixed::whole(1), bond: crate::Fixed::raw(1_000_000_000_000_000), content: [9u8; 32] });
-        let item = s.tokens.iter().find(|(_, t)| t.symbol == crate::state::symbol(b"ART")).map(|(_, t)| t).unwrap();
+        go(
+            &mut s,
+            Intent::MintItem {
+                creator,
+                symbol: crate::state::symbol(b"ART"),
+                supply: crate::Fixed::whole(1),
+                bond: crate::Fixed::raw(1_000_000_000_000_000),
+                content: [9u8; 32],
+            },
+        );
+        let item = s
+            .tokens
+            .iter()
+            .find(|(_, t)| t.symbol == crate::state::symbol(b"ART"))
+            .map(|(_, t)| t)
+            .unwrap();
         assert_eq!(item.content, Some([9u8; 32]));
     }
 }

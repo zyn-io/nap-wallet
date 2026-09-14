@@ -13,7 +13,6 @@
 //! This file is the load-bearing test of the whole layering. If it ever needs a
 //! change in `zyn` to keep compiling, the abstraction has leaked.
 
-
 use zyn::anchor::{Certificate, Ledger, SignerSet};
 use zyn::da::Snapshot;
 use zyn::epoch::{Economics, EpochPolicy};
@@ -37,7 +36,10 @@ fn a_second_application_conforms() {
     assert_conforms(Fixture {
         state: seeded(),
         accepted: Tick::Add { who: acct(9), n: 7 },
-        rejected: Tick::Add { who: acct(9), n: 999_999 }, // over max_step
+        rejected: Tick::Add {
+            who: acct(9),
+            n: 999_999,
+        }, // over max_step
         sequence: vec![
             Tick::Add { who: acct(1), n: 3 },
             Tick::Add { who: acct(2), n: 5 },
@@ -55,12 +57,22 @@ fn the_node_runs_it_without_knowing_what_it_is() {
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let mut node: Node<TallyVm> =
-        Node::new(77, Limits { max_step: 1_000 }, policy, Economics::flat(1_000));
+    let mut node: Node<TallyVm> = Node::new(
+        77,
+        Limits { max_step: 1_000 },
+        policy,
+        Economics::flat(1_000),
+    );
 
     let mut anchors = 0;
     for i in 0..300u32 {
-        let step = node.submit_operator(Tick::Add { who: acct((i % 7) as u8 + 1), n: 1 }, 0);
+        let step = node.submit_operator(
+            Tick::Add {
+                who: acct((i % 7) as u8 + 1),
+                n: 1,
+            },
+            0,
+        );
         assert!(!step.rejected());
         if step.anchor.is_some() {
             anchors += 1;
@@ -70,7 +82,9 @@ fn the_node_runs_it_without_knowing_what_it_is() {
     assert_eq!(c.anchors, anchors);
     assert!(c.anchors == 10, "expected 10 anchors, got {}", c.anchors);
     assert!(c.realised_ratio().unwrap() > 30);
-    node.ledger().verify_lineage().expect("lineage must verify for any VM");
+    node.ledger()
+        .verify_lineage()
+        .expect("lineage must verify for any VM");
 
     // The compression economics are the same argument for any application.
     let rep = node.report();
@@ -88,20 +102,35 @@ fn holders_can_exit_a_vm_the_infrastructure_never_heard_of() {
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let mut node: Node<TallyVm> =
-        Node::new(77, Limits { max_step: 1_000 }, policy, Economics::flat(1_000));
+    let mut node: Node<TallyVm> = Node::new(
+        77,
+        Limits { max_step: 1_000 },
+        policy,
+        Economics::flat(1_000),
+    );
     for n in 1..=8u8 {
-        node.submit_operator(Tick::Add { who: acct(n), n: n as u64 * 3 }, 0);
+        node.submit_operator(
+            Tick::Add {
+                who: acct(n),
+                n: n as u64 * 3,
+            },
+            0,
+        );
     }
     node.seal_now(0);
     let anchor = node.anchor_now(0).expect("anchor");
     let snap = node.publishable().expect("published snapshot");
 
     let anchored = anchor.checkpoint.state_root;
-    snap.verifies_against(anchored).expect("the snapshot must open the anchored root");
+    snap.verifies_against(anchored)
+        .expect("the snapshot must open the anchored root");
     assert_eq!(snap.len(), 8);
     for id in snap.ids() {
-        assert!(snap.prove_against(id, anchored).unwrap(), "holder {} could not exit", id[0]);
+        assert!(
+            snap.prove_against(id, anchored).unwrap(),
+            "holder {} could not exit",
+            id[0]
+        );
     }
 
     // A falsified record still fails, with no application-specific check.
@@ -119,28 +148,46 @@ fn threshold_custody_settles_any_conforming_vm() {
         max_seconds_per_epoch: 0,
         max_seconds_per_anchor: 0,
     };
-    let mut node: Node<TallyVm> =
-        Node::new(77, Limits { max_step: 1_000 }, policy, Economics::flat(1_000));
+    let mut node: Node<TallyVm> = Node::new(
+        77,
+        Limits { max_step: 1_000 },
+        policy,
+        Economics::flat(1_000),
+    );
     // The policy anchors inside `submit`, so the anchor is taken from the step
     // that produced it rather than forced afterwards.
     let mut anchor = None;
     for n in 1..=4u8 {
-        if let Some(a) = node.submit_operator(Tick::Add { who: acct(n), n: 5 }, 0).anchor {
+        if let Some(a) = node
+            .submit_operator(Tick::Add { who: acct(n), n: 5 }, 0)
+            .anchor
+        {
             anchor = Some(a);
         }
     }
     let anchor = anchor.expect("four actions at four-per-epoch should have anchored");
 
     use ed25519_dalek::{Signer, SigningKey};
-    let keys: Vec<SigningKey> = (1..=10u8).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
-    let set =
-        SignerSet::new(keys.iter().map(|k| k.verifying_key().to_bytes()).collect(), 7).unwrap();
+    let keys: Vec<SigningKey> = (1..=10u8)
+        .map(|i| SigningKey::from_bytes(&[i; 32]))
+        .collect();
+    let set = SignerSet::new(
+        keys.iter().map(|k| k.verifying_key().to_bytes()).collect(),
+        7,
+    )
+    .unwrap();
     let mut cert = Certificate::new(anchor.id());
     for k in keys.iter().take(7) {
-        cert.add(k.verifying_key().to_bytes(), k.sign(&anchor.id()).to_bytes()).unwrap();
+        cert.add(
+            k.verifying_key().to_bytes(),
+            k.sign(&anchor.id()).to_bytes(),
+        )
+        .unwrap();
     }
     let mut ledger = Ledger::new(77);
-    ledger.accept(anchor, &cert, &set).expect("7 of 10 must settle a tally chain too");
+    ledger
+        .accept(anchor, &cert, &set)
+        .expect("7 of 10 must settle a tally chain too");
     assert_eq!(ledger.len(), 1);
 }
 
@@ -227,11 +274,21 @@ fn a_second_application_gets_a_zvm_entry_point_for_free() {
     assert_eq!(out.vm_id, zvm::vm_id::<TallyVm>());
 
     // Deterministic, and bound to its base root.
-    assert_eq!(zvm::run::<TallyVm>(&tape).unwrap(), zvm::run::<TallyVm>(&tape).unwrap());
+    assert_eq!(
+        zvm::run::<TallyVm>(&tape).unwrap(),
+        zvm::run::<TallyVm>(&tape).unwrap()
+    );
     let wrong = zvm::encode_input::<TallyVm>([0xAB; 32], &vm, &batch);
-    assert_eq!(zvm::run::<TallyVm>(&wrong), Err(zvm::ZvmError::BaseRootMismatch));
+    assert_eq!(
+        zvm::run::<TallyVm>(&wrong),
+        Err(zvm::ZvmError::BaseRootMismatch)
+    );
     for cut in 0..tape.len() {
-        assert!(zvm::run::<TallyVm>(&tape[..cut]).is_err(), "truncation at {} ran", cut);
+        assert!(
+            zvm::run::<TallyVm>(&tape[..cut]).is_err(),
+            "truncation at {} ran",
+            cut
+        );
     }
 }
 
@@ -350,21 +407,46 @@ fn a_batch_that_creates_value_is_refused() {
     use zyn_vm::zvm;
 
     let mut leaky = LeakyVm::genesis(77, Limits { max_step: 1_000 });
-    let batch = vec![(1u64, Tick::Add { who: acct(1), n: 50 })];
+    let batch = vec![(
+        1u64,
+        Tick::Add {
+            who: acct(1),
+            n: 50,
+        },
+    )];
 
     // Applied directly, the bug goes unnoticed: the state accepts it.
     let mut unchecked = leaky.clone();
-    let receipts = unchecked.apply(1, &Tick::Add { who: acct(1), n: 50 });
-    assert!(!receipts.iter().any(LeakyVm::rejected), "the VM caught its own bug");
-    assert!(unchecked.conserved().is_err(), "the state is out of balance");
+    let receipts = unchecked.apply(
+        1,
+        &Tick::Add {
+            who: acct(1),
+            n: 50,
+        },
+    );
+    assert!(
+        !receipts.iter().any(LeakyVm::rejected),
+        "the VM caught its own bug"
+    );
+    assert!(
+        unchecked.conserved().is_err(),
+        "the state is out of balance"
+    );
 
     // Through the transition, it cannot commit.
     let before = leaky.state_root();
     assert!(
-        matches!(zvm::apply_batch(&mut leaky, &batch), Err(zvm::ZvmError::NotConserved(_))),
+        matches!(
+            zvm::apply_batch(&mut leaky, &batch),
+            Err(zvm::ZvmError::NotConserved(_))
+        ),
         "a value-creating batch was committed"
     );
-    assert_eq!(leaky.state_root(), before, "a refused batch still moved state");
+    assert_eq!(
+        leaky.state_root(),
+        before,
+        "a refused batch still moved state"
+    );
 
     // And no proof can be produced for it either.
     let tape = zvm::encode_input::<LeakyVm>(before, &leaky, &batch);
@@ -380,7 +462,13 @@ fn a_conserving_vm_passes_the_same_batch() {
     use zyn_vm::zvm;
 
     let mut honest = TallyVm::genesis(77, Limits { max_step: 1_000 });
-    let batch = vec![(1u64, Tick::Add { who: acct(1), n: 50 })];
+    let batch = vec![(
+        1u64,
+        Tick::Add {
+            who: acct(1),
+            n: 50,
+        },
+    )];
     zvm::apply_batch(&mut honest, &batch).expect("an honest batch must commit");
     assert_eq!(honest.total, 50);
     honest.conserved().unwrap();

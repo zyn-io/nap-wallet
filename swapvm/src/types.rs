@@ -8,9 +8,21 @@ use crate::fixed::Fixed;
 /// out-of-band; the VM only ever holds a balance for it.
 pub type AccountId = [u8; 32];
 
-/// An execution-layer asset. Assigned monotonically by the VM at creation so
-/// ids cannot collide or be forged. Asset 1 is reserved:
-pub type AssetId = u32;
+/// A deterministic execution-layer identity.
+///
+/// Assets, pools and collections share the same 32-byte representation but
+/// occupy disjoint derivation namespaces. Keeping aliases makes their role
+/// visible in APIs while preserving cheap copy semantics inside the VM.
+pub type AssetId = [u8; 32];
+
+/// Frozen address-derivation scope. Changing these bytes would rename every
+/// asset, pool, vault, collection and item, so upgrades use a new scope.
+///
+/// Re-exported rather than redeclared. Two independent literals of the same
+/// frozen value are two things that can drift, and §66.10 exists precisely so
+/// this one cannot — a second copy would let a careless edit rename every
+/// persistent identity in one crate while the other kept the old bytes.
+pub use zyn_vm::derive::ADDRESS_SCOPE_V1;
 
 /// xZEC — the 1:1 execution-layer representation of deposited ZEC.
 ///
@@ -23,25 +35,88 @@ pub type AssetId = u32;
 ///
 /// enforced as `tokens[XZEC].supply == sum(balances) + sum(pending exits) ==
 /// xzec_backing`, tested after every intent in the test suite.
-pub const XZEC: AssetId = 1;
+pub const XZEC: AssetId = [
+    0x0e, 0x21, 0x22, 0x62, 0xcb, 0x35, 0xbf, 0x6e, 0x88, 0xbc, 0x7d, 0x0a, 0x52, 0xb6, 0x0a, 0x5c,
+    0xc7, 0x0c, 0x28, 0x59, 0xb6, 0x59, 0x66, 0xa2, 0x55, 0x72, 0x29, 0xd2, 0xea, 0x46, 0x92, 0x01,
+];
+
+/// Keyless account that accumulates ZEC.zy for future ZYN protocol-owned
+/// liquidity. This is `derive(ADDRESS_SCOPE_V1, "zyn-pol", [ZEC.zy])`, pinned
+/// as a constant so every execution and explorer names the same account.
+pub const ZYN_POL: AccountId = [
+    0xf4, 0x04, 0x35, 0xd1, 0x40, 0x6a, 0xbc, 0x3a, 0xa4, 0xbe, 0xfa, 0xf3, 0x80, 0xac, 0xea, 0x34,
+    0xa4, 0xa8, 0x7e, 0xd7, 0x6a, 0x51, 0x53, 0x8f, 0x88, 0xd0, 0x9b, 0xa0, 0xd2, 0x93, 0x7e, 0x61,
+];
+
+pub const ZYN_MAINNET: AssetId = [
+    0x49, 0xeb, 0x92, 0x41, 0xe2, 0xa0, 0xb1, 0x16, 0x3a, 0x1e, 0xed, 0x09, 0xbb, 0x91, 0xa5, 0x75,
+    0xc9, 0x3b, 0xbc, 0x6e, 0x76, 0xcd, 0x7a, 0xfe, 0xb6, 0x52, 0x63, 0x64, 0x0f, 0xd1, 0x69, 0xd5,
+];
+pub const ZYN_TESTNET: AssetId = [
+    0x89, 0x3e, 0x74, 0x5e, 0x33, 0xb4, 0x03, 0x10, 0x00, 0x30, 0x11, 0xa1, 0x46, 0x51, 0xdc, 0x3c,
+    0xf1, 0x73, 0xf7, 0x1b, 0x92, 0xee, 0x6e, 0x77, 0xef, 0x62, 0xb7, 0xba, 0x5a, 0x84, 0xe5, 0x6e,
+];
+pub const TAZ_ZY: AssetId = [
+    0xbf, 0x24, 0x4a, 0x27, 0xad, 0x73, 0xfe, 0xa5, 0x12, 0x8f, 0xea, 0xd6, 0x91, 0xc6, 0x47, 0xfe,
+    0x1c, 0x5a, 0x5c, 0xdd, 0xe0, 0xa8, 0x47, 0xb2, 0x4c, 0xa2, 0x00, 0x41, 0x25, 0x0d, 0xa4, 0x8e,
+];
+pub const SOL_ZY: AssetId = [
+    0x0f, 0x61, 0xf4, 0x34, 0x0c, 0xd6, 0xa9, 0x10, 0xec, 0x8d, 0x7e, 0x73, 0xef, 0x23, 0x95, 0x69,
+    0xb8, 0x3f, 0x16, 0x09, 0x9e, 0x62, 0x07, 0x86, 0xe7, 0x1e, 0x7e, 0x73, 0x95, 0xc9, 0xf6, 0xdf,
+];
+pub const BTC_ZY: AssetId = [
+    0x0e, 0x7f, 0xaa, 0x55, 0xf3, 0xbd, 0xb1, 0x2e, 0x80, 0x78, 0x1d, 0xa8, 0x8f, 0xb5, 0xac, 0x4e,
+    0xb7, 0xe2, 0x4d, 0x19, 0x35, 0x49, 0x4b, 0x9a, 0xab, 0xd8, 0x4c, 0x45, 0x65, 0xbb, 0xff, 0xca,
+];
+pub const USDC_ZY_SOLANA: AssetId = [
+    0x83, 0xe6, 0x6d, 0x69, 0x4a, 0xf6, 0x8a, 0x84, 0x4f, 0x4e, 0xa9, 0xa6, 0x1d, 0x73, 0xbc, 0xe7,
+    0xff, 0xa8, 0xe5, 0x3f, 0xc7, 0x80, 0x02, 0x38, 0x68, 0xf8, 0x25, 0xc2, 0xe7, 0x53, 0xc7, 0x9a,
+];
+pub const BOLD_ZY_ETHEREUM: AssetId = [
+    0xdd, 0xf2, 0xb7, 0xec, 0xc2, 0x63, 0x4e, 0x39, 0xa8, 0x91, 0xa1, 0x90, 0x20, 0x20, 0x5a, 0xe2,
+    0x6a, 0x87, 0xe9, 0xf7, 0x53, 0xe4, 0x92, 0xe0, 0x3b, 0x84, 0xe7, 0xdc, 0x62, 0x7f, 0x25, 0x0f,
+];
+
+/// Official status is address-based. A user may reuse any display name or
+/// ticker, but cannot derive one of these addresses because user assets live
+/// in the separate `asset` namespace.
+pub fn is_official_asset(chain_id: u32, asset: &AssetId) -> bool {
+    *asset == XZEC
+        || *asset == TAZ_ZY
+        || *asset == SOL_ZY
+        || *asset == BTC_ZY
+        || *asset == USDC_ZY_SOLANA
+        || *asset == BOLD_ZY_ETHEREUM
+        || (chain_id == 26_460 && *asset == ZYN_MAINNET)
+        || (chain_id == 11 && *asset == ZYN_TESTNET)
+}
 
 /// Which external chain custodies a bridged asset's value.
 ///
 /// The component's, not ZynZap's: custody is not a swap concept.
 pub use zyn_bridge::{ChainOrigin, ORIGIN_BITCOIN, ORIGIN_ETHEREUM, ORIGIN_SOLANA, ORIGIN_ZCASH};
 
-/// Identifies one pool. Assigned by the VM, never chosen by clients.
-pub type PoolId = u32;
+/// Identifies one canonical unordered asset pair.
+pub type PoolId = [u8; 32];
 
 /// A collection: a set of items sharing one redemption pool.
-pub type CollectionId = u32;
+pub type CollectionId = [u8; 32];
 
 /// Identifies a resting offer. Monotonic, never reused — a taker names an
 /// offer by id, and an id that came back would let them take a different one.
 pub type OfferId = u64;
 
-/// Asset ids below this are reserved (xZEC = 1); user tokens start at 2.
-pub const FIRST_USER_ASSET: AssetId = 2;
+/// A deterministic fixture id for tests and legacy-state migration.
+/// Production creation paths use the address derivation functions instead.
+pub const fn legacy_id(n: u32) -> [u8; 32] {
+    let bytes = n.to_be_bytes();
+    let mut out = [0u8; 32];
+    out[28] = bytes[0];
+    out[29] = bytes[1];
+    out[30] = bytes[2];
+    out[31] = bytes[3];
+    out
+}
 
 /// Parameters of the chain. Deliberately tiny next to perpvm's RiskParams: a
 /// constant-product AMM has no margin engine to configure. Supplied to the VM
@@ -202,6 +277,14 @@ impl Params {
 #[cfg(test)]
 mod testnet_params_tests {
     use super::*;
+
+    #[test]
+    fn future_zyn_pol_has_the_pinned_derived_address() {
+        assert_eq!(
+            ZYN_POL,
+            zyn_vm::derive(ADDRESS_SCOPE_V1, b"zyn-pol", &[&XZEC])
+        );
+    }
 
     /// A faucet grant has to be enough to actually use the chain, or the test
     /// plan stalls on our own floor rather than on anything real.

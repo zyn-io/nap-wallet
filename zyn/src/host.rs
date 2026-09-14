@@ -130,25 +130,34 @@ pub fn encode_submission(
     intent: &[u8],
 ) -> Vec<u8> {
     let mut e = Encoder::new();
-    e.bytes(&auth.vm_id).u64(auth.valid_until_epoch).u8(scheme.tag()).bytes(credential);
+    e.bytes(&auth.vm_id)
+        .u64(auth.valid_until_epoch)
+        .u8(scheme.tag())
+        .bytes(credential);
     let mut out = e.finish().to_vec();
     out.extend_from_slice(intent);
     out
 }
 
 fn read_credential(d: &mut Decoder) -> Result<(Authorization, Credential), HostError> {
-    let vm_id = d.array::<32>().map_err(|_| HostError::Malformed("program id"))?;
+    let vm_id = d
+        .array::<32>()
+        .map_err(|_| HostError::Malformed("program id"))?;
     let valid_until_epoch = d.u64().map_err(|_| HostError::Malformed("expiry"))?;
     let tag = d.u8().map_err(|_| HostError::Malformed("scheme"))?;
     let scheme = Scheme::from_tag(tag).ok_or(HostError::Malformed("unknown scheme"))?;
 
     let credential = match scheme {
         Scheme::Secp256k1Eip712 => Credential::Evm {
-            signature: d.array::<65>().map_err(|_| HostError::Malformed("signature"))?,
+            signature: d
+                .array::<65>()
+                .map_err(|_| HostError::Malformed("signature"))?,
         },
         Scheme::Ed25519 | Scheme::Ed25519Solana => {
             let key = d.array::<32>().map_err(|_| HostError::Malformed("key"))?;
-            let signature = d.array::<64>().map_err(|_| HostError::Malformed("signature"))?;
+            let signature = d
+                .array::<64>()
+                .map_err(|_| HostError::Malformed("signature"))?;
             match scheme {
                 Scheme::Ed25519 => Credential::Ed25519 { key, signature },
                 _ => Credential::Solana { key, signature },
@@ -157,7 +166,14 @@ fn read_credential(d: &mut Decoder) -> Result<(Authorization, Credential), HostE
     };
     // `chain_id` is filled in by the host from its own identity, never read
     // from the frame: a submitter does not get to say which chain they are on.
-    Ok((Authorization { chain_id: 0, vm_id, valid_until_epoch }, credential))
+    Ok((
+        Authorization {
+            chain_id: 0,
+            vm_id,
+            valid_until_epoch,
+        },
+        credential,
+    ))
 }
 
 impl<V: MicrochainVm + Send> Hosted for Node<V> {
@@ -186,9 +202,13 @@ impl<V: MicrochainVm + Send> Hosted for Node<V> {
         auth.chain_id = self.state().chain_id();
 
         let intent = V::decode_intent(&mut d).ok_or(HostError::Malformed("intent"))?;
-        let authorized =
-            authorize_intent(std::slice::from_ref(&credential), &auth, intent, self.state())
-                .map_err(HostError::Unauthorised)?;
+        let authorized = authorize_intent(
+            std::slice::from_ref(&credential),
+            &auth,
+            intent,
+            self.state(),
+        )
+        .map_err(HostError::Unauthorised)?;
 
         let account = match authorized.authority() {
             crate::verify::Authority::Accounts(a) => a.first().copied().unwrap_or([0u8; 32]),
@@ -241,14 +261,16 @@ impl<V: MicrochainVm + Send> Hosted for Node<V> {
                 continue;
             };
             if let Err(e) = auth.is_live(self.state()) {
-                prepared.push(Prepared::Failed(HostError::Unauthorised(VerifyError::Envelope(e))));
+                prepared.push(Prepared::Failed(HostError::Unauthorised(
+                    VerifyError::Envelope(e),
+                )));
                 continue;
             }
             let required = V::intent_authorities(&intent);
             if required.is_empty() {
-                prepared.push(Prepared::Failed(HostError::Unauthorised(VerifyError::Authority(
-                    AuthorityError::OperatorOnly,
-                ))));
+                prepared.push(Prepared::Failed(HostError::Unauthorised(
+                    VerifyError::Authority(AuthorityError::OperatorOnly),
+                )));
                 continue;
             }
             let at = pending.len();
@@ -342,7 +364,9 @@ pub struct Registry {
 
 impl Registry {
     pub fn new() -> Registry {
-        Registry { apps: BTreeMap::new() }
+        Registry {
+            apps: BTreeMap::new(),
+        }
     }
 
     /// Add an application. Refuses a chain id already taken, rather than

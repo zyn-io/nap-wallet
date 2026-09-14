@@ -209,7 +209,10 @@ const ACCOUNT_DOMAIN: &[u8] = b"zyn.account.v1";
 /// to produce the same preimage.
 pub fn account_of(scheme: Scheme, key: &[u8]) -> AccountId {
     let mut e = Encoder::new();
-    e.bytes(ACCOUNT_DOMAIN).u8(scheme.tag()).u32(key.len() as u32).bytes(key);
+    e.bytes(ACCOUNT_DOMAIN)
+        .u8(scheme.tag())
+        .u32(key.len() as u32)
+        .bytes(key);
     let mut h = Sha256::new();
     h.update(e.finish());
     h.finalize().into()
@@ -246,9 +249,7 @@ pub fn signed_bytes_as<V: MicrochainVm>(
         Scheme::Secp256k1Eip712 => Signed::Prehash(eip712_digest::<V>(auth, intent)),
         // Solana wallets sign the bytes they display, so the message is the
         // payload — hashing it first would verify something the user never saw.
-        Scheme::Ed25519Solana => {
-            Signed::Message(solana_message::<V>(auth, intent).into_bytes())
-        }
+        Scheme::Ed25519Solana => Signed::Message(solana_message::<V>(auth, intent).into_bytes()),
     }
 }
 
@@ -291,7 +292,9 @@ pub fn typed_data<V: MicrochainVm>(
 /// travel across — reduced to 32 bytes a wallet will pass through untouched.
 fn domain_salt(auth: &Authorization) -> Hash {
     let mut e = Encoder::new();
-    e.bytes(b"zyn.domain.v1").u32(auth.chain_id).bytes(&auth.vm_id);
+    e.bytes(b"zyn.domain.v1")
+        .u32(auth.chain_id)
+        .bytes(&auth.vm_id);
     let mut h = Sha256::new();
     h.update(e.finish());
     h.finalize().into()
@@ -313,7 +316,10 @@ pub fn eip712_digest<V: MicrochainVm>(auth: &Authorization, intent: &V::Intent) 
 /// The intent appears as a hash, not as fields. That is a real limitation of
 /// this scheme and the reason to prefer EIP-712 where there is a choice: the
 /// user is trusting the interface, not reading the trade.
-pub fn solana_message<V: MicrochainVm>(auth: &Authorization, intent: &V::Intent) -> alloc::string::String {
+pub fn solana_message<V: MicrochainVm>(
+    auth: &Authorization,
+    intent: &V::Intent,
+) -> alloc::string::String {
     use core::fmt::Write;
     let mut s = alloc::string::String::new();
     let intent_hash: Hash = {
@@ -321,17 +327,24 @@ pub fn solana_message<V: MicrochainVm>(auth: &Authorization, intent: &V::Intent)
         h.update(V::encode_intent(intent));
         h.finalize().into()
     };
-    let _ = write!(s, "Zyn intent authorization\n\nChain: {}\nProgram: ", auth.chain_id);
+    let _ = write!(
+        s,
+        "Zyn intent authorization\n\nChain: {}\nProgram: ",
+        auth.chain_id
+    );
     for b in auth.vm_id {
         let _ = write!(s, "{:02x}", b);
     }
-    let _ = write!(s, "\nValid until epoch: {}\nIntent: ", auth.valid_until_epoch);
+    let _ = write!(
+        s,
+        "\nValid until epoch: {}\nIntent: ",
+        auth.valid_until_epoch
+    );
     for b in intent_hash {
         let _ = write!(s, "{:02x}", b);
     }
     s
 }
-
 
 /// What a wallet using `scheme` signs to open a session.
 ///
@@ -387,7 +400,11 @@ pub fn delegation_message<V: MicrochainVm>(
     for b in d.policy_hash() {
         let _ = write!(s, "{:02x}", b);
     }
-    let _ = write!(s, "\nValid from epoch: {}\nValid until epoch: {}\nAccount: ", d.valid_from_epoch, d.valid_until_epoch);
+    let _ = write!(
+        s,
+        "\nValid from epoch: {}\nValid until epoch: {}\nAccount: ",
+        d.valid_from_epoch, d.valid_until_epoch
+    );
     for b in d.account {
         let _ = write!(s, "{:02x}", b);
     }
@@ -419,7 +436,11 @@ mod tests {
         const VM_NAME: &'static str = "toy";
         const VM_VERSION: u16 = 1;
         fn genesis(chain_id: u32, _: ()) -> Self {
-            Toy { chain_id, epoch: 0, seq: 0 }
+            Toy {
+                chain_id,
+                epoch: 0,
+                seq: 0,
+            }
         }
         fn chain_id(&self) -> u32 {
             self.chain_id
@@ -636,6 +657,11 @@ mod tests {
     fn a_signing_payload_is_not_a_commitment() {
         let a = auth(1, 0);
         assert_ne!(signing_digest::<Toy>(&a, &0), crate::commit::hash_leaf(&[]));
-        let _ = Fixture::<Toy> { state: Toy::genesis(1, ()), accepted: 1, rejected: 2, sequence: Vec::new() };
+        let _ = Fixture::<Toy> {
+            state: Toy::genesis(1, ()),
+            accepted: 1,
+            rejected: 2,
+            sequence: Vec::new(),
+        };
     }
 }

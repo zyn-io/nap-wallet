@@ -11,7 +11,9 @@
 fn main() {
     let dir = std::env::var("ZYN_MIRROR_DIR").unwrap_or_else(|_| "./zyn-mirror".into());
     let listen = std::env::var("ZYN_MIRROR_LISTEN").unwrap_or_else(|_| "127.0.0.1:8181".into());
-    let token = std::env::var("ZYN_MIRROR_TOKEN").ok().filter(|t| !t.is_empty());
+    let token = std::env::var("ZYN_MIRROR_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("zyn-mirror: cannot create {}: {}", dir, e);
         std::process::exit(1);
@@ -27,7 +29,11 @@ fn main() {
         "zyn-mirror: serving {} on {} ({})",
         dir,
         listen,
-        if token.is_some() { "PUT enabled with token" } else { "read-only" }
+        if token.is_some() {
+            "PUT enabled with token"
+        } else {
+            "read-only"
+        }
     );
     zynzapd::publish::http::serve(dir.into(), listener, token);
 }

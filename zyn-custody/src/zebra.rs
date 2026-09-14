@@ -71,7 +71,10 @@ pub enum RpcError {
     /// A transparent vault was pointed at mainnet.
     RefusingMainnet,
     /// The node is on a different chain from the one we are configured for.
-    WrongChain { want: &'static str, got: String },
+    WrongChain {
+        want: &'static str,
+        got: String,
+    },
     /// An amount arrived without the integer field, leaving only a float.
     /// Refused rather than rounded — see [`Zebra::observe`].
     NonIntegerAmount,
@@ -177,7 +180,10 @@ impl Zebra {
             Network::Regtest => "regtest",
         };
         if info.chain != want {
-            return Err(RpcError::WrongChain { want, got: info.chain });
+            return Err(RpcError::WrongChain {
+                want,
+                got: info.chain,
+            });
         }
         Ok(())
     }
@@ -222,7 +228,9 @@ impl Zebra {
                 return Err(RpcError::Node(e.to_string()));
             }
         }
-        v.get("result").cloned().ok_or(RpcError::Malformed("no result"))
+        v.get("result")
+            .cloned()
+            .ok_or(RpcError::Malformed("no result"))
     }
 
     pub fn block_count(&self) -> Result<u64, RpcError> {
@@ -237,30 +245,48 @@ impl Zebra {
     /// exchange withdrawals land before being shielded. The vault never holds
     /// transparent funds and never calls this.
     pub fn address_utxos(&self, address: &str) -> Result<Vec<crate::lightd::Utxo>, RpcError> {
-        let v = self.call("getaddressutxos", serde_json::json!([{ "addresses": [address] }]))?;
+        let v = self.call(
+            "getaddressutxos",
+            serde_json::json!([{ "addresses": [address] }]),
+        )?;
         let arr = v.as_array().ok_or(RpcError::Malformed("utxo list"))?;
         let mut out = Vec::with_capacity(arr.len());
         for u in arr {
             // Zebra reports the txid the way an explorer does: byte-reversed
             // from the internal form the wallet has to sign over.
-            let txid_hex = u.get("txid").and_then(Value::as_str).ok_or(RpcError::Malformed("utxo txid"))?;
+            let txid_hex = u
+                .get("txid")
+                .and_then(Value::as_str)
+                .ok_or(RpcError::Malformed("utxo txid"))?;
             let mut txid = [0u8; 32];
             for (i, b) in txid.iter_mut().enumerate() {
                 let at = 62 - i * 2;
-                *b = u8::from_str_radix(txid_hex.get(at..at + 2).ok_or(RpcError::Malformed("utxo txid"))?, 16)
-                    .map_err(|_| RpcError::Malformed("utxo txid"))?;
+                *b = u8::from_str_radix(
+                    txid_hex
+                        .get(at..at + 2)
+                        .ok_or(RpcError::Malformed("utxo txid"))?,
+                    16,
+                )
+                .map_err(|_| RpcError::Malformed("utxo txid"))?;
             }
             let script_hex = u.get("script").and_then(Value::as_str).unwrap_or_default();
             let mut script = Vec::with_capacity(script_hex.len() / 2);
             for i in (0..script_hex.len()).step_by(2) {
                 script.push(
-                    u8::from_str_radix(&script_hex[i..i + 2], 16).map_err(|_| RpcError::Malformed("utxo script"))?,
+                    u8::from_str_radix(&script_hex[i..i + 2], 16)
+                        .map_err(|_| RpcError::Malformed("utxo script"))?,
                 );
             }
             out.push(crate::lightd::Utxo {
                 txid,
-                index: u.get("outputIndex").and_then(Value::as_u64).ok_or(RpcError::Malformed("utxo index"))? as u32,
-                value: u.get("satoshis").and_then(Value::as_u64).ok_or(RpcError::Malformed("utxo value"))?,
+                index: u
+                    .get("outputIndex")
+                    .and_then(Value::as_u64)
+                    .ok_or(RpcError::Malformed("utxo index"))? as u32,
+                value: u
+                    .get("satoshis")
+                    .and_then(Value::as_u64)
+                    .ok_or(RpcError::Malformed("utxo value"))?,
                 height: u.get("height").and_then(Value::as_u64).unwrap_or(0),
                 script,
             });
@@ -272,10 +298,25 @@ impl Zebra {
     /// height it believes the chain has reached. Equal once synced.
     pub fn chain_info(&self) -> Result<ChainInfo, RpcError> {
         let v = self.call("getblockchaininfo", serde_json::json!([]))?;
-        let blocks = v.get("blocks").and_then(Value::as_u64).ok_or(RpcError::Malformed("blocks"))?;
-        let estimated = v.get("estimatedheight").and_then(Value::as_u64).unwrap_or(blocks).max(blocks);
-        let chain = v.get("chain").and_then(Value::as_str).unwrap_or_default().to_string();
-        Ok(ChainInfo { blocks, estimated, chain })
+        let blocks = v
+            .get("blocks")
+            .and_then(Value::as_u64)
+            .ok_or(RpcError::Malformed("blocks"))?;
+        let estimated = v
+            .get("estimatedheight")
+            .and_then(Value::as_u64)
+            .unwrap_or(blocks)
+            .max(blocks);
+        let chain = v
+            .get("chain")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok(ChainInfo {
+            blocks,
+            estimated,
+            chain,
+        })
     }
 
     fn address_txids(
@@ -289,7 +330,10 @@ impl Zebra {
             serde_json::json!([{ "addresses": addresses, "start": start, "end": end }]),
         )?;
         let arr = v.as_array().ok_or(RpcError::Malformed("txid list"))?;
-        Ok(arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+        Ok(arr
+            .iter()
+            .filter_map(|t| t.as_str().map(str::to_string))
+            .collect())
     }
 
     fn raw_transaction(&self, txid: &str) -> Result<Value, RpcError> {
@@ -308,7 +352,12 @@ impl Zebra {
     /// custodying on it: mainnet is allowed. A wallet or a block server holds
     /// no vault key, so the guard that protects custody has nothing to
     /// protect here.
-    pub fn connect_reader(host: &str, port: u16, auth: Option<(&str, &str)>, network: Network) -> Result<Zebra, RpcError> {
+    pub fn connect_reader(
+        host: &str,
+        port: u16,
+        auth: Option<(&str, &str)>,
+        network: Network,
+    ) -> Result<Zebra, RpcError> {
         Ok(Zebra {
             host: host.to_string(),
             port,
@@ -323,7 +372,10 @@ impl Zebra {
         let Some(txs) = v.get("tx").and_then(Value::as_array) else {
             return Err(RpcError::Malformed("block has no tx list"));
         };
-        Ok(txs.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+        Ok(txs
+            .iter()
+            .filter_map(|t| t.as_str().map(str::to_string))
+            .collect())
     }
 
     /// One transaction's raw bytes, for shielded scanning.
@@ -353,7 +405,11 @@ impl Zebra {
 
     /// The commitment tree of one pool. Ironwood (NU6.3) has its own tree and
     /// its own anchor; a note in one cannot be witnessed against the other.
-    pub fn tree_state_of(&self, height: u64, pool: orchard::ValuePool) -> Result<TreeState, RpcError> {
+    pub fn tree_state_of(
+        &self,
+        height: u64,
+        pool: orchard::ValuePool,
+    ) -> Result<TreeState, RpcError> {
         let v = self.call("z_gettreestate", serde_json::json!([height.to_string()]))?;
         let key = match pool {
             orchard::ValuePool::Orchard => "orchard",
@@ -363,7 +419,10 @@ impl Zebra {
             .get(key)
             .and_then(|o| o.get("commitments"))
             .ok_or(RpcError::Malformed("pool commitments"))?;
-        let root_hex = c.get("finalRoot").and_then(Value::as_str).ok_or(RpcError::Malformed("finalRoot"))?;
+        let root_hex = c
+            .get("finalRoot")
+            .and_then(Value::as_str)
+            .ok_or(RpcError::Malformed("finalRoot"))?;
         // Not byte-reversed, unlike a txid: checked against a tree seeded from
         // the same call, in `tests/zebra_live.rs`.
         let final_root: [u8; 32] = unhex(root_hex)
@@ -374,7 +433,11 @@ impl Zebra {
             .and_then(Value::as_str)
             .and_then(unhex)
             .ok_or(RpcError::Malformed("finalState"))?;
-        Ok(TreeState { height, final_root, final_state })
+        Ok(TreeState {
+            height,
+            final_root,
+            final_state,
+        })
     }
 
     /// How deep a transaction is, `None` if the node does not know it.
@@ -384,7 +447,9 @@ impl Zebra {
     pub fn confirmations(&self, txid: &str) -> Result<Option<u64>, RpcError> {
         let v = match self.call("getrawtransaction", serde_json::json!([txid, 1])) {
             Ok(v) => v,
-            Err(RpcError::Node(e)) if e.contains("-5") || e.to_lowercase().contains("not found") => {
+            Err(RpcError::Node(e))
+                if e.contains("-5") || e.to_lowercase().contains("not found") =>
+            {
                 return Ok(None)
             }
             Err(e) => return Err(e),
@@ -433,7 +498,9 @@ impl Zebra {
             for txid in self.address_txids(&keys, from, tip)? {
                 let tx = self.raw_transaction(&txid)?;
                 let height = tx.get("height").and_then(Value::as_u64).unwrap_or(0);
-                let Some(vout) = tx.get("vout").and_then(Value::as_array) else { continue };
+                let Some(vout) = tx.get("vout").and_then(Value::as_array) else {
+                    continue;
+                };
                 let id = hex32(&txid).ok_or(RpcError::Malformed("txid is not 32 bytes"))?;
 
                 for out in vout {
@@ -447,25 +514,34 @@ impl Zebra {
                         .and_then(Value::as_i64)
                         .ok_or(RpcError::NonIntegerAmount)?;
 
-                    let Some(addrs) =
-                        out.pointer("/scriptPubKey/addresses").and_then(Value::as_array)
+                    let Some(addrs) = out
+                        .pointer("/scriptPubKey/addresses")
+                        .and_then(Value::as_array)
                     else {
                         continue;
                     };
                     for a in addrs {
                         let Some(a) = a.as_str() else { continue };
-                        let Some(account) = addresses.get(a) else { continue };
+                        let Some(account) = addresses.get(a) else {
+                            continue;
+                        };
                         deposits.entry(height).or_default().push(ObservedDeposit {
                             txid: id,
                             account: *account,
                             amount: Fixed(zat as i128 * ZAT),
-                            height, asset: None });
+                            height,
+                            asset: None,
+                        });
                     }
                 }
             }
         }
 
-        Ok(Observed { tip, deposits, forced: Vec::new() })
+        Ok(Observed {
+            tip,
+            deposits,
+            forced: Vec::new(),
+        })
     }
 }
 
@@ -485,7 +561,11 @@ impl Observed {
         for d in deposits {
             by_height.entry(d.height).or_default().push(d);
         }
-        Observed { tip, deposits: by_height, forced: Vec::new() }
+        Observed {
+            tip,
+            deposits: by_height,
+            forced: Vec::new(),
+        }
     }
 
     pub fn set_forced(&mut self, forced: Vec<crate::shielded::ForcedSighting>) {
@@ -564,12 +644,24 @@ pub(crate) fn base64(input: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in input.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(T[(n >> 18) as usize & 63] as char);
         out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -583,7 +675,9 @@ mod tests {
             txid: [n; 32],
             account: [n; 32],
             amount: Fixed(zat as i128 * ZAT),
-            height: h, asset: None }
+            height: h,
+            asset: None,
+        }
     }
 
     /// The guard that keeps a scaffold a scaffold.
@@ -594,8 +688,12 @@ mod tests {
     /// refusal happens before any RPC, so this needs no node.
     #[test]
     fn the_transparent_watcher_refuses_mainnet_but_connecting_does_not() {
-        let main = Zebra::connect("127.0.0.1", 8232, None, Network::Mainnet).expect("mainnet may be connected to");
-        assert!(matches!(main.observe(&BTreeMap::new(), 0), Err(RpcError::RefusingMainnet)));
+        let main = Zebra::connect("127.0.0.1", 8232, None, Network::Mainnet)
+            .expect("mainnet may be connected to");
+        assert!(matches!(
+            main.observe(&BTreeMap::new(), 0),
+            Err(RpcError::RefusingMainnet)
+        ));
         assert!(Zebra::connect("127.0.0.1", 18232, None, Network::Testnet).is_ok());
     }
 
@@ -603,13 +701,19 @@ mod tests {
     /// node says it is, against what we were told to expect.
     #[test]
     fn a_chain_mismatch_is_named_rather_than_papered_over() {
-        let e = RpcError::WrongChain { want: "main", got: "test".into() };
+        let e = RpcError::WrongChain {
+            want: "main",
+            got: "test".into(),
+        };
         let said = e.to_string();
         assert!(said.contains("test chain"), "{}", said);
         assert!(said.contains("configured for main"), "{}", said);
         // A node that answers with no chain at all is still a mismatch, and
         // says so without pretending to know what it is.
-        let e = RpcError::WrongChain { want: "main", got: String::new() };
+        let e = RpcError::WrongChain {
+            want: "main",
+            got: String::new(),
+        };
         assert!(e.to_string().contains("unknown"), "{}", e);
     }
 
@@ -623,7 +727,11 @@ mod tests {
         assert_eq!(o.balance_at(10), Some(Fixed(5 * ZAT)));
         assert_eq!(o.balance_at(20), Some(Fixed(12 * ZAT)));
         assert_eq!(o.balance_at(100), Some(Fixed(23 * ZAT)));
-        assert_eq!(o.balance_at(101), None, "a height past the tip is not knowable");
+        assert_eq!(
+            o.balance_at(101),
+            None,
+            "a height past the tip is not knowable"
+        );
     }
 
     #[test]
@@ -631,7 +739,10 @@ mod tests {
         let o = Observed::new(50, vec![dep(10, 1, 5), dep(10, 2, 6), dep(11, 3, 7)]);
         assert_eq!(o.deposits_at(10).len(), 2);
         assert_eq!(o.deposits_at(11).len(), 1);
-        assert!(o.deposits_at(12).is_empty(), "an empty height is empty, not an error");
+        assert!(
+            o.deposits_at(12).is_empty(),
+            "an empty height is empty, not an error"
+        );
     }
 
     /// The snapshot has to drive the real watcher, not merely look like it
@@ -643,7 +754,10 @@ mod tests {
         let mut w = Watcher::new(6, 1);
         let actions = w.poll(&o).expect("poll");
 
-        assert!(matches!(actions[0], WatcherAction::Attest { .. }), "attest comes first");
+        assert!(
+            matches!(actions[0], WatcherAction::Attest { .. }),
+            "attest comes first"
+        );
         assert_eq!(actions.len(), 3, "one attestation and two credits");
         // Polling again sees nothing new — the deposits are already credited.
         assert!(w.poll(&o).expect("second poll").is_empty());

@@ -35,7 +35,7 @@ use zyn_vm::eip712::keccak;
 use zyn_vm::spec::AccountId;
 use zyn_vm::Fixed;
 
-use crate::watcher::{ChainView, ObservedDeposit};
+use crate::watcher::{AssetId, ChainView, ObservedDeposit};
 
 /// `keccak256("Deposited(bytes32,uint32,uint256,uint64)")` — topic 0 of the
 /// event this watches. Pinned by a test here and asserted against the real
@@ -72,7 +72,10 @@ pub enum EvmRpcError {
     /// The endpoint is not the chain we were configured for. Pointing a Base
     /// watcher at an Arbitrum endpoint would credit deposits that never
     /// happened on the chain the vault's signatures are bound to.
-    WrongChain { expected: u64, found: u64 },
+    WrongChain {
+        expected: u64,
+        found: u64,
+    },
     RefusingMainnet(u64),
 }
 
@@ -119,7 +122,10 @@ impl Rpc {
         };
         let found = rpc.chain_id()?;
         if found != network.chain_id {
-            return Err(EvmRpcError::WrongChain { expected: network.chain_id, found });
+            return Err(EvmRpcError::WrongChain {
+                expected: network.chain_id,
+                found,
+            });
         }
         Ok(rpc)
     }
@@ -144,7 +150,9 @@ impl Rpc {
                 return Err(EvmRpcError::Node(e.to_string()));
             }
         }
-        resp.get("result").cloned().ok_or(EvmRpcError::Malformed("no result"))
+        resp.get("result")
+            .cloned()
+            .ok_or(EvmRpcError::Malformed("no result"))
     }
 
     pub fn chain_id(&self) -> Result<u64, EvmRpcError> {
@@ -154,7 +162,10 @@ impl Rpc {
 
     /// Height of the latest **finalized** block.
     pub fn finalized_height(&self) -> Result<u64, EvmRpcError> {
-        let v = self.call("eth_getBlockByNumber", serde_json::json!(["finalized", false]))?;
+        let v = self.call(
+            "eth_getBlockByNumber",
+            serde_json::json!(["finalized", false]),
+        )?;
         v.get("number")
             .and_then(quantity)
             .ok_or(EvmRpcError::Malformed("no finalized block"))
@@ -164,11 +175,10 @@ impl Rpc {
     pub fn deposits_at(
         &self,
         vault: &[u8; 20],
-        asset: u32,
+        asset: AssetId,
         height: u64,
     ) -> Result<Vec<ObservedDeposit>, EvmRpcError> {
-        let mut asset_topic = [0u8; 32];
-        asset_topic[28..].copy_from_slice(&asset.to_be_bytes());
+        let asset_topic = asset;
         let filter = serde_json::json!([{
             "fromBlock": hex_quantity(height),
             "toBlock": hex_quantity(height),
@@ -247,14 +257,20 @@ pub fn decode_deposit(log: &Value, height: u64) -> Option<ObservedDeposit> {
         return None;
     }
     let txid = bytes32(log.get("transactionHash")?.as_str()?)?;
-    Some(ObservedDeposit { txid, account, amount: Fixed::raw(amount as i128), height, asset: None })
+    Some(ObservedDeposit {
+        txid,
+        account,
+        amount: Fixed::raw(amount as i128),
+        height,
+        asset: None,
+    })
 }
 
 /// A vault on one EVM chain, watching one asset.
 pub struct Observed {
     rpc: Rpc,
     vault: [u8; 20],
-    asset: u32,
+    asset: AssetId,
     /// `None` for the chain's native asset.
     token: Option<[u8; 20]>,
     decimals: u8,
@@ -266,12 +282,20 @@ impl Observed {
     pub fn new(
         rpc: Rpc,
         vault: [u8; 20],
-        asset: u32,
+        asset: AssetId,
         token: Option<[u8; 20]>,
         decimals: u8,
     ) -> Result<Observed, EvmRpcError> {
         let tip = rpc.finalized_height()?;
-        Ok(Observed { rpc, vault, asset, token, decimals, tip, failed: std::cell::Cell::new(false) })
+        Ok(Observed {
+            rpc,
+            vault,
+            asset,
+            token,
+            decimals,
+            tip,
+            failed: std::cell::Cell::new(false),
+        })
     }
 
     /// Re-read the finalized height. The watcher works to a fixed tip within a
@@ -310,7 +334,9 @@ impl ChainView for Observed {
         // An unreachable node is indistinguishable from a quiet block here, and
         // that is the safe confusion to have: the watcher makes no progress and
         // the next pass repeats the range.
-        self.rpc.deposits_at(&self.vault, self.asset, height).unwrap_or_default()
+        self.rpc
+            .deposits_at(&self.vault, self.asset, height)
+            .unwrap_or_default()
     }
 
     fn balance_at(&self, height: u64) -> Option<Fixed> {
@@ -339,7 +365,9 @@ fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
 }
 
 fn bytes32(s: &str) -> Option<[u8; 32]> {
@@ -432,15 +460,24 @@ mod tests {
 
         let mut wrong_topic = good.clone();
         wrong_topic["topics"][0] = json!(hex_bytes(&[1u8; 32]));
-        assert!(decode_deposit(&wrong_topic, 1).is_none(), "a foreign event decoded");
+        assert!(
+            decode_deposit(&wrong_topic, 1).is_none(),
+            "a foreign event decoded"
+        );
 
         let mut short = good.clone();
         short["topics"] = json!([hex_bytes(&DEPOSITED_TOPIC), hex_bytes(&[3u8; 32])]);
-        assert!(decode_deposit(&short, 1).is_none(), "a two-topic log decoded");
+        assert!(
+            decode_deposit(&short, 1).is_none(),
+            "a two-topic log decoded"
+        );
 
         let mut truncated = good.clone();
         truncated["data"] = json!(hex_bytes(&[0u8; 32]));
-        assert!(decode_deposit(&truncated, 1).is_none(), "a half-length data field decoded");
+        assert!(
+            decode_deposit(&truncated, 1).is_none(),
+            "a half-length data field decoded"
+        );
 
         let mut odd = good.clone();
         odd["data"] = json!("0xabc");
@@ -472,7 +509,11 @@ mod tests {
     fn scaling_up_from_token_units() {
         assert_eq!(to_wad(1_000_000, 6), Some(Fixed::whole(1)));
         assert_eq!(to_wad(5_000_000_000_000_000_000, 18), Some(Fixed::whole(5)));
-        assert_eq!(to_wad(u128::MAX, 6), None, "an overflowing balance was reported");
+        assert_eq!(
+            to_wad(u128::MAX, 6),
+            None,
+            "an overflowing balance was reported"
+        );
     }
 
     /// Mainnet is refused before any request is made.
@@ -482,7 +523,11 @@ mod tests {
             assert!(!Network { chain_id: id }.is_testnet());
         }
         for id in [11_155_111u64, 84_532, 421_614] {
-            assert!(Network { chain_id: id }.is_testnet(), "testnet {} not recognised", id);
+            assert!(
+                Network { chain_id: id }.is_testnet(),
+                "testnet {} not recognised",
+                id
+            );
         }
         match Rpc::connect("http://127.0.0.1:1", Network { chain_id: 1 }) {
             Err(EvmRpcError::RefusingMainnet(1)) => {}

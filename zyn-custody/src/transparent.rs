@@ -35,11 +35,23 @@ impl Receiver {
     /// The seed is the wallet's own 32 bytes. They are not a BIP-39 mnemonic
     /// seed — this wallet has never had one — but they are 32 bytes of
     /// entropy, which is what the derivation wants.
-    pub fn derive<P: Parameters>(params: &P, seed: &[u8], account: u32, index: u32) -> Option<Receiver> {
-        let account_key = AccountPrivKey::from_seed(params, seed, zip32::AccountId::try_from(account).ok()?).ok()?;
+    pub fn derive<P: Parameters>(
+        params: &P,
+        seed: &[u8],
+        account: u32,
+        index: u32,
+    ) -> Option<Receiver> {
+        let account_key =
+            AccountPrivKey::from_seed(params, seed, zip32::AccountId::try_from(account).ok()?)
+                .ok()?;
         let child = NonHardenedChildIndex::from_index(index)?;
         let secret = account_key.derive_external_secret_key(child).ok()?;
-        let address = account_key.to_account_pubkey().derive_external_ivk().ok()?.derive_address(child).ok()?;
+        let address = account_key
+            .to_account_pubkey()
+            .derive_external_ivk()
+            .ok()?
+            .derive_address(child)
+            .ok()?;
         Some(Receiver { secret, address })
     }
 
@@ -110,8 +122,12 @@ mod tests {
     #[test]
     fn mainnet_and_testnet_addresses_differ_and_carry_the_right_prefix() {
         let seed = [3u8; 32];
-        let m = Receiver::derive(&MAIN_NETWORK, &seed, 0, 0).expect("derive").encoded(NetworkType::Main);
-        let t = Receiver::derive(&TEST_NETWORK, &seed, 0, 0).expect("derive").encoded(NetworkType::Test);
+        let m = Receiver::derive(&MAIN_NETWORK, &seed, 0, 0)
+            .expect("derive")
+            .encoded(NetworkType::Main);
+        let t = Receiver::derive(&TEST_NETWORK, &seed, 0, 0)
+            .expect("derive")
+            .encoded(NetworkType::Test);
         assert!(m.starts_with("t1"), "mainnet p2pkh starts t1, got {}", m);
         assert!(t.starts_with("tm"), "testnet p2pkh starts tm, got {}", t);
         assert_ne!(m, t);
@@ -125,14 +141,16 @@ mod tests {
         // cases cannot share a loop.
         let m = Receiver::derive(&MAIN_NETWORK, &[11u8; 32], 0, 0).expect("derive");
         let s = m.encoded(NetworkType::Main);
-        let back = crate::payout::transparent_address(&s, zcash_protocol::consensus::Network::MainNetwork)
-            .expect("the parser must accept what the encoder produced");
+        let back =
+            crate::payout::transparent_address(&s, zcash_protocol::consensus::Network::MainNetwork)
+                .expect("the parser must accept what the encoder produced");
         assert_eq!(&back, m.address(), "round trip changed the mainnet address");
 
         let t = Receiver::derive(&TEST_NETWORK, &[11u8; 32], 0, 0).expect("derive");
         let s = t.encoded(NetworkType::Test);
-        let back = crate::payout::transparent_address(&s, zcash_protocol::consensus::Network::TestNetwork)
-            .expect("the parser must accept what the encoder produced");
+        let back =
+            crate::payout::transparent_address(&s, zcash_protocol::consensus::Network::TestNetwork)
+                .expect("the parser must accept what the encoder produced");
         assert_eq!(&back, t.address(), "round trip changed the testnet address");
     }
 
@@ -141,8 +159,12 @@ mod tests {
     #[test]
     fn successive_indices_give_distinct_addresses() {
         let seed = [5u8; 32];
-        let a = Receiver::derive(&MAIN_NETWORK, &seed, 0, 0).expect("derive").encoded(NetworkType::Main);
-        let b = Receiver::derive(&MAIN_NETWORK, &seed, 0, 1).expect("derive").encoded(NetworkType::Main);
+        let a = Receiver::derive(&MAIN_NETWORK, &seed, 0, 0)
+            .expect("derive")
+            .encoded(NetworkType::Main);
+        let b = Receiver::derive(&MAIN_NETWORK, &seed, 0, 1)
+            .expect("derive")
+            .encoded(NetworkType::Main);
         assert_ne!(a, b);
     }
 }
@@ -152,9 +174,9 @@ mod tests {
 use crate::lightd::Utxo;
 use crate::payout::{Effects, Envelope, PayoutError, Sealed};
 use orchard::builder::{Builder, BundleType};
+use orchard::bundle::BundleVersion;
 use orchard::keys::{FullViewingKey, OutgoingViewingKey};
 use orchard::value::NoteValue;
-use orchard::bundle::BundleVersion;
 use orchard::Anchor;
 use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
 use zcash_primitives::transaction::txid::TxIdDigester;
@@ -189,7 +211,12 @@ pub fn plan(utxos: &[Utxo]) -> Sweep {
     const MARGINAL_FEE: u64 = 5_000;
     const PADDED_ORCHARD_ACTIONS: usize = 2;
     let fee = MARGINAL_FEE * (utxos.len().max(1) + PADDED_ORCHARD_ACTIONS).max(2) as u64;
-    Sweep { total, fee, net: total.saturating_sub(fee), count: utxos.len() }
+    Sweep {
+        total,
+        fee,
+        net: total.saturating_sub(fee),
+        count: utxos.len(),
+    }
 }
 
 /// Sweep transparent outputs into one shielded note the holder owns.
@@ -224,14 +251,25 @@ pub fn shield(
 
     // The shielded side: one output, no spends. An anchor is still required —
     // any valid one will do when nothing is being spent against it.
-    let mut builder = Builder::new(BundleType::DEFAULT, version, version.default_flags(), Anchor::empty_tree())
-        .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
+    let mut builder = Builder::new(
+        BundleType::DEFAULT,
+        version,
+        version.default_flags(),
+        Anchor::empty_tree(),
+    )
+    .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
     // A *change* output, not a payment: the money is already the holder's and
     // is returning to them. That is also the only shielded output NU6.3 lets
     // an Orchard bundle make, so calling it what it is happens to be the only
     // thing that works.
     builder
-        .add_change_output(fvk.clone(), ovk.clone(), to, NoteValue::from_raw(sweep.net), [0u8; 512])
+        .add_change_output(
+            fvk.clone(),
+            ovk.clone(),
+            to,
+            NoteValue::from_raw(sweep.net),
+            [0u8; 512],
+        )
         .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
     let (mut bundle, _meta) = builder
         .build_for_pczt(&mut rng)
@@ -244,15 +282,20 @@ pub fn shield(
         let r = receivers
             .iter()
             .find(|r| script_pays(&u.script, r.address()))
-            .ok_or_else(|| PayoutError::Build("an output pays an address this wallet cannot spend".into()))?;
+            .ok_or_else(|| {
+                PayoutError::Build("an output pays an address this wallet cannot spend".into())
+            })?;
         let pubkey = signing.add_key(*r.secret());
         let outpoint = OutPoint::new(u.txid, u.index);
-        let value = Zatoshis::from_u64(u.value).map_err(|_| PayoutError::Build("utxo value".into()))?;
+        let value =
+            Zatoshis::from_u64(u.value).map_err(|_| PayoutError::Build("utxo value".into()))?;
         // `Script::read` expects the wire form — a CompactSize length then the
         // bytes — while the node reports the script itself. A P2PKH script is
         // 25 bytes, comfortably inside the single-byte length encoding.
         if u.script.len() > 252 {
-            return Err(PayoutError::Build("scriptPubKey is longer than a P2PKH".into()));
+            return Err(PayoutError::Build(
+                "scriptPubKey is longer than a P2PKH".into(),
+            ));
         }
         let mut wire = Vec::with_capacity(u.script.len() + 1);
         wire.push(u.script.len() as u8);
@@ -263,7 +306,9 @@ pub fn shield(
         t.add_p2pkh_input(pubkey, outpoint, coin)
             .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
     }
-    let unauthorized = t.build().ok_or_else(|| PayoutError::Build("no transparent bundle".into()))?;
+    let unauthorized = t
+        .build()
+        .ok_or_else(|| PayoutError::Build("no transparent bundle".into()))?;
 
     // One digest set serves both signatures: the shielded binding signature
     // and every transparent input's. They must be over the same transaction
@@ -277,14 +322,28 @@ pub fn shield(
     let pool = version.value_pool();
     let for_sighash = match pool {
         orchard::ValuePool::Orchard => TransactionData::<Effects>::from_parts(
-            TxVersion::V5, env.branch, 0, env.expiry, Some(unauthorized.clone()), None, None, effects,
+            TxVersion::V5,
+            env.branch,
+            0,
+            env.expiry,
+            Some(unauthorized.clone()),
+            None,
+            None,
+            effects,
         ),
         orchard::ValuePool::Ironwood => TransactionData::<Effects>::from_parts_v6(
-            env.branch, 0, env.expiry, Some(unauthorized.clone()), None, None, effects,
+            env.branch,
+            0,
+            env.expiry,
+            Some(unauthorized.clone()),
+            None,
+            None,
+            effects,
         ),
     };
     let digests = for_sighash.digest(TxIdDigester);
-    let shielded_sighash: [u8; 32] = *signature_hash(&for_sighash, &SignableInput::Shielded, &digests).as_ref();
+    let shielded_sighash: [u8; 32] =
+        *signature_hash(&for_sighash, &SignableInput::Shielded, &digests).as_ref();
 
     // `BundleType::DEFAULT` pads the bundle with dummy spends, and a dummy is
     // still an action that must balance, prove and be signed. Skipping any of
@@ -320,18 +379,40 @@ pub fn shield(
         .ok_or(PayoutError::BadSignature)?;
 
     let tx = match pool {
-        orchard::ValuePool::Orchard => TransactionData::<zcash_primitives::transaction::Authorized>::from_parts(
-            TxVersion::V5, env.branch, 0, env.expiry, Some(authorized_t), None, None, Some(authorized),
-        ),
-        orchard::ValuePool::Ironwood => TransactionData::<zcash_primitives::transaction::Authorized>::from_parts_v6(
-            env.branch, 0, env.expiry, Some(authorized_t), None, None, Some(authorized),
-        ),
+        orchard::ValuePool::Orchard => {
+            TransactionData::<zcash_primitives::transaction::Authorized>::from_parts(
+                TxVersion::V5,
+                env.branch,
+                0,
+                env.expiry,
+                Some(authorized_t),
+                None,
+                None,
+                Some(authorized),
+            )
+        }
+        orchard::ValuePool::Ironwood => {
+            TransactionData::<zcash_primitives::transaction::Authorized>::from_parts_v6(
+                env.branch,
+                0,
+                env.expiry,
+                Some(authorized_t),
+                None,
+                None,
+                Some(authorized),
+            )
+        }
     }
     .freeze()
     .map_err(|e| PayoutError::Envelope(e.to_string()))?;
     let mut bytes = Vec::new();
-    tx.write(&mut bytes).map_err(|e| PayoutError::Envelope(e.to_string()))?;
-    Ok(Sealed { txid: *tx.txid().as_ref(), bytes, spent: Vec::new() })
+    tx.write(&mut bytes)
+        .map_err(|e| PayoutError::Envelope(e.to_string()))?;
+    Ok(Sealed {
+        txid: *tx.txid().as_ref(),
+        bytes,
+        spent: Vec::new(),
+    })
 }
 
 /// Whether a `scriptPubKey` is the standard P2PKH paying `addr`.
@@ -340,7 +421,9 @@ pub fn shield(
 /// produces a transaction the network rejects, and the money looks lost until
 /// someone works out why.
 fn script_pays(script: &[u8], addr: &TransparentAddress) -> bool {
-    let TransparentAddress::PublicKeyHash(hash) = addr else { return false };
+    let TransparentAddress::PublicKeyHash(hash) = addr else {
+        return false;
+    };
     // OP_DUP OP_HASH160 <20> …20… OP_EQUALVERIFY OP_CHECKSIG
     script.len() == 25
         && script[0] == 0x76
@@ -357,7 +440,9 @@ mod sweep_tests {
     use zcash_protocol::consensus::MAIN_NETWORK;
 
     fn p2pkh_script(addr: &TransparentAddress) -> Vec<u8> {
-        let TransparentAddress::PublicKeyHash(h) = addr else { panic!("not p2pkh") };
+        let TransparentAddress::PublicKeyHash(h) = addr else {
+            panic!("not p2pkh")
+        };
         let mut s = vec![0x76, 0xa9, 0x14];
         s.extend_from_slice(h);
         s.extend_from_slice(&[0x88, 0xac]);
@@ -373,9 +458,18 @@ mod sweep_tests {
         let theirs = Receiver::derive(&MAIN_NETWORK, &[2u8; 32], 0, 0).expect("derive");
         let script = p2pkh_script(mine.address());
         assert!(script_pays(&script, mine.address()));
-        assert!(!script_pays(&script, theirs.address()), "another key must not match");
-        assert!(!script_pays(&script[..24], mine.address()), "a truncated script is not a match");
-        assert!(!script_pays(&[0u8; 25], mine.address()), "zeroes are not a script");
+        assert!(
+            !script_pays(&script, theirs.address()),
+            "another key must not match"
+        );
+        assert!(
+            !script_pays(&script[..24], mine.address()),
+            "a truncated script is not a match"
+        );
+        assert!(
+            !script_pays(&[0u8; 25], mine.address()),
+            "zeroes are not a script"
+        );
     }
 
     /// Dust must be refused rather than swept: the fee would exceed it, and a
@@ -383,7 +477,13 @@ mod sweep_tests {
     /// that says no.
     #[test]
     fn a_sweep_that_the_fee_would_eat_is_refused() {
-        let dust = Utxo { txid: [1u8; 32], index: 0, value: 1_000, height: 5, script: vec![] };
+        let dust = Utxo {
+            txid: [1u8; 32],
+            index: 0,
+            value: 1_000,
+            height: 5,
+            script: vec![],
+        };
         let s = plan(&[dust]);
         assert_eq!(s.total, 1_000);
         assert!(s.fee > s.total, "the fee should exceed dust");
@@ -394,7 +494,13 @@ mod sweep_tests {
     /// with the number of outputs being swept.
     #[test]
     fn a_plan_reports_what_would_actually_land() {
-        let one = Utxo { txid: [1u8; 32], index: 0, value: 1_000_000, height: 5, script: vec![] };
+        let one = Utxo {
+            txid: [1u8; 32],
+            index: 0,
+            value: 1_000_000,
+            height: 5,
+            script: vec![],
+        };
         let mut two = one.clone();
         two.index = 1;
         let a = plan(std::slice::from_ref(&one));

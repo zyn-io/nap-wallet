@@ -119,12 +119,7 @@ pub fn item_proof(
 }
 
 /// Whether `item` is committed by `root`.
-pub fn verify_item(
-    collection: &Address,
-    item: &Item,
-    path: &[ProofStep],
-    root: Hash,
-) -> bool {
+pub fn verify_item(collection: &Address, item: &Item, path: &[ProofStep], root: Hash) -> bool {
     root_from(item_leaf(collection, item), path) == root
 }
 
@@ -164,7 +159,10 @@ pub fn transfer_item(
     if !verify_item(collection, old, path, root) {
         return None;
     }
-    let moved = Item { owner: new_owner, ..*old };
+    let moved = Item {
+        owner: new_owner,
+        ..*old
+    };
     Some((moved, root_from(item_leaf(collection, &moved), path)))
 }
 
@@ -237,7 +235,10 @@ mod tests {
         let (_, path) = item_proof(&a, &set, &set[3].id).unwrap();
 
         assert!(verify_item(&a, &set[3], &path, root_a));
-        assert!(!verify_item(&b, &set[3], &path, root_a), "an item crossed collections");
+        assert!(
+            !verify_item(&b, &set[3], &path, root_a),
+            "an item crossed collections"
+        );
         assert_ne!(collection_root(&b, &set).unwrap(), root_a);
     }
 
@@ -250,11 +251,17 @@ mod tests {
 
         let mut relabelled = set[2];
         relabelled.owner = [0xEE; 32];
-        assert!(!verify_item(&c, &relabelled, &path, root), "owner was not committed");
+        assert!(
+            !verify_item(&c, &relabelled, &path, root),
+            "owner was not committed"
+        );
 
         let mut rewritten = set[2];
         rewritten.content = [0xEE; 32];
-        assert!(!verify_item(&c, &rewritten, &path, root), "content was not committed");
+        assert!(
+            !verify_item(&c, &rewritten, &path, root),
+            "content was not committed"
+        );
     }
 
     /// A transfer is one leaf change, so the new root costs log(n) hashes —
@@ -270,7 +277,10 @@ mod tests {
         let (moved, new_root) =
             transfer_item(&c, &set[500], [0x77; 32], &path, root).expect("valid transfer");
         assert_eq!(moved.owner, [0x77; 32]);
-        assert_eq!(moved.id, set[500].id, "a transfer changed the item's identity");
+        assert_eq!(
+            moved.id, set[500].id,
+            "a transfer changed the item's identity"
+        );
         assert_ne!(new_root, root);
 
         // The incrementally computed root is exactly the rebuilt one.
@@ -311,7 +321,10 @@ mod tests {
         // publisher cannot hand over a different tree and call it the same one.
         assert!(collection_root(&c, &shuffled).is_none());
         shuffled.sort();
-        assert_eq!(collection_root(&c, &shuffled).unwrap(), collection_root(&c, &set).unwrap());
+        assert_eq!(
+            collection_root(&c, &shuffled).unwrap(),
+            collection_root(&c, &set).unwrap()
+        );
     }
 
     #[test]

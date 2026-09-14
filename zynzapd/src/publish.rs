@@ -54,13 +54,23 @@ pub fn files(chain_id: u32, b: &Bundle) -> Vec<(String, Vec<u8>)> {
         (format!("{}/published.bin", d), b.published.encode()),
     ];
     for (epoch, bytes) in &b.intents {
-        out.push((format!("{}/intents/epoch-{}.intents", d, epoch), bytes.clone()));
+        out.push((
+            format!("{}/intents/epoch-{}.intents", d, epoch),
+            bytes.clone(),
+        ));
     }
     out
 }
 
 pub fn index_line(b: &Bundle) -> String {
-    format!("{} {} {} {} {}\n", b.anchor.checkpoint.epoch, hex(&b.anchor.checkpoint.state_root), hex(&b.anchor.id()), b.txid, b.height)
+    format!(
+        "{} {} {} {} {}\n",
+        b.anchor.checkpoint.epoch,
+        hex(&b.anchor.checkpoint.state_root),
+        hex(&b.anchor.id()),
+        b.txid,
+        b.height
+    )
 }
 
 /// One parsed index line.
@@ -91,14 +101,21 @@ pub fn parse_index(s: &str) -> Vec<IndexEntry> {
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("no parent directory")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let tmp = parent.join(format!(".{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("file")));
+    let tmp = parent.join(format!(
+        ".{}.tmp",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+    ));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 /// Write the bundle under `root`, append its index line (once), and return
 /// the files so a publisher can push them.
-pub fn write_local(root: &Path, chain_id: u32, b: &Bundle) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub fn write_local(
+    root: &Path,
+    chain_id: u32,
+    b: &Bundle,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
     let fs_ = files(chain_id, b);
     for (rel, bytes) in &fs_ {
         write_atomic(&root.join(rel), bytes)?;
@@ -110,7 +127,10 @@ pub fn write_local(root: &Path, chain_id: u32, b: &Bundle) -> Result<Vec<(String
     if updated != existing {
         write_atomic(&index, updated.as_bytes())?;
     }
-    out.push((index_rel(chain_id), fs::read(&index).map_err(|e| e.to_string())?));
+    out.push((
+        index_rel(chain_id),
+        fs::read(&index).map_err(|e| e.to_string())?,
+    ));
     Ok(out)
 }
 
@@ -132,7 +152,11 @@ fn index_with(existing: &str, b: &Bundle) -> String {
     let mut lines: Vec<&str> = Vec::new();
     let mut seen = false;
     for l in existing.lines() {
-        if l.split_whitespace().next().and_then(|f| f.parse::<u64>().ok()) != Some(epoch) {
+        if l.split_whitespace()
+            .next()
+            .and_then(|f| f.parse::<u64>().ok())
+            != Some(epoch)
+        {
             lines.push(l);
             continue;
         }
@@ -147,12 +171,20 @@ fn index_with(existing: &str, b: &Bundle) -> String {
         // evidence that the transaction it names ever settled (§50.3).
         let learns_height = known_height == 0 && b.height > 0;
         let new_transaction = !b.txid.is_empty() && known_txid != b.txid;
-        lines.push(if learns_height || new_transaction { fresh } else { l });
+        lines.push(if learns_height || new_transaction {
+            fresh
+        } else {
+            l
+        });
     }
     if !seen {
         lines.push(fresh);
     }
-    if lines.is_empty() { String::new() } else { format!("{}\n", lines.join("\n")) }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
 }
 
 /// Read a bundle back from disk, as a replica does from its own copy.
@@ -160,13 +192,18 @@ pub fn read_local(root: &Path, chain_id: u32, epoch: u64) -> Result<Bundle, Stri
     let d = root.join(rel_dir(chain_id, epoch));
     let rd = |name: &str| fs::read(d.join(name)).map_err(|e| format!("{}: {}", name, e));
     let anchor = Anchor::decode(&rd("anchor.bin")?).ok_or("anchor.bin does not decode")?;
-    let certificate = Certificate::decode(&rd("certificate.bin")?).ok_or("certificate.bin does not decode")?;
-    let published = Published::decode(&rd("published.bin")?).ok_or("published.bin does not decode")?;
+    let certificate =
+        Certificate::decode(&rd("certificate.bin")?).ok_or("certificate.bin does not decode")?;
+    let published =
+        Published::decode(&rd("published.bin")?).ok_or("published.bin does not decode")?;
     let mut intents = Vec::new();
     if let Ok(entries) = fs::read_dir(d.join("intents")) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if let Some(num) = name.strip_prefix("epoch-").and_then(|n| n.strip_suffix(".intents")) {
+            if let Some(num) = name
+                .strip_prefix("epoch-")
+                .and_then(|n| n.strip_suffix(".intents"))
+            {
                 if let Ok(m) = num.parse::<u64>() {
                     intents.push((m, fs::read(e.path()).map_err(|e| e.to_string())?));
                 }
@@ -175,8 +212,18 @@ pub fn read_local(root: &Path, chain_id: u32, epoch: u64) -> Result<Bundle, Stri
     }
     intents.sort_by_key(|(m, _)| *m);
     let index = fs::read_to_string(root.join(index_rel(chain_id))).unwrap_or_default();
-    let entry = parse_index(&index).into_iter().find(|e| e.epoch == epoch).ok_or("no index line for the epoch")?;
-    Ok(Bundle { anchor, certificate, published, intents, txid: entry.txid, height: entry.height })
+    let entry = parse_index(&index)
+        .into_iter()
+        .find(|e| e.epoch == epoch)
+        .ok_or("no index line for the epoch")?;
+    Ok(Bundle {
+        anchor,
+        certificate,
+        published,
+        intents,
+        txid: entry.txid,
+        height: entry.height,
+    })
 }
 
 /// Assemble the bundle for an anchor the chain just confirmed, from what the
@@ -206,9 +253,17 @@ pub fn bundle_for(
         .unwrap_or_else(|| Certificate::new(anchor.id()));
     let last = anchor.checkpoint.epoch;
     let first = last.saturating_add(1).saturating_sub(anchor.epochs);
-    let intents = zyn::journal::files_for(journal_root, chain_id, first..=last).map_err(|e| format!("journal: {}", e))?;
+    let intents = zyn::journal::files_for(journal_root, chain_id, first..=last)
+        .map_err(|e| format!("journal: {}", e))?;
     all_sealed(&intents)?;
-    Ok(Bundle { anchor: *anchor, certificate, published, intents, txid: txid.to_string(), height })
+    Ok(Bundle {
+        anchor: *anchor,
+        certificate,
+        published,
+        intents,
+        txid: txid.to_string(),
+        height,
+    })
 }
 
 /// The bundle for an anchor the sequencer just broadcast, before it settles:
@@ -223,7 +278,9 @@ pub fn proposed_bundle(
     snapshot: &zyn::da::Snapshot<swapvm::state::SwapState>,
     txid: &str,
 ) -> Result<Bundle, String> {
-    let published = snapshot.published().map_err(|e| format!("snapshot is malformed: {:?}", e))?;
+    let published = snapshot
+        .published()
+        .map_err(|e| format!("snapshot is malformed: {:?}", e))?;
     if published.root != anchor.checkpoint.state_root {
         return Err("the proposed snapshot does not open the anchor's root".into());
     }
@@ -233,9 +290,17 @@ pub fn proposed_bundle(
         .unwrap_or_else(|| Certificate::new(anchor.id()));
     let last = anchor.checkpoint.epoch;
     let first = last.saturating_add(1).saturating_sub(anchor.epochs);
-    let intents = zyn::journal::files_for(journal_root, chain_id, first..=last).map_err(|e| format!("journal: {}", e))?;
+    let intents = zyn::journal::files_for(journal_root, chain_id, first..=last)
+        .map_err(|e| format!("journal: {}", e))?;
     all_sealed(&intents)?;
-    Ok(Bundle { anchor: *anchor, certificate, published, intents, txid: txid.to_string(), height: 0 })
+    Ok(Bundle {
+        anchor: *anchor,
+        certificate,
+        published,
+        intents,
+        txid: txid.to_string(),
+        height: 0,
+    })
 }
 
 /// Every epoch an anchor covers must end with its seal.
@@ -252,7 +317,8 @@ pub fn proposed_bundle(
 fn all_sealed(files: &[(u64, Vec<u8>)]) -> Result<(), String> {
     use zyn_vm::spec::MicrochainVm;
     for (epoch, raw) in files {
-        let f = zyn::journal::read_epoch(raw).map_err(|e| format!("epoch {} is unreadable: {:?}", epoch, e))?;
+        let f = zyn::journal::read_epoch(raw)
+            .map_err(|e| format!("epoch {} is unreadable: {:?}", epoch, e))?;
         let sealed = f
             .records
             .last()
@@ -290,8 +356,14 @@ pub fn parse_mirrors(spec: &str) -> Vec<Mirror> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| match s.split_once('|') {
-            Some((u, t)) => Mirror { url: u.trim_end_matches('/').to_string(), token: Some(t.to_string()) },
-            None => Mirror { url: s.trim_end_matches('/').to_string(), token: None },
+            Some((u, t)) => Mirror {
+                url: u.trim_end_matches('/').to_string(),
+                token: Some(t.to_string()),
+            },
+            None => Mirror {
+                url: s.trim_end_matches('/').to_string(),
+                token: None,
+            },
         })
         .collect()
 }
@@ -310,7 +382,9 @@ impl Publisher {
         Publisher {
             mirrors,
             queue: Vec::new(),
-            agent: ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(20)).build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(20))
+                .build(),
             pushed: 0,
             failures: 0,
         }
@@ -332,13 +406,18 @@ impl Publisher {
     }
 
     fn put(&self, m: &Mirror, rel: &str, bytes: &[u8]) -> Result<(), String> {
-        let mut req = self.agent.put(&format!("{}/{}", m.url, rel)).set("Content-Type", "application/octet-stream");
+        let mut req = self
+            .agent
+            .put(&format!("{}/{}", m.url, rel))
+            .set("Content-Type", "application/octet-stream");
         if let Some(t) = &m.token {
             req = req.set("Authorization", &format!("Bearer {}", t));
         }
         match req.send_bytes(bytes) {
             Ok(_) => Ok(()),
-            Err(ureq::Error::Status(code, _)) => Err(format!("{} refused {}: HTTP {}", m.url, rel, code)),
+            Err(ureq::Error::Status(code, _)) => {
+                Err(format!("{} refused {}: HTTP {}", m.url, rel, code))
+            }
             Err(e) => Err(format!("{} unreachable: {}", m.url, e)),
         }
     }
@@ -413,7 +492,11 @@ pub mod http {
     /// A relative path that stays under the root: no absolute, no `..`, no empty.
     fn safe(rel: &str) -> Option<PathBuf> {
         let rel = rel.trim_start_matches('/');
-        if rel.is_empty() || rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
+        if rel.is_empty()
+            || rel
+                .split('/')
+                .any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.'))
+        {
             return None;
         }
         Some(PathBuf::from(rel))
@@ -463,7 +546,9 @@ pub mod http {
                 Err(_) => respond(&mut s, 404, "Not Found", b""),
             },
             "PUT" => {
-                let Some(t) = token else { return respond(&mut s, 405, "Method Not Allowed", b"read-only mirror") };
+                let Some(t) = token else {
+                    return respond(&mut s, 405, "Method Not Allowed", b"read-only mirror");
+                };
                 if auth.as_deref() != Some(&format!("Bearer {}", t)) {
                     return respond(&mut s, 401, "Unauthorized", b"");
                 }
@@ -499,7 +584,9 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -523,13 +610,24 @@ mod tests {
     fn bundle() -> Bundle {
         let mut s = SwapState::new(4, Params::v1());
         let observed = s.backing_of(XZEC).add(Fixed::whole(10)).unwrap();
-        s.apply(1, &Intent::AttestVaultBalance { asset: XZEC, observed });
+        s.apply(
+            1,
+            &Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
         let d = Intent::next_deposit(&s, [1u8; 32], XZEC, Fixed::whole(1), [0u8; 32]);
         s.apply(2, &d);
         let r = s.apply(3, &Intent::Checkpoint);
         let cp = SwapState::sealed(&r).unwrap();
         let snap = Snapshot::at_checkpoint(&s, &cp).unwrap();
-        let anchor = Anchor { checkpoint: cp, previous_root: [0u8; 32], epochs: 1, actions: 3 };
+        let anchor = Anchor {
+            checkpoint: cp,
+            previous_root: [0u8; 32],
+            epochs: 1,
+            actions: 3,
+        };
         Bundle {
             certificate: Certificate::new(anchor.id()),
             anchor,
@@ -559,9 +657,16 @@ mod tests {
         b.height = 4_400_123;
         write_local(&d, 7, &b).unwrap();
         let after = parse_index(&fs::read_to_string(d.join(index_rel(7))).unwrap());
-        assert_eq!(after.len(), 1, "settling replaces the entry, it does not add one");
+        assert_eq!(
+            after.len(),
+            1,
+            "settling replaces the entry, it does not add one"
+        );
         assert_eq!(after[0].epoch, epoch);
-        assert_eq!(after[0].height, 4_400_123, "the confirmed height must reach the index");
+        assert_eq!(
+            after[0].height, 4_400_123,
+            "the confirmed height must reach the index"
+        );
 
         // A late re-broadcast must not walk a settled anchor back to 0.
         b.height = 0;
@@ -569,7 +674,10 @@ mod tests {
         write_local(&d, 7, &b).unwrap();
         let last = parse_index(&fs::read_to_string(d.join(index_rel(7))).unwrap());
         assert_eq!(last.len(), 1);
-        assert_eq!(last[0].height, 4_400_123, "a settled height is never unlearned");
+        assert_eq!(
+            last[0].height, 4_400_123,
+            "a settled height is never unlearned"
+        );
     }
 
     /// An anchor whose transaction expires is rebuilt under a new txid. The
@@ -593,7 +701,11 @@ mod tests {
         write_local(&d, 9, &b).unwrap();
         let after = parse_index(&fs::read_to_string(d.join(index_rel(9))).unwrap());
         assert_eq!(after.len(), 1, "still one row for the epoch");
-        assert_eq!(after[0].txid, "22".repeat(32), "the index names the transaction that settled");
+        assert_eq!(
+            after[0].txid,
+            "22".repeat(32),
+            "the index names the transaction that settled"
+        );
         assert_eq!(after[0].height, 4_400_500);
     }
 
@@ -602,7 +714,11 @@ mod tests {
         let root = tmp("local");
         let b = bundle();
         let files = write_local(&root, 4, &b).unwrap();
-        assert_eq!(files.len(), 5, "anchor, certificate, published, one intents file, the index");
+        assert_eq!(
+            files.len(),
+            5,
+            "anchor, certificate, published, one intents file, the index"
+        );
         assert!(root.join("chain-4/0/anchor.bin").exists());
         assert!(root.join("chain-4/0/intents/epoch-0.intents").exists());
         let back = read_local(&root, 4, 0).unwrap();
@@ -616,10 +732,19 @@ mod tests {
     #[test]
     fn mirrors_parse_with_and_without_tokens() {
         let m = parse_mirrors("https://a.example/da/|s3cret, http://b:8181 ,,");
-        assert_eq!(m, vec![
-            Mirror { url: "https://a.example/da".into(), token: Some("s3cret".into()) },
-            Mirror { url: "http://b:8181".into(), token: None },
-        ]);
+        assert_eq!(
+            m,
+            vec![
+                Mirror {
+                    url: "https://a.example/da".into(),
+                    token: Some("s3cret".into())
+                },
+                Mirror {
+                    url: "http://b:8181".into(),
+                    token: None
+                },
+            ]
+        );
     }
 
     #[test]
@@ -638,12 +763,18 @@ mod tests {
         assert_eq!(p.poll_once().unwrap(), 5);
         assert_eq!(p.pending_len(), 0);
         for (rel, bytes) in &files {
-            let got = ureq::get(&format!("http://127.0.0.1:{}/{}", port, rel)).call().unwrap();
+            let got = ureq::get(&format!("http://127.0.0.1:{}/{}", port, rel))
+                .call()
+                .unwrap();
             let mut body = Vec::new();
             got.into_reader().read_to_end(&mut body).unwrap();
             assert_eq!(&body, bytes, "{}", rel);
         }
-        assert_eq!(read_local(&mirror_dir, 4, 0).unwrap(), b, "the mirror holds a complete bundle");
+        assert_eq!(
+            read_local(&mirror_dir, 4, 0).unwrap(),
+            b,
+            "the mirror holds a complete bundle"
+        );
 
         // Wrong token, no token, traversal, missing file. Under a loaded test
         // run a connection can be refused before the server answers; one
@@ -651,15 +782,22 @@ mod tests {
         let put = |auth: Option<&str>| {
             for _ in 0..2 {
                 let mut req = ureq::put(&format!("http://127.0.0.1:{}/chain-4/x", port));
-                if let Some(a) = auth { req = req.set("Authorization", a); }
+                if let Some(a) = auth {
+                    req = req.set("Authorization", a);
+                }
                 match req.send_bytes(b"x") {
-                    Err(ureq::Error::Transport(_)) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                    Err(ureq::Error::Transport(_)) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50))
+                    }
                     other => return other,
                 }
             }
             ureq::put(&format!("http://127.0.0.1:{}/chain-4/x", port)).send_bytes(b"x")
         };
-        assert!(matches!(put(Some("Bearer nope")), Err(ureq::Error::Status(401, _))));
+        assert!(matches!(
+            put(Some("Bearer nope")),
+            Err(ureq::Error::Status(401, _))
+        ));
         assert!(matches!(put(None), Err(ureq::Error::Status(401, _))));
         // A client normalises `..` away, so send the raw request to be sure the
         // server itself refuses to leave its root.
@@ -682,5 +820,4 @@ mod tests {
         assert_eq!(down.pending_len(), 5);
         assert_eq!(down.failures, 1);
     }
-
 }

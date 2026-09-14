@@ -31,7 +31,6 @@
 
 use std::collections::BTreeMap;
 
-
 use frost_core::Ciphersuite;
 
 pub use crate::ceremony::{Identifier, IdentifierFor, Solana, ThresholdKeys, VaultKeys, Zcash};
@@ -71,7 +70,11 @@ impl<C: Ciphersuite> Session<C> {
     ) -> Session<C> {
         let (nonces, commitments) =
             frost_core::round1::commit(keys.key_package.signing_share(), rng);
-        Session { id, nonces, commitments }
+        Session {
+            id,
+            nonces,
+            commitments,
+        }
     }
 
     pub fn id(&self) -> IdentifierFor<C> {
@@ -120,7 +123,11 @@ pub type Coordinator = Aggregator<Zcash>;
 
 impl<C: Ciphersuite> Aggregator<C> {
     pub fn new(message: Vec<u8>, threshold: u16) -> Aggregator<C> {
-        Aggregator { message, commitments: BTreeMap::new(), threshold }
+        Aggregator {
+            message,
+            commitments: BTreeMap::new(),
+            threshold,
+        }
     }
 
     pub fn add_commitment(
@@ -141,7 +148,10 @@ impl<C: Ciphersuite> Aggregator<C> {
         if !self.ready() {
             return Err(SigningError::BelowThreshold);
         }
-        Ok(frost_core::SigningPackage::new(self.commitments.clone(), &self.message))
+        Ok(frost_core::SigningPackage::new(
+            self.commitments.clone(),
+            &self.message,
+        ))
     }
 
     /// Combine the shares into one signature.
@@ -165,11 +175,11 @@ impl<C: Ciphersuite> Aggregator<C> {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
-    use reddsa::frost::redpallas as frost;
     use super::*;
     use crate::ceremony::Ceremony;
     use rand::rngs::OsRng;
+    #[allow(unused_imports)]
+    use reddsa::frost::redpallas as frost;
 
     /// A signature the whole group can verify, from shares no one of which is
     /// the key.
@@ -218,7 +228,10 @@ mod tests {
             coordinator.add_commitment(id, s.commitments());
         }
         assert!(!coordinator.ready());
-        assert!(matches!(coordinator.package(), Err(SigningError::BelowThreshold)));
+        assert!(matches!(
+            coordinator.package(),
+            Err(SigningError::BelowThreshold)
+        ));
     }
 
     /// Someone who never committed to a round cannot produce a share for it at
@@ -243,7 +256,10 @@ mod tests {
         let outsider = ids[2];
         let stray = SigningSession::begin(outsider, &vault[&outsider], &mut OsRng);
         assert!(
-            matches!(stray.sign(&vault[&outsider], &package), Err(SigningError::Crypto)),
+            matches!(
+                stray.sign(&vault[&outsider], &package),
+                Err(SigningError::Crypto)
+            ),
             "an outsider produced a share for a round they never joined"
         );
     }
@@ -371,7 +387,12 @@ pub struct LocalQuorum {
 
 impl LocalQuorum {
     pub fn new(keys: Vec<VaultKeys>) -> LocalQuorum {
-        LocalQuorum { participants: keys.into_iter().map(crate::custodian::Participant::new).collect() }
+        LocalQuorum {
+            participants: keys
+                .into_iter()
+                .map(crate::custodian::Participant::new)
+                .collect(),
+        }
     }
 }
 
@@ -385,7 +406,13 @@ impl Quorum for LocalQuorum {
     ) -> BTreeMap<Identifier, Vec<frost_core::round1::SigningCommitments<Zcash>>> {
         let mut out = BTreeMap::new();
         for p in &mut self.participants {
-            if let Ok(c) = p.round1(request_id, sighash, alphas.to_vec(), now, &mut rand::rngs::OsRng) {
+            if let Ok(c) = p.round1(
+                request_id,
+                sighash,
+                alphas.to_vec(),
+                now,
+                &mut rand::rngs::OsRng,
+            ) {
                 out.insert(p.id(), c);
             }
         }
@@ -435,7 +462,12 @@ pub struct LocalSolanaQuorum {
 
 impl LocalSolanaQuorum {
     pub fn new(keys: Vec<ThresholdKeys<Solana>>) -> LocalSolanaQuorum {
-        LocalSolanaQuorum { participants: keys.into_iter().map(crate::custodian::solana::Participant::new).collect() }
+        LocalSolanaQuorum {
+            participants: keys
+                .into_iter()
+                .map(crate::custodian::solana::Participant::new)
+                .collect(),
+        }
     }
 }
 
@@ -474,11 +506,11 @@ impl SolanaQuorum for LocalSolanaQuorum {
 }
 
 pub mod orchard {
+    use super::*;
     #[allow(unused_imports)]
     use reddsa::frost::redpallas as frost;
-    use super::*;
 
-    pub use frost_rerandomized::{Randomizer, RandomizedParams};
+    pub use frost_rerandomized::{RandomizedParams, Randomizer};
     pub use reddsa::frost::redpallas::PallasBlake2b512;
 
     /// The parameters for one action, from the `alpha` its bundle chose.
@@ -529,13 +561,15 @@ pub mod orchard {
     /// re-reading costs nothing and fails loudly if the formats ever diverge.
     pub fn to_spend_auth(
         sig: &frost::Signature,
-    ) -> Result<::orchard::primitives::redpallas::Signature<
-        ::orchard::primitives::redpallas::SpendAuth,
-    >, SigningError> {
-        let bytes: [u8; 64] =
-            sig.serialize().map_err(|_| SigningError::Crypto)?
-                .try_into()
-                .map_err(|_| SigningError::Crypto)?;
+    ) -> Result<
+        ::orchard::primitives::redpallas::Signature<::orchard::primitives::redpallas::SpendAuth>,
+        SigningError,
+    > {
+        let bytes: [u8; 64] = sig
+            .serialize()
+            .map_err(|_| SigningError::Crypto)?
+            .try_into()
+            .map_err(|_| SigningError::Crypto)?;
         Ok(bytes.into())
     }
 
@@ -635,7 +669,10 @@ mod orchard_signing_tests {
         // key, never the group key.
         let params = params_for(keys[0].1.public_package.verifying_key(), a);
         assert!(
-            params.randomized_verifying_key().verify(&sighash, &sig).is_ok(),
+            params
+                .randomized_verifying_key()
+                .verify(&sighash, &sig)
+                .is_ok(),
             "the vault produced a signature Orchard would reject"
         );
     }
@@ -663,7 +700,10 @@ mod orchard_signing_tests {
         let sig = threshold_sign(&keys, 2, &sighash, alpha(11));
         let other = params_for(keys[0].1.public_package.verifying_key(), alpha(12));
         assert!(
-            other.randomized_verifying_key().verify(&sighash, &sig).is_err(),
+            other
+                .randomized_verifying_key()
+                .verify(&sighash, &sig)
+                .is_err(),
             "one action's signature authorised another"
         );
     }
@@ -675,7 +715,10 @@ mod orchard_signing_tests {
         let a = alpha(13);
         let sig = threshold_sign(&keys, 2, &[1u8; 32], a);
         let params = params_for(keys[0].1.public_package.verifying_key(), a);
-        assert!(params.randomized_verifying_key().verify(&[2u8; 32], &sig).is_err());
+        assert!(params
+            .randomized_verifying_key()
+            .verify(&[2u8; 32], &sig)
+            .is_err());
     }
 
     /// Below the threshold there is no signature, not a weaker one.
@@ -692,7 +735,10 @@ mod orchard_signing_tests {
         for s in &sessions {
             coord.add_commitment(s.id(), s.commitments());
         }
-        assert!(!coord.ready(), "a coordinator accepted less than the threshold");
+        assert!(
+            !coord.ready(),
+            "a coordinator accepted less than the threshold"
+        );
         assert!(matches!(coord.package(), Err(SigningError::BelowThreshold)));
     }
 }

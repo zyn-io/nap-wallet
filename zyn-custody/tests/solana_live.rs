@@ -19,8 +19,17 @@ use zyn_custody::solana::{base58_encode, pubkey, Cluster, Rpc};
 const URL: &str = "http://127.0.0.1:8899";
 
 fn cli(args: &[&str]) -> String {
-    let out = Command::new("solana").args(args).args(["-u", URL]).output().expect("solana cli");
-    assert!(out.status.success(), "solana {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("solana")
+        .args(args)
+        .args(["-u", URL])
+        .output()
+        .expect("solana cli");
+    assert!(
+        out.status.success(),
+        "solana {:?}: {}",
+        args,
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -53,8 +62,13 @@ fn a_threshold_vault_pays_out_on_a_local_validator() {
 
     // A durable nonce account whose authority is the vault.
     cli(&[
-        "create-nonce-account", nonce_kp.to_str().unwrap(), "0.01",
-        "--nonce-authority", &vault_b58, "-k", payer_s,
+        "create-nonce-account",
+        nonce_kp.to_str().unwrap(),
+        "0.01",
+        "--nonce-authority",
+        &vault_b58,
+        "-k",
+        payer_s,
     ]);
     let nonce_b58 = cli(&["address", "-k", nonce_kp.to_str().unwrap()]);
 
@@ -80,18 +94,39 @@ fn a_threshold_vault_pays_out_on_a_local_validator() {
 
     let dest = pubkey(&cli(&["address", "-k", payer_s])).unwrap();
     let payouts = vec![SolPayout::native(dest, 500_000_000)];
-    let groups = chunk(VaultAccounts { vault, nonce_account: pubkey(&nonce_b58).unwrap() }, &payouts).unwrap();
+    let groups = chunk(
+        VaultAccounts {
+            vault,
+            nonce_account: pubkey(&nonce_b58).unwrap(),
+        },
+        &payouts,
+    )
+    .unwrap();
     assert_eq!(groups.len(), 1);
 
     let quorum: Vec<(Id, &Keys)> = keys.iter().take(2).map(|(i, k)| (*i, k)).collect();
     let payment = prepare(&rpc, &quorum, 2, &nonce_b58, &groups[0], &mut OsRng).unwrap();
-    let before: u64 = cli(&["balance", "--lamports", &base58_encode(&dest)]).split(' ').next().unwrap().parse().unwrap();
+    let before: u64 = cli(&["balance", "--lamports", &base58_encode(&dest)])
+        .split(' ')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
     let lamports_of = |who: &str| -> u64 {
-        cli(&["balance", "--lamports", who]).split(' ').next().unwrap().parse().unwrap()
+        cli(&["balance", "--lamports", who])
+            .split(' ')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
     };
     let vault_before = lamports_of(&vault_b58);
     let sig = broadcast(&rpc, &payment).unwrap();
-    assert_eq!(sig, payment.id(), "the chain's id for the transaction is its signature");
+    assert_eq!(
+        sig,
+        payment.id(),
+        "the chain's id for the transaction is its signature"
+    );
 
     // Wait for the chain, not for the clock: first confirmation, then the
     // nonce's new value reaching finality (~13 s on a test validator).
@@ -103,10 +138,22 @@ fn a_threshold_vault_pays_out_on_a_local_validator() {
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    assert!(status.contains("Confirmed") || status.contains("Finalized"), "status: {}", status);
+    assert!(
+        status.contains("Confirmed") || status.contains("Finalized"),
+        "status: {}",
+        status
+    );
 
-    assert_eq!(lamports_of(&base58_encode(&dest)) - before, 500_000_000, "the payout did not arrive");
-    assert_eq!(vault_before - lamports_of(&vault_b58), 500_000_000 + 5_000, "vault paid other than payout plus one fee");
+    assert_eq!(
+        lamports_of(&base58_encode(&dest)) - before,
+        500_000_000,
+        "the payout did not arrive"
+    );
+    assert_eq!(
+        vault_before - lamports_of(&vault_b58),
+        500_000_000 + 5_000,
+        "vault paid other than payout plus one fee"
+    );
 
     let mut nonce_after = nonce_before;
     for _ in 0..60 {

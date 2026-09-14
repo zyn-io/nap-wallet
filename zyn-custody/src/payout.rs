@@ -54,22 +54,24 @@
 use frost_rerandomized::Randomizer;
 use orchard::builder::{Builder, BundleType};
 use orchard::bundle::BundleVersion;
-use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
-use orchard::ValuePool;
-use zcash_protocol::value::Zatoshis;
-use zcash_transparent::address::TransparentAddress;
-use zcash_transparent::builder::{TransparentBuilder, Unauthorized as TransparentUnauthorized};
-use zcash_transparent::bundle::{Authorized as TransparentAuthorized, Bundle as TransparentBundle};
 use orchard::circuit::ProvingKey;
 use orchard::keys::{FullViewingKey, OutgoingViewingKey};
 use orchard::primitives::redpallas;
 use orchard::value::NoteValue;
+use orchard::ValuePool;
 use orchard::{Address, Anchor};
 use reddsa::frost::redpallas::PallasBlake2b512;
+use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
+use zcash_protocol::value::Zatoshis;
+use zcash_transparent::address::TransparentAddress;
+use zcash_transparent::builder::{TransparentBuilder, Unauthorized as TransparentUnauthorized};
+use zcash_transparent::bundle::{Authorized as TransparentAuthorized, Bundle as TransparentBundle};
 
 use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
 use zcash_primitives::transaction::txid::TxIdDigester;
-use zcash_primitives::transaction::{Authorization, Authorized as TxAuthorized, TransactionData, TxVersion};
+use zcash_primitives::transaction::{
+    Authorization, Authorized as TxAuthorized, TransactionData, TxVersion,
+};
 use zcash_protocol::consensus::{BlockHeight, BranchId, Network, NetworkUpgrade, Parameters};
 use zcash_protocol::value::ZatBalance;
 
@@ -108,7 +110,10 @@ impl std::fmt::Display for PayoutError {
             PayoutError::Notes(e) => write!(f, "the vault cannot pay this: {:?}", e),
             PayoutError::Build(m) => write!(f, "orchard refused to build: {}", m),
             PayoutError::BadSignature => {
-                write!(f, "a signature did not authorise the action it was given for")
+                write!(
+                    f,
+                    "a signature did not authorise the action it was given for"
+                )
             }
             PayoutError::NoSuchAction(i) => write!(f, "no action {} in this bundle", i),
         }
@@ -127,7 +132,11 @@ pub struct Payment {
 
 impl Payment {
     pub fn new(to: Destination, zatoshi: u64) -> Payment {
-        Payment { to, zatoshi, memo: [0u8; 512] }
+        Payment {
+            to,
+            zatoshi,
+            memo: [0u8; 512],
+        }
     }
 }
 
@@ -191,12 +200,11 @@ impl Payout {
             .enumerate()
             .filter_map(|(index, a)| {
                 let alpha = Randomizer::from_scalar((*a.spend().alpha())?);
-                let expected = frost_rerandomized::RandomizedParams::from_randomizer(
-                    group_key, alpha,
-                )
-                .randomized_verifying_key()
-                .serialize()
-                .ok()?;
+                let expected =
+                    frost_rerandomized::RandomizedParams::from_randomizer(group_key, alpha)
+                        .randomized_verifying_key()
+                        .serialize()
+                        .ok()?;
                 let rk = a.spend().rk().clone();
                 if <[u8; 32]>::from(&rk).as_slice() != expected.as_slice() {
                     return None; // padding, or somebody else's note
@@ -222,7 +230,9 @@ impl Payout {
             .actions_mut()
             .get_mut(index)
             .ok_or(PayoutError::NoSuchAction(index))?;
-        action.apply_signature(sighash, signature).map_err(|_| PayoutError::BadSignature)
+        action
+            .apply_signature(sighash, signature)
+            .map_err(|_| PayoutError::BadSignature)
     }
 
     /// The notes this payout consumes.
@@ -264,10 +274,15 @@ pub fn build(
         return Err(PayoutError::Build("nothing to pay".into()));
     }
     let owed: u64 = payments.iter().map(|p| p.zatoshi).sum();
-    let shielded_out = payments.iter().filter(|p| matches!(p.to, Destination::Shielded(_))).count();
+    let shielded_out = payments
+        .iter()
+        .filter(|p| matches!(p.to, Destination::Shielded(_)))
+        .count();
     let transparent_out = payments.len() - shielded_out;
     if shielded_out > 0 && !version.default_flags().cross_address_enabled() {
-        return Err(PayoutError::Build("this pool cannot pay a shielded address (NU6.3 Orchard restriction)".into()));
+        return Err(PayoutError::Build(
+            "this pool cannot pay a shielded address (NU6.3 Orchard restriction)".into(),
+        ));
     }
     // The fee depends on the action count, which depends on whether there is
     // change, which depends on the fee. Two passes settle it.
@@ -289,7 +304,18 @@ pub fn build(
             fee = needed;
             continue;
         }
-        return assemble(store, fvk, ovk.clone(), payments, change_to, version, spent, change, fee, &mut rng);
+        return assemble(
+            store,
+            fvk,
+            ovk.clone(),
+            payments,
+            change_to,
+            version,
+            spent,
+            change,
+            fee,
+            &mut rng,
+        );
     }
     Err(PayoutError::Build("fee did not converge".into()))
 }
@@ -308,8 +334,13 @@ fn assemble(
     rng: &mut (impl rand::RngCore + rand::CryptoRng),
 ) -> Result<Payout, PayoutError> {
     let anchor: Anchor = store.anchor()?;
-    let mut builder = Builder::new(BundleType::DEFAULT, version, version.default_flags(), anchor)
-        .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
+    let mut builder = Builder::new(
+        BundleType::DEFAULT,
+        version,
+        version.default_flags(),
+        anchor,
+    )
+    .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
     for n in &spent {
         let path = store.witness(n.position)?;
         builder
@@ -329,7 +360,13 @@ fn assemble(
     // "an accidental fee".
     if change > 0 {
         builder
-            .add_change_output(fvk.clone(), ovk, change_to, NoteValue::from_raw(change), [0u8; 512])
+            .add_change_output(
+                fvk.clone(),
+                ovk,
+                change_to,
+                NoteValue::from_raw(change),
+                [0u8; 512],
+            )
             .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
     }
     let (bundle, _meta) = builder
@@ -339,11 +376,19 @@ fn assemble(
     let mut t = TransparentBuilder::empty();
     for p in payments {
         if let Destination::Transparent(to) = p.to {
-            let value = Zatoshis::from_u64(p.zatoshi).map_err(|_| PayoutError::Build("amount".into()))?;
-            t.add_output(&to, value).map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
+            let value =
+                Zatoshis::from_u64(p.zatoshi).map_err(|_| PayoutError::Build("amount".into()))?;
+            t.add_output(&to, value)
+                .map_err(|e| PayoutError::Build(format!("{:?}", e)))?;
         }
     }
-    Ok(Payout { bundle, transparent: t.build(), spent, fee, pool: version.value_pool() })
+    Ok(Payout {
+        bundle,
+        transparent: t.build(),
+        spent,
+        fee,
+        pool: version.value_pool(),
+    })
 }
 
 /// The transaction around the bundle: a v5 transaction carrying the Orchard
@@ -368,7 +413,10 @@ impl Envelope {
     /// For a transaction built at `height` on `network`.
     pub fn at(network: Network, height: u32) -> Envelope {
         let h = BlockHeight::from_u32(height);
-        Envelope { branch: BranchId::for_height(&network, h), expiry: h + EXPIRY_DELTA }
+        Envelope {
+            branch: BranchId::for_height(&network, h),
+            expiry: h + EXPIRY_DELTA,
+        }
     }
 
     /// The Orchard bundle version the chain expects under this branch.
@@ -379,8 +427,9 @@ impl Envelope {
     /// The bundle version for a pool under this branch. `None` from the
     /// library means the pool does not exist yet — Ironwood before NU6.3.
     pub fn bundle_version_for(&self, pool: ValuePool) -> Result<BundleVersion, PayoutError> {
-        bundle_version_for_branch(self.branch, pool)
-            .ok_or_else(|| PayoutError::Envelope(format!("no {:?} pool under {:?}", pool, self.branch)))
+        bundle_version_for_branch(self.branch, pool).ok_or_else(|| {
+            PayoutError::Envelope(format!("no {:?} pool under {:?}", pool, self.branch))
+        })
     }
 
     pub fn testnet_at(height: u32) -> Envelope {
@@ -419,7 +468,11 @@ pub struct Sealed {
 impl Sealed {
     /// The txid as a node displays it: byte-reversed hex.
     pub fn txid_hex(&self) -> String {
-        self.txid.iter().rev().map(|b| format!("{:02x}", b)).collect()
+        self.txid
+            .iter()
+            .rev()
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
     pub fn hex(&self) -> String {
         self.bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -436,11 +489,24 @@ impl Payout {
             .map_err(|e| PayoutError::Envelope(format!("{:?}", e)))?;
         let tx = match self.pool {
             ValuePool::Orchard => TransactionData::<Effects>::from_parts(
-                TxVersion::V5, env.branch, 0, env.expiry, self.transparent.clone(), None, None, effects,
+                TxVersion::V5,
+                env.branch,
+                0,
+                env.expiry,
+                self.transparent.clone(),
+                None,
+                None,
+                effects,
             ),
             // Ironwood exists only in v6 transactions.
             ValuePool::Ironwood => TransactionData::<Effects>::from_parts_v6(
-                env.branch, 0, env.expiry, self.transparent.clone(), None, None, effects,
+                env.branch,
+                0,
+                env.expiry,
+                self.transparent.clone(),
+                None,
+                None,
+                effects,
             ),
         };
         let digests = tx.digest(TxIdDigester);
@@ -452,13 +518,25 @@ impl Payout {
     /// Padding actions carry keys the builder made up; those are signed here,
     /// under the same sighash the real ones will be. Must precede the proof
     /// and the signer set.
-    pub fn finalize_io(&mut self, sighash: [u8; 32], rng: impl rand::RngCore + rand::CryptoRng) -> Result<(), PayoutError> {
-        self.bundle.finalize_io(sighash, rng).map_err(|e| PayoutError::Envelope(format!("{:?}", e)))
+    pub fn finalize_io(
+        &mut self,
+        sighash: [u8; 32],
+        rng: impl rand::RngCore + rand::CryptoRng,
+    ) -> Result<(), PayoutError> {
+        self.bundle
+            .finalize_io(sighash, rng)
+            .map_err(|e| PayoutError::Envelope(format!("{:?}", e)))
     }
 
     /// The zero-knowledge proof. Seconds, and standard.
-    pub fn prove(&mut self, pk: &ProvingKey, rng: impl rand::RngCore + rand::CryptoRng) -> Result<(), PayoutError> {
-        self.bundle.create_proof(pk, rng).map_err(|e| PayoutError::Envelope(format!("{:?}", e)))
+    pub fn prove(
+        &mut self,
+        pk: &ProvingKey,
+        rng: impl rand::RngCore + rand::CryptoRng,
+    ) -> Result<(), PayoutError> {
+        self.bundle
+            .create_proof(pk, rng)
+            .map_err(|e| PayoutError::Envelope(format!("{:?}", e)))
     }
 
     /// Seal: every action signed, the bundle bound, the transaction
@@ -467,7 +545,12 @@ impl Payout {
     /// `apply_binding_signature` re-verifies every spend signature against
     /// `sighash` first, so a bundle with one bad action fails here, before
     /// anything is sent.
-    pub fn extract(self, sighash: [u8; 32], env: &Envelope, rng: impl rand::RngCore + rand::CryptoRng) -> Result<Sealed, PayoutError> {
+    pub fn extract(
+        self,
+        sighash: [u8; 32],
+        env: &Envelope,
+        rng: impl rand::RngCore + rand::CryptoRng,
+    ) -> Result<Sealed, PayoutError> {
         let unbound = self
             .bundle
             .extract::<ZatBalance>()
@@ -485,17 +568,35 @@ impl Payout {
         });
         let tx = match self.pool {
             ValuePool::Orchard => TransactionData::<TxAuthorized>::from_parts(
-                TxVersion::V5, env.branch, 0, env.expiry, transparent, None, None, Some(authorized),
+                TxVersion::V5,
+                env.branch,
+                0,
+                env.expiry,
+                transparent,
+                None,
+                None,
+                Some(authorized),
             ),
             ValuePool::Ironwood => TransactionData::<TxAuthorized>::from_parts_v6(
-                env.branch, 0, env.expiry, transparent, None, None, Some(authorized),
+                env.branch,
+                0,
+                env.expiry,
+                transparent,
+                None,
+                None,
+                Some(authorized),
             ),
         }
         .freeze()
         .map_err(|e| PayoutError::Envelope(e.to_string()))?;
         let mut bytes = Vec::new();
-        tx.write(&mut bytes).map_err(|e| PayoutError::Envelope(e.to_string()))?;
-        Ok(Sealed { txid: *tx.txid().as_ref(), bytes, spent: self.spent })
+        tx.write(&mut bytes)
+            .map_err(|e| PayoutError::Envelope(e.to_string()))?;
+        Ok(Sealed {
+            txid: *tx.txid().as_ref(),
+            bytes,
+            spent: self.spent,
+        })
     }
 }
 
@@ -565,9 +666,15 @@ pub fn sign_all(
 ) -> Result<usize, PayoutError> {
     // The in-process quorum: the V0 path, unchanged behaviour, now expressed
     // through the same abstraction a distributed quorum uses.
-    let group = keys.first().ok_or(PayoutError::BadSignature)?.1.public_package.verifying_key();
+    let group = keys
+        .first()
+        .ok_or(PayoutError::BadSignature)?
+        .1
+        .public_package
+        .verifying_key();
     let public = keys.first().unwrap().1.public_package.clone();
-    let mut quorum = crate::signing::LocalQuorum::new(keys.iter().map(|(_, k)| (*k).clone()).collect());
+    let mut quorum =
+        crate::signing::LocalQuorum::new(keys.iter().map(|(_, k)| (*k).clone()).collect());
     sign_all_with(payout, sighash, &mut quorum, threshold, &group, &public, 0)
 }
 
@@ -624,11 +731,19 @@ pub fn sign_all_with(
         let mut shares = std::collections::BTreeMap::new();
         for id in &chosen {
             let per_action = r2.get(id).ok_or(PayoutError::BadSignature)?;
-            shares.insert(*id, per_action.get(i).ok_or(PayoutError::BadSignature)?.clone());
+            shares.insert(
+                *id,
+                per_action.get(i).ok_or(PayoutError::BadSignature)?.clone(),
+            );
         }
         let params = params_for(group, n.alpha);
-        let sig = aggregate(&packages[i], &shares, public, &params).map_err(|_| PayoutError::BadSignature)?;
-        payout.apply(n.index, sighash, to_spend_auth(&sig).map_err(|_| PayoutError::BadSignature)?)?;
+        let sig = aggregate(&packages[i], &shares, public, &params)
+            .map_err(|_| PayoutError::BadSignature)?;
+        payout.apply(
+            n.index,
+            sighash,
+            to_spend_auth(&sig).map_err(|_| PayoutError::BadSignature)?,
+        )?;
     }
     Ok(needed.len())
 }
@@ -701,9 +816,14 @@ mod tests {
 
         let rho = Rho::from_bytes(&[5u8; 32]).unwrap();
         let rseed = RandomSeed::from_bytes([6u8; 32], &rho).unwrap();
-        let note =
-            Note::from_parts(recipient, NoteValue::from_raw(value), rho, rseed, note_version)
-                .unwrap();
+        let note = Note::from_parts(
+            recipient,
+            NoteValue::from_raw(value),
+            rho,
+            rseed,
+            note_version,
+        )
+        .unwrap();
 
         let mut store = NoteStore::new();
         store.begin_block(1);
@@ -766,7 +886,11 @@ mod tests {
         // Two, not one: under the cross-address restriction the change sits in
         // its own action, whose spend is a zero-value note at the vault's own
         // address — keyed to the vault, so the threshold authorises it too.
-        assert_eq!(needed.len(), 2, "the real spend and the change action's spend");
+        assert_eq!(
+            needed.len(),
+            2,
+            "the real spend and the change action's spend"
+        );
 
         for n in needed {
             // Round one.
@@ -793,9 +917,14 @@ mod tests {
 
             // The coordinator can check before sending it anywhere.
             let sig = to_spend_auth(&sig).expect("the same bytes, the other type");
-            assert!(n.rk.verify(&sighash, &sig).is_ok(), "the share set produced a bad signature");
+            assert!(
+                n.rk.verify(&sighash, &sig).is_ok(),
+                "the share set produced a bad signature"
+            );
 
-            payout.apply(n.index, sighash, sig).expect("orchard must accept it");
+            payout
+                .apply(n.index, sighash, sig)
+                .expect("orchard must accept it");
         }
     }
 
@@ -803,8 +932,12 @@ mod tests {
     /// the network. This is the check that makes `alpha` load-bearing.
     #[test]
     fn a_signature_under_the_wrong_randomizer_is_refused() {
-        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> =
-            Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().collect();
+        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .collect();
         let (store, fvk, change_to) = funded_vault(100_000, &keys);
         let mut payout = build(
             &store,
@@ -853,8 +986,12 @@ mod tests {
 
     #[test]
     fn a_vault_that_cannot_afford_it_refuses_to_build() {
-        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> =
-            Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().collect();
+        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .collect();
         let (store, fvk, change_to) = funded_vault(10, &keys);
         let out = build(
             &store,
@@ -865,15 +1002,22 @@ mod tests {
             v3(),
             rand::rngs::OsRng,
         );
-        assert!(matches!(out, Err(PayoutError::Notes(NoteError::Insufficient { .. }))));
+        assert!(matches!(
+            out,
+            Err(PayoutError::Notes(NoteError::Insufficient { .. }))
+        ));
     }
 
     /// Change is an output, never a fee. The difference between what a payout
     /// spends and what it pays has to go somewhere the vault still owns.
     #[test]
     fn change_returns_to_the_vault() {
-        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> =
-            Ceremony::new(2, 3).unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().collect();
+        let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> = Ceremony::new(2, 3)
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .collect();
         let (store, fvk, change_to) = funded_vault(100_000, &keys);
         let payout = build(
             &store,
@@ -887,7 +1031,11 @@ mod tests {
         .unwrap();
         // One spend of 100_000 paying 400: the rest, less the fee, is change
         // in its own action. Nothing becomes an accidental fee.
-        assert_eq!(payout.bundle().actions().len(), 2, "spend action and change action");
+        assert_eq!(
+            payout.bundle().actions().len(),
+            2,
+            "spend action and change action"
+        );
         assert_eq!(payout.spent().len(), 1);
         assert_eq!(payout.spent()[0].value(), 100_000);
         assert_eq!(payout.fee, zip317_fee(2, 1));
@@ -926,11 +1074,20 @@ mod tests {
         let pk = proving_key(env.bundle_version().unwrap());
         payout.prove(&pk, rand::rngs::OsRng).unwrap();
 
-        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> = keys.iter().map(|(i, k)| (*i, k)).collect();
-        assert_eq!(sign_all(&mut payout, sighash, &refs, 2, rand::rngs::OsRng).unwrap(), 2, "spend action and change action");
+        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> =
+            keys.iter().map(|(i, k)| (*i, k)).collect();
+        assert_eq!(
+            sign_all(&mut payout, sighash, &refs, 2, rand::rngs::OsRng).unwrap(),
+            2,
+            "spend action and change action"
+        );
 
         let sealed_fee = payout.fee;
-        assert_eq!(sealed_fee, zip317_fee(2, 1), "one spend, one change, one t-out");
+        assert_eq!(
+            sealed_fee,
+            zip317_fee(2, 1),
+            "one spend, one change, one t-out"
+        );
         let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).unwrap();
         assert_eq!(sealed.spent.len(), 1);
         assert_eq!(sealed.txid_hex().len(), 64);
@@ -941,32 +1098,51 @@ mod tests {
         assert_eq!(*tx.txid().as_ref(), sealed.txid);
         let data = tx.into_data();
         let bundle = data.orchard_bundle().expect("an orchard bundle");
-        assert_eq!(bundle.actions().len(), 2, "one spend and one change, an action each");
-        bundle.verify_proof(&verifying_key(env.bundle_version().unwrap())).expect("the proof verifies");
+        assert_eq!(
+            bundle.actions().len(),
+            2,
+            "one spend and one change, an action each"
+        );
+        bundle
+            .verify_proof(&verifying_key(env.bundle_version().unwrap()))
+            .expect("the proof verifies");
         // Value left the pool for the transparent output, plus the fee.
         assert_eq!(i64::from(*bundle.value_balance()), 400 + sealed_fee as i64);
         let t = data.transparent_bundle().expect("a transparent output");
         assert_eq!(t.vout.len(), 1);
         assert_eq!(u64::from(t.vout[0].value()), 400);
-        assert!(data.ironwood_bundle().is_none(), "an Orchard payout is a v5 transaction");
+        assert!(
+            data.ironwood_bundle().is_none(),
+            "an Orchard payout is a v5 transaction"
+        );
 
         // The sighash the signers authorised is the one the parsed transaction
         // yields: envelope and bundle agree.
-        let effects = data
-            .orchard_bundle()
-            .cloned()
-            .map(|b| b.map_authorization(&mut (), |_, _, _| (), |_, _| orchard::bundle::EffectsOnly));
+        let effects = data.orchard_bundle().cloned().map(|b| {
+            b.map_authorization(&mut (), |_, _, _| (), |_, _| orchard::bundle::EffectsOnly)
+        });
         let mut tb = TransparentBuilder::empty();
         for o in &data.transparent_bundle().unwrap().vout {
-            tb.add_output(&o.recipient_address().unwrap(), o.value()).unwrap();
+            tb.add_output(&o.recipient_address().unwrap(), o.value())
+                .unwrap();
         }
         let again_tx = TransactionData::<Effects>::from_parts(
-            data.version(), data.consensus_branch_id(), data.lock_time(), data.expiry_height(),
-            tb.build(), None, None, effects,
+            data.version(),
+            data.consensus_branch_id(),
+            data.lock_time(),
+            data.expiry_height(),
+            tb.build(),
+            None,
+            None,
+            effects,
         );
         let digests = again_tx.digest(TxIdDigester);
         let again = signature_hash(&again_tx, &SignableInput::Shielded, &digests);
-        assert_eq!(*again.as_ref(), sighash, "the sighash changed between signing and sealing");
+        assert_eq!(
+            *again.as_ref(),
+            sighash,
+            "the sighash changed between signing and sealing"
+        );
     }
 
     /// The Ironwood exit: a shielded recipient, paid directly, in a v6
@@ -982,7 +1158,10 @@ mod tests {
             .collect();
         let env = Envelope::testnet_at(4_326_900);
         let version = env.bundle_version_for(ValuePool::Ironwood).unwrap();
-        assert!(version.default_flags().cross_address_enabled(), "Ironwood permits paying another address");
+        assert!(
+            version.default_flags().cross_address_enabled(),
+            "Ironwood permits paying another address"
+        );
         let (store, fvk, change_to) = funded_vault_v(100_000, &keys, version.note_version());
 
         let their_sk = SpendingKey::from_bytes([42u8; 32]).unwrap();
@@ -1001,25 +1180,41 @@ mod tests {
         assert_eq!(payout.pool, ValuePool::Ironwood);
         let sighash = payout.sighash(&env).unwrap();
         payout.finalize_io(sighash, rand::rngs::OsRng).unwrap();
-        payout.prove(&proving_key(version), rand::rngs::OsRng).unwrap();
-        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> = keys.iter().map(|(i, k)| (*i, k)).collect();
+        payout
+            .prove(&proving_key(version), rand::rngs::OsRng)
+            .unwrap();
+        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> =
+            keys.iter().map(|(i, k)| (*i, k)).collect();
         sign_all(&mut payout, sighash, &refs, 2, rand::rngs::OsRng).unwrap();
         let fee = payout.fee;
         let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).unwrap();
 
-        let tx = zcash_primitives::transaction::Transaction::read(&sealed.bytes[..], env.branch).expect("a v6 transaction");
+        let tx = zcash_primitives::transaction::Transaction::read(&sealed.bytes[..], env.branch)
+            .expect("a v6 transaction");
         assert_eq!(tx.version(), TxVersion::V6);
         assert!(tx.orchard_bundle().is_none() && tx.transparent_bundle().is_none());
         let b = tx.ironwood_bundle().expect("an ironwood bundle");
-        b.verify_proof(&verifying_key(version)).expect("the proof verifies");
-        assert_eq!(i64::from(*b.value_balance()), fee as i64, "only the fee leaves the pool");
+        b.verify_proof(&verifying_key(version))
+            .expect("the proof verifies");
+        assert_eq!(
+            i64::from(*b.value_balance()),
+            fee as i64,
+            "only the fee leaves the pool"
+        );
 
         // The recipient finds their 40_000 zat.
-        let ivk = orchard::keys::PreparedIncomingViewingKey::new(&their_fvk.to_ivk(Scope::External));
+        let ivk =
+            orchard::keys::PreparedIncomingViewingKey::new(&their_fvk.to_ivk(Scope::External));
         let received: Vec<u64> = b
             .actions()
             .iter()
-            .filter_map(|a| zcash_note_encryption::try_note_decryption(&orchard::note_encryption::IronwoodDomain::for_action(a), &ivk, a))
+            .filter_map(|a| {
+                zcash_note_encryption::try_note_decryption(
+                    &orchard::note_encryption::IronwoodDomain::for_action(a),
+                    &ivk,
+                    a,
+                )
+            })
             .map(|(n, _, _)| n.value().inner())
             .collect();
         assert_eq!(received, vec![40_000]);
@@ -1031,30 +1226,64 @@ mod tests {
     #[test]
     fn a_payouts_change_is_not_a_deposit() {
         let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> = Ceremony::new(2, 3)
-            .unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().collect();
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .collect();
         let env = Envelope::testnet_at(4_326_900);
         let version = env.bundle_version_for(ValuePool::Ironwood).unwrap();
         let (store, fvk, change_to) = funded_vault_v(100_000, &keys, version.note_version());
-        let them = FullViewingKey::from(&SpendingKey::from_bytes([42u8; 32]).unwrap()).address_at(0u32, Scope::External);
-        let mut payout = build(&store, &fvk, Some(fvk.to_ovk(Scope::External)), &[Payment::new(Destination::Shielded(them), 40_000)], change_to, version, rand::rngs::OsRng).unwrap();
+        let them = FullViewingKey::from(&SpendingKey::from_bytes([42u8; 32]).unwrap())
+            .address_at(0u32, Scope::External);
+        let mut payout = build(
+            &store,
+            &fvk,
+            Some(fvk.to_ovk(Scope::External)),
+            &[Payment::new(Destination::Shielded(them), 40_000)],
+            change_to,
+            version,
+            rand::rngs::OsRng,
+        )
+        .unwrap();
         let sighash = payout.sighash(&env).unwrap();
         payout.finalize_io(sighash, rand::rngs::OsRng).unwrap();
-        payout.prove(&proving_key(version), rand::rngs::OsRng).unwrap();
-        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> = keys.iter().map(|(i, k)| (*i, k)).collect();
+        payout
+            .prove(&proving_key(version), rand::rngs::OsRng)
+            .unwrap();
+        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> =
+            keys.iter().map(|(i, k)| (*i, k)).collect();
         sign_all(&mut payout, sighash, &refs, 2, rand::rngs::OsRng).unwrap();
         let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).unwrap();
 
         // Scan our own transaction as the vault would.
         let vault = crate::shielded::VaultKeys::from_full_viewing_key(fvk.clone());
-        let scanned = vault.scan_actions_lenient(&sealed.bytes, sealed.txid, 1).unwrap();
-        let change: Vec<u64> = scanned.actions.iter().filter_map(|a| a.ours.as_ref()).map(|n| n.value().inner()).collect();
-        assert_eq!(change, vec![100_000 - 40_000 - payout_fee(&sealed)], "the change note is ours and memo-less");
+        let scanned = vault
+            .scan_actions_lenient(&sealed.bytes, sealed.txid, 1)
+            .unwrap();
+        let change: Vec<u64> = scanned
+            .actions
+            .iter()
+            .filter_map(|a| a.ours.as_ref())
+            .map(|n| n.value().inner())
+            .collect();
+        assert_eq!(
+            change,
+            vec![100_000 - 40_000 - payout_fee(&sealed)],
+            "the change note is ours and memo-less"
+        );
         assert!(scanned.actions.iter().all(|a| a.account.is_none()));
-        let spends_ours = scanned.actions.iter().any(|a| store.holds_nullifier(&a.nullifier, &fvk));
+        let spends_ours = scanned
+            .actions
+            .iter()
+            .any(|a| store.holds_nullifier(&a.nullifier, &fvk));
         assert!(spends_ours, "the transaction spends the vault's note");
 
         // With the spend recognised: no deposit, no refusal.
-        assert_eq!(crate::shielded::classify(&scanned, true, None, sealed.txid, 1).unwrap(), vec![]);
+        assert_eq!(
+            crate::shielded::classify(&scanned, true, None, sealed.txid, 1).unwrap(),
+            vec![]
+        );
         // Without it, the same note would have stopped the scan — the bug.
         assert!(crate::shielded::classify(&scanned, false, None, sealed.txid, 1).is_err());
     }
@@ -1064,38 +1293,67 @@ mod tests {
     #[test]
     fn a_compact_block_is_enough_to_find_a_note() {
         let keys: Vec<(Identifier, crate::ceremony::VaultKeys)> = Ceremony::new(2, 3)
-            .unwrap().run(&mut rand::rngs::OsRng).unwrap().into_iter().collect();
+            .unwrap()
+            .run(&mut rand::rngs::OsRng)
+            .unwrap()
+            .into_iter()
+            .collect();
         let env = Envelope::testnet_at(4_326_900);
         let version = env.bundle_version_for(ValuePool::Ironwood).unwrap();
         let (store, fvk, change_to) = funded_vault_v(100_000, &keys, version.note_version());
         let their_fvk = FullViewingKey::from(&SpendingKey::from_bytes([42u8; 32]).unwrap());
         let them = their_fvk.address_at(0u32, Scope::External);
-        let mut payout = build(&store, &fvk, Some(fvk.to_ovk(Scope::External)), &[Payment::new(Destination::Shielded(them), 40_000)], change_to, version, rand::rngs::OsRng).unwrap();
+        let mut payout = build(
+            &store,
+            &fvk,
+            Some(fvk.to_ovk(Scope::External)),
+            &[Payment::new(Destination::Shielded(them), 40_000)],
+            change_to,
+            version,
+            rand::rngs::OsRng,
+        )
+        .unwrap();
         let sighash = payout.sighash(&env).unwrap();
         payout.finalize_io(sighash, rand::rngs::OsRng).unwrap();
-        payout.prove(&proving_key(version), rand::rngs::OsRng).unwrap();
-        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> = keys.iter().map(|(i, k)| (*i, k)).collect();
+        payout
+            .prove(&proving_key(version), rand::rngs::OsRng)
+            .unwrap();
+        let refs: Vec<(Identifier, &crate::ceremony::VaultKeys)> =
+            keys.iter().map(|(i, k)| (*i, k)).collect();
         sign_all(&mut payout, sighash, &refs, 2, rand::rngs::OsRng).unwrap();
         let sealed = payout.extract(sighash, &env, rand::rngs::OsRng).unwrap();
-        let tx = zcash_primitives::transaction::Transaction::read(&sealed.bytes[..], env.branch).unwrap();
+        let tx = zcash_primitives::transaction::Transaction::read(&sealed.bytes[..], env.branch)
+            .unwrap();
 
         let ctx = crate::compact::CompactTx::from_transaction(3, &tx);
-        let block = crate::compact::CompactBlock { height: 9, hash: [0u8; 32], txs: vec![ctx] };
+        let block = crate::compact::CompactBlock {
+            height: 9,
+            hash: [0u8; 32],
+            txs: vec![ctx],
+        };
         let back = crate::compact::CompactBlock::decode(&block.encode()).unwrap();
         assert_eq!(back, block, "the compact form round-trips");
 
-        let ivk = orchard::keys::PreparedIncomingViewingKey::new(&their_fvk.to_ivk(Scope::External));
+        let ivk =
+            orchard::keys::PreparedIncomingViewingKey::new(&their_fvk.to_ivk(Scope::External));
         let hits = crate::compact::scan(&back, &ivk);
         assert_eq!(hits.len(), 1);
-        assert_eq!((hits[0].pool, hits[0].value, hits[0].tx_index), (ValuePool::Ironwood, 40_000, 3));
+        assert_eq!(
+            (hits[0].pool, hits[0].value, hits[0].tx_index),
+            (ValuePool::Ironwood, 40_000, 3)
+        );
         // The vault's own key finds only the change: what it held, less the
         // payment and the fee this bundle paid.
-        let vault_ivk = orchard::keys::PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
+        let vault_ivk =
+            orchard::keys::PreparedIncomingViewingKey::new(&fvk.to_ivk(Scope::External));
         let mine = crate::compact::scan(&back, &vault_ivk);
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0].value, 100_000 - 40_000 - payout_fee(&sealed));
         // A stranger finds nothing.
-        let nobody = orchard::keys::PreparedIncomingViewingKey::new(&FullViewingKey::from(&SpendingKey::from_bytes([77u8; 32]).unwrap()).to_ivk(Scope::External));
+        let nobody = orchard::keys::PreparedIncomingViewingKey::new(
+            &FullViewingKey::from(&SpendingKey::from_bytes([77u8; 32]).unwrap())
+                .to_ivk(Scope::External),
+        );
         assert!(crate::compact::scan(&back, &nobody).is_empty());
     }
 
@@ -1110,10 +1368,21 @@ mod tests {
             transparent_address(good, Network::TestNetwork),
             Some(TransparentAddress::PublicKeyHash([7u8; 20]))
         );
-        assert_eq!(transparent_address(good, Network::MainNetwork), None, "a testnet prefix on mainnet");
+        assert_eq!(
+            transparent_address(good, Network::MainNetwork),
+            None,
+            "a testnet prefix on mainnet"
+        );
         let mut bad = good.to_string();
         bad.replace_range(5..6, if &good[5..6] == "1" { "2" } else { "1" });
-        assert_eq!(transparent_address(&bad, Network::TestNetwork), None, "a corrupted address passed");
-        assert_eq!(transparent_address("utest1notatransparentaddress", Network::TestNetwork), None);
+        assert_eq!(
+            transparent_address(&bad, Network::TestNetwork),
+            None,
+            "a corrupted address passed"
+        );
+        assert_eq!(
+            transparent_address("utest1notatransparentaddress", Network::TestNetwork),
+            None
+        );
     }
 }

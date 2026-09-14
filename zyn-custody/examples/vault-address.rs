@@ -41,7 +41,10 @@ fn main() {
         }
         Some(k) => {
             // Testnet unless asked otherwise, like everything else here.
-            let mainnet = matches!(std::env::var("ZYN_NETWORK").as_deref(), Ok("mainnet") | Ok("main"));
+            let mainnet = matches!(
+                std::env::var("ZYN_NETWORK").as_deref(),
+                Ok("mainnet") | Ok("main")
+            );
             let network = if mainnet {
                 zcash_protocol::consensus::NetworkType::Main
             } else {

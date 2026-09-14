@@ -38,16 +38,45 @@ struct Seq {
 impl Seq {
     fn new(name: &str) -> Seq {
         let dir = tmp(&format!("{}-seq", name));
-        let policy = EpochPolicy { intents_per_epoch: 4, epochs_per_anchor: 100, max_seconds_per_epoch: 0, max_seconds_per_anchor: 0 };
-        let b = boot::open_at(&dir, CHAIN, Params::testnet(), policy, Economics::flat(1), 0, true, &dir.join("da")).unwrap();
+        let policy = EpochPolicy {
+            intents_per_epoch: 4,
+            epochs_per_anchor: 100,
+            max_seconds_per_epoch: 0,
+            max_seconds_per_anchor: 0,
+        };
+        let b = boot::open_at(
+            &dir,
+            CHAIN,
+            Params::testnet(),
+            policy,
+            Economics::flat(1),
+            0,
+            true,
+            &dir.join("da"),
+        )
+        .unwrap();
         let shared = Arc::new(Mutex::new(b.node));
         {
             let mut n = shared.lock().unwrap();
             let observed = n.state().backing_of(XZEC).add(Fixed::whole(1_000)).unwrap();
-            n.submit_operator(Intent::AttestVaultBalance { asset: XZEC, observed }, 0);
+            n.submit_operator(
+                Intent::AttestVaultBalance {
+                    asset: XZEC,
+                    observed,
+                },
+                0,
+            );
         }
         let da = dir.join("da");
-        Seq { dir: dir.clone(), da, shared, store: b.store, journal: b.journal, next_height: 4_400_000, sightings: Vec::new() }
+        Seq {
+            dir: dir.clone(),
+            da,
+            shared,
+            store: b.store,
+            journal: b.journal,
+            next_height: 4_400_000,
+            sightings: Vec::new(),
+        }
     }
 
     fn trade(&self, n_intents: u32) {
@@ -70,12 +99,19 @@ impl Seq {
         boot::save(&self.store, &self.journal, &self.shared);
         let bundle = {
             let n = self.shared.lock().unwrap();
-            publish::bundle_for(&n, &self.dir, CHAIN, &a, &"ab".repeat(32), self.next_height).unwrap()
+            publish::bundle_for(&n, &self.dir, CHAIN, &a, &"ab".repeat(32), self.next_height)
+                .unwrap()
         };
         publish::write_local(&self.da, CHAIN, &bundle).unwrap();
         let mut txid = [0u8; 32];
         txid[0] = (self.sightings.len() + 1) as u8;
-        self.sightings.push(Sighting { height: self.next_height, txid, chain_id: CHAIN, epoch: a.checkpoint.epoch, id: a.id() });
+        self.sightings.push(Sighting {
+            height: self.next_height,
+            txid,
+            chain_id: CHAIN,
+            epoch: a.checkpoint.epoch,
+            id: a.id(),
+        });
         self.next_height += 20;
         a
     }
@@ -115,7 +151,9 @@ fn a_replica_reproduces_every_anchored_root_from_sightings_and_mirrors_alone() {
     assert_eq!(a3.previous_root, a2.checkpoint.state_root);
 
     let (mut r, _) = replica("reproduce");
-    let p = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let p = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!((p.verified, p.skipped), (3, 0));
     assert_eq!(r.verified_epoch, Some(a3.checkpoint.epoch));
     assert_eq!(r.ledger().head_root(), s.head_root());
@@ -126,13 +164,20 @@ fn a_replica_reproduces_every_anchored_root_from_sightings_and_mirrors_alone() {
     // finality intents that landed after the last anchor.
     let seq_state = s.shared.lock().unwrap().state().clone();
     assert_eq!(r.state().epoch(), seq_state.epoch());
-    assert_eq!(a1.checkpoint.epoch, 1, "first anchor covered epochs 0 and 1");
+    assert_eq!(
+        a1.checkpoint.epoch, 1,
+        "first anchor covered epochs 0 and 1"
+    );
     // Seeing the same anchors again changes nothing.
-    let p = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let p = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!((p.verified, p.skipped), (0, 3));
     // And the replica re-serves a complete, verifiable copy.
     let (mut second, _) = replica("reproduce-2");
-    second.apply_sightings(&s.sightings, &Local(r.da_dir())).unwrap();
+    second
+        .apply_sightings(&s.sightings, &Local(r.da_dir()))
+        .unwrap();
     assert_eq!(second.ledger().head_root(), s.head_root());
 }
 
@@ -142,7 +187,13 @@ fn a_flipped_byte_in_any_artefact_is_detected_and_the_replica_stops() {
     s.trade(8);
     let a = s.anchor();
     let rel = publish::rel_dir(CHAIN, a.checkpoint.epoch);
-    for file in ["anchor.bin", "certificate.bin", "published.bin", "intents/epoch-0.intents", "intents/epoch-1.intents"] {
+    for file in [
+        "anchor.bin",
+        "certificate.bin",
+        "published.bin",
+        "intents/epoch-0.intents",
+        "intents/epoch-1.intents",
+    ] {
         let bad_da = tmp(&format!("tamper-{}", file.replace('/', "-")));
         copy_dir(&s.da, &bad_da);
         let path = bad_da.join(&rel).join(file);
@@ -152,11 +203,18 @@ fn a_flipped_byte_in_any_artefact_is_detected_and_the_replica_stops() {
         std::fs::write(&path, &bytes).unwrap();
         let (mut r, _) = replica(&format!("tamper-{}", file.replace('/', "-")));
         let err = r.apply_sightings(&s.sightings, &Local(bad_da)).unwrap_err();
-        assert!(matches!(err, Halt::BadBundle { .. } | Halt::Diverged { .. }), "{}: {:?}", file, err);
+        assert!(
+            matches!(err, Halt::BadBundle { .. } | Halt::Diverged { .. }),
+            "{}: {:?}",
+            file,
+            err
+        );
         assert_eq!(r.verified_epoch, None, "{}: nothing may be believed", file);
         assert!(r.halted.is_some());
         // Halted stays halted: a later good sighting does not un-halt it.
-        assert!(r.apply_sightings(&s.sightings, &Local(s.da.clone())).is_err());
+        assert!(r
+            .apply_sightings(&s.sightings, &Local(s.da.clone()))
+            .is_err());
     }
 }
 
@@ -166,13 +224,27 @@ fn a_second_anchor_for_the_same_epoch_is_a_fork_and_the_replica_stops() {
     s.trade(8);
     let a = s.anchor();
     let (mut r, _) = replica("fork");
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     let mut rival = s.sightings[0];
     rival.id = [0xEE; 32];
     rival.height += 1;
-    let err = r.apply_sightings(&[rival], &Local(s.da.clone())).unwrap_err();
-    assert_eq!(err, Halt::Fork { epoch: a.checkpoint.epoch, seen: a.id(), other: [0xEE; 32] });
-    assert_eq!(r.verified_epoch, Some(a.checkpoint.epoch), "the verified root stands");
+    let err = r
+        .apply_sightings(&[rival], &Local(s.da.clone()))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        Halt::Fork {
+            epoch: a.checkpoint.epoch,
+            seen: a.id(),
+            other: [0xEE; 32]
+        }
+    );
+    assert_eq!(
+        r.verified_epoch,
+        Some(a.checkpoint.epoch),
+        "the verified root stands"
+    );
 }
 
 #[test]
@@ -181,14 +253,24 @@ fn a_holder_exit_proof_from_the_replica_verifies_against_the_anchored_root() {
     s.trade(8);
     let a = s.anchor();
     let (mut r, _) = replica("exit");
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     let snap = r.snapshot().unwrap();
     let holder = [3u8; 32];
-    let (record, _index, path) = snap.record_proof(&holder).expect("a depositor has a record");
-    assert!(verify_record::<SwapState>(&record, &path, a.checkpoint.state_root), "the exit proof must open the anchored root");
+    let (record, _index, path) = snap
+        .record_proof(&holder)
+        .expect("a depositor has a record");
+    assert!(
+        verify_record::<SwapState>(&record, &path, a.checkpoint.state_root),
+        "the exit proof must open the anchored root"
+    );
     let mut wrong = record.clone();
     wrong[0] ^= 1;
-    assert!(!verify_record::<SwapState>(&wrong, &path, a.checkpoint.state_root));
+    assert!(!verify_record::<SwapState>(
+        &wrong,
+        &path,
+        a.checkpoint.state_root
+    ));
 }
 
 #[test]
@@ -199,15 +281,21 @@ fn a_replica_resumes_from_disk_and_continues() {
     s.trade(4);
     let a2 = s.anchor();
     let (mut r, dir) = replica("resume");
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!(r.verified_epoch, Some(a2.checkpoint.epoch));
     drop(r);
     s.trade(4);
     let a3 = s.anchor();
     let mut back = Replica::open(&dir, CHAIN, Params::testnet()).unwrap();
     assert_eq!(back.verified_epoch, Some(a2.checkpoint.epoch));
-    assert_eq!(back.snapshot().map(|p| p.root), Some(a2.checkpoint.state_root));
-    let p = back.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    assert_eq!(
+        back.snapshot().map(|p| p.root),
+        Some(a2.checkpoint.state_root)
+    );
+    let p = back
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!((p.verified, p.skipped), (1, 2));
     assert_eq!(back.verified_epoch, Some(a3.checkpoint.epoch));
     assert_eq!(back.ledger().head_root(), s.head_root());
@@ -225,7 +313,10 @@ fn a_missing_mirror_is_reported_not_believed() {
             Err(format!("no such file {}", rel))
         }
     }
-    assert!(matches!(r.apply_sightings(&s.sightings, &Nothing).unwrap_err(), Halt::Fetch { .. }));
+    assert!(matches!(
+        r.apply_sightings(&s.sightings, &Nothing).unwrap_err(),
+        Halt::Fetch { .. }
+    ));
 }
 
 /// A chain older than its journal: the replica starts from an attested base
@@ -247,11 +338,32 @@ fn a_replica_starts_from_an_attested_base_when_the_journal_is_younger_than_the_c
         }
     }
     let _ = std::fs::remove_dir_all(&s.da);
-    drop(std::mem::replace(&mut s.journal, Arc::new(Mutex::new(zyn::journal::Journal::open(&s.dir, 99).unwrap()))));
-    let policy = EpochPolicy { intents_per_epoch: 4, epochs_per_anchor: 100, max_seconds_per_epoch: 0, max_seconds_per_anchor: 0 };
-    let b = boot::open_at(&s.dir, CHAIN, Params::testnet(), policy, Economics::flat(1), 0, true, &s.da).unwrap();
+    drop(std::mem::replace(
+        &mut s.journal,
+        Arc::new(Mutex::new(zyn::journal::Journal::open(&s.dir, 99).unwrap())),
+    ));
+    let policy = EpochPolicy {
+        intents_per_epoch: 4,
+        epochs_per_anchor: 100,
+        max_seconds_per_epoch: 0,
+        max_seconds_per_anchor: 0,
+    };
+    let b = boot::open_at(
+        &s.dir,
+        CHAIN,
+        Params::testnet(),
+        policy,
+        Economics::flat(1),
+        0,
+        true,
+        &s.da,
+    )
+    .unwrap();
     let base_root = b.base_root.expect("manual boot writes the base");
-    assert_eq!(base_root, before, "the base is the state at the moment journaling began");
+    assert_eq!(
+        base_root, before,
+        "the base is the state at the moment journaling began"
+    );
     s.shared = Arc::new(Mutex::new(b.node));
     s.store = b.store;
     s.journal = b.journal;
@@ -262,15 +374,32 @@ fn a_replica_starts_from_an_attested_base_when_the_journal_is_younger_than_the_c
     assert_eq!(a.epochs, 1, "only the journaled epoch is anchored");
 
     let dir = tmp("base-rep");
-    let err = Replica::open_from(&dir, CHAIN, Params::testnet(), Some((&base_bytes, [9u8; 32]))).map(|_| ()).unwrap_err();
+    let err = Replica::open_from(
+        &dir,
+        CHAIN,
+        Params::testnet(),
+        Some((&base_bytes, [9u8; 32])),
+    )
+    .map(|_| ())
+    .unwrap_err();
     assert!(err.contains("attested root"), "{}", err);
-    let mut r = Replica::open_from(&dir, CHAIN, Params::testnet(), Some((&base_bytes, base_root))).unwrap();
-    let p = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let mut r = Replica::open_from(
+        &dir,
+        CHAIN,
+        Params::testnet(),
+        Some((&base_bytes, base_root)),
+    )
+    .unwrap();
+    let p = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!(p.verified, 1);
     assert_eq!(r.ledger().head_root(), a.checkpoint.state_root);
     // From genesis it cannot: the journaled epochs do not start there.
     let (mut g, _) = replica("base-genesis");
-    assert!(g.apply_sightings(&s.sightings, &Local(s.da.clone())).is_err());
+    assert!(g
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .is_err());
 }
 
 // --- rung 1: forced inclusion ---
@@ -278,10 +407,23 @@ fn a_replica_starts_from_an_attested_base_when_the_journal_is_younger_than_the_c
 fn forced_frame_for(key_seed: u8, epoch: u64) -> (zyn_custody::shielded::ForcedSighting, [u8; 32]) {
     use ed25519_dalek::SigningKey;
     let k = SigningKey::from_bytes(&[key_seed; 32]);
-    let intent = Intent::Transfer { from: zynzapd::client::account(&k), to: [0xAB; 32], asset: XZEC, amount: Fixed::whole(1) };
+    let intent = Intent::Transfer {
+        from: zynzapd::client::account(&k),
+        to: [0xAB; 32],
+        asset: XZEC,
+        amount: Fixed::whole(1),
+    };
     let frame = zynzapd::client::frame_submission(&k, CHAIN, epoch, &intent);
     let hash = zynzapd::replica::intent_hash(&swapvm::wire::encode_intent_bytes(&intent));
-    (zyn_custody::shielded::ForcedSighting { txid: [key_seed; 32], height: 4_400_000, amount: Fixed::raw(1), frame }, hash)
+    (
+        zyn_custody::shielded::ForcedSighting {
+            txid: [key_seed; 32],
+            height: 4_400_000,
+            amount: Fixed::raw(1),
+            frame,
+        },
+        hash,
+    )
 }
 
 #[test]
@@ -302,18 +444,23 @@ fn a_forced_intent_the_sequencer_ignores_is_reported_as_censorship_after_the_gra
     s.trade(8);
     s.next_height = 4_400_000 + zynzapd::replica::FORCED_GRACE - 1;
     s.anchor();
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!(r.forced_pending().len(), 1);
     assert!(r.censored().is_empty());
     // An anchor at or past the grace without it: censorship, recorded.
     s.trade(4);
     s.next_height = 4_400_000 + zynzapd::replica::FORCED_GRACE;
     s.anchor();
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert!(r.forced_pending().is_empty());
     assert_eq!(r.censored().len(), 1);
     assert_eq!(r.censored()[0].txid, [7; 32]);
-    assert!(r.halted.is_none(), "censorship is an alarm, not a halt: the roots are still right");
+    assert!(
+        r.halted.is_none(),
+        "censorship is an alarm, not a halt: the roots are still right"
+    );
 }
 
 #[test]
@@ -327,17 +474,29 @@ fn a_forced_intent_the_sequencer_applies_is_satisfied() {
     {
         let mut n = s.shared.lock().unwrap();
         let (cred, auth, intent) = zynzapd::rpc::decode_frame(CHAIN, &sighting.frame).unwrap();
-        assert_eq!(zynzapd::replica::intent_hash(&swapvm::wire::encode_intent_bytes(&intent)), hash);
-        let authorized = zyn::verify::authorize_intent(std::slice::from_ref(&cred), &auth, intent, n.state()).unwrap();
+        assert_eq!(
+            zynzapd::replica::intent_hash(&swapvm::wire::encode_intent_bytes(&intent)),
+            hash
+        );
+        let authorized =
+            zyn::verify::authorize_intent(std::slice::from_ref(&cred), &auth, intent, n.state())
+                .unwrap();
         let step = n.submit(authorized, 0);
-        assert!(step.rejected(), "unfunded, so the VM rejects it — still included");
+        assert!(
+            step.rejected(),
+            "unfunded, so the VM rejects it — still included"
+        );
     }
     s.trade(4);
     s.next_height = 4_400_000 + zynzapd::replica::FORCED_GRACE + 5;
     s.anchor();
-    r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    r.apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert!(r.forced_pending().is_empty());
-    assert!(r.censored().is_empty(), "applied in time, even though rejected");
+    assert!(
+        r.censored().is_empty(),
+        "applied in time, even though rejected"
+    );
     // The record survives a restart.
     drop(r);
     let back = Replica::open(&dir, CHAIN, Params::testnet()).unwrap();
@@ -350,29 +509,53 @@ fn a_forced_intent_the_sequencer_applies_is_satisfied() {
 #[test]
 fn a_replica_requiring_endorsement_halts_on_an_unendorsed_root_and_believes_a_full_one() {
     use ed25519_dalek::{Signer, SigningKey};
-    let keys: Vec<SigningKey> = (1..=3u8).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
-    let set = zyn::anchor::SignerSet::new(keys.iter().map(|k| k.verifying_key().to_bytes()).collect(), 2).unwrap();
+    let keys: Vec<SigningKey> = (1..=3u8)
+        .map(|i| SigningKey::from_bytes(&[i; 32]))
+        .collect();
+    let set = zyn::anchor::SignerSet::new(
+        keys.iter().map(|k| k.verifying_key().to_bytes()).collect(),
+        2,
+    )
+    .unwrap();
 
     // A sequencer that anchors as trusted-operator (empty certificates).
     let mut s = Seq::new("unendorsed");
     s.trade(8);
     let a = s.anchor();
     let dir = tmp("unendorsed-rep");
-    let mut r = Replica::open(&dir, CHAIN, Params::testnet()).unwrap().requiring(set.clone());
-    let err = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap_err();
+    let mut r = Replica::open(&dir, CHAIN, Params::testnet())
+        .unwrap()
+        .requiring(set.clone());
+    let err = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap_err();
     assert!(matches!(err, Halt::Unendorsed { need: 2, .. }), "{:?}", err);
     assert_eq!(r.verified_epoch, None, "an unendorsed root is not believed");
 
     // Rewrite that anchor's certificate with two real endorsements, as the
     // signer path would have produced, and a fresh replica believes it.
     let mut cert = zyn::anchor::Certificate::new(a.id());
-    cert.add(keys[0].verifying_key().to_bytes(), keys[0].sign(&a.id()).to_bytes()).unwrap();
-    cert.add(keys[1].verifying_key().to_bytes(), keys[1].sign(&a.id()).to_bytes()).unwrap();
-    let cert_path = s.da.join(publish::rel_dir(CHAIN, a.checkpoint.epoch)).join("certificate.bin");
+    cert.add(
+        keys[0].verifying_key().to_bytes(),
+        keys[0].sign(&a.id()).to_bytes(),
+    )
+    .unwrap();
+    cert.add(
+        keys[1].verifying_key().to_bytes(),
+        keys[1].sign(&a.id()).to_bytes(),
+    )
+    .unwrap();
+    let cert_path =
+        s.da.join(publish::rel_dir(CHAIN, a.checkpoint.epoch))
+            .join("certificate.bin");
     std::fs::write(&cert_path, cert.encode()).unwrap();
     let dir2 = tmp("endorsed-rep");
-    let mut r2 = Replica::open(&dir2, CHAIN, Params::testnet()).unwrap().requiring(set);
-    let p = r2.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let mut r2 = Replica::open(&dir2, CHAIN, Params::testnet())
+        .unwrap()
+        .requiring(set);
+    let p = r2
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!(p.verified, 1, "an endorsed root is believed");
     assert_eq!(r2.verified_epoch, Some(a.checkpoint.epoch));
     // And it exposes the anchor for a signer to endorse.
@@ -394,7 +577,10 @@ struct FakeBacking {
 
 impl FakeBacking {
     fn accepting() -> FakeBacking {
-        FakeBacking { missing: Default::default(), asked: Mutex::new(Vec::new()) }
+        FakeBacking {
+            missing: Default::default(),
+            asked: Mutex::new(Vec::new()),
+        }
     }
 }
 
@@ -403,7 +589,10 @@ impl zynzapd::backing::Backing for FakeBacking {
         self.asked.lock().unwrap().extend_from_slice(credits);
         for c in credits {
             if self.missing.contains(&c.external_ref) {
-                return Err(format!("credited against {:02x?}, which our node does not have", &c.external_ref[..4]));
+                return Err(format!(
+                    "credited against {:02x?}, which our node does not have",
+                    &c.external_ref[..4]
+                ));
             }
         }
         Ok(())
@@ -430,7 +619,9 @@ fn a_backed_replica_sees_every_credit_and_still_reproduces_the_root() {
     let mut r = Replica::open(&dir, CHAIN, Params::testnet())
         .unwrap()
         .backed_by(Box::new(Shared(std::sync::Arc::clone(&backing))));
-    let p = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let p = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
 
     assert_eq!((p.verified, p.skipped), (1, 0));
     assert_eq!(r.verified_epoch, Some(a1.checkpoint.epoch));
@@ -442,7 +633,9 @@ fn a_backed_replica_sees_every_credit_and_still_reproduces_the_root() {
     // unsealed epoch and is nobody's to check yet.
     let asked = backing.asked.lock().unwrap();
     assert_eq!(asked.len(), 7, "every credit the anchor covers was checked");
-    assert!(asked.iter().all(|c| c.asset == XZEC && c.amount == Fixed::whole(1)));
+    assert!(asked
+        .iter()
+        .all(|c| c.asset == XZEC && c.amount == Fixed::whole(1)));
     // Indices are the vault's, and distinct.
     let mut idx: Vec<u64> = asked.iter().map(|c| c.index).collect();
     idx.sort_unstable();
@@ -463,16 +656,30 @@ fn a_credit_the_chain_does_not_show_is_refused_and_the_replica_will_not_endorse(
     // refusing that one refuses the epoch.
     let mut missing = std::collections::BTreeSet::new();
     missing.insert([0u8; 32]);
-    let backing = FakeBacking { missing, asked: Mutex::new(Vec::new()) };
+    let backing = FakeBacking {
+        missing,
+        asked: Mutex::new(Vec::new()),
+    };
 
     let dir = tmp("unbacked-rep");
-    let mut r = Replica::open(&dir, CHAIN, Params::testnet()).unwrap().backed_by(Box::new(backing));
-    let err = r.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap_err();
+    let mut r = Replica::open(&dir, CHAIN, Params::testnet())
+        .unwrap()
+        .backed_by(Box::new(backing));
+    let err = r
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap_err();
 
     assert!(matches!(err, Halt::Unbacked { .. }), "{:?}", err);
-    assert!(matches!(r.halted, Some(Halt::Unbacked { .. })), "halted: {:?}", r.halted);
+    assert!(
+        matches!(r.halted, Some(Halt::Unbacked { .. })),
+        "halted: {:?}",
+        r.halted
+    );
     assert_eq!(r.verified_epoch, None, "it did not advance past the epoch");
-    assert!(r.take_newly_verified().is_empty(), "a signer has nothing to endorse");
+    assert!(
+        r.take_newly_verified().is_empty(),
+        "a signer has nothing to endorse"
+    );
     let msg = r.halted.as_ref().unwrap().to_string();
     assert!(msg.contains("UNBACKED"), "{}", msg);
 
@@ -480,7 +687,91 @@ fn a_credit_the_chain_does_not_show_is_refused_and_the_replica_will_not_endorse(
     // the root reproduces perfectly. Reproducing a root is not the same
     // question as whether the money exists.
     let (mut blind, _) = replica("unbacked-blind");
-    let p = blind.apply_sightings(&s.sightings, &Local(s.da.clone())).unwrap();
+    let p = blind
+        .apply_sightings(&s.sightings, &Local(s.da.clone()))
+        .unwrap();
     assert_eq!(p.verified, 1);
     assert_eq!(blind.verified_epoch, Some(a1.checkpoint.epoch));
+}
+
+/// Epoch N was reorged off Zcash and re-sent, so its transaction sits far
+/// ahead of the epochs that were built on it. A replica scanning forward in
+/// windows therefore meets N+1 while N's block is still ahead of its cursor.
+/// While there is chain left to read that is an *incomplete view*, not a
+/// broken chain — and holding it is what keeps an honest signer in the set
+/// instead of latching a halt that drops the set below threshold (§62).
+#[test]
+fn a_lineage_break_is_held_while_the_scan_is_behind_and_clears_when_the_repair_arrives() {
+    let mut s = Seq::new("deferred-repair");
+    s.trade(8);
+    let _a1 = s.anchor();
+    s.trade(4);
+    let _a2 = s.anchor();
+    s.trade(4);
+    let a3 = s.anchor();
+
+    let first = s.sightings[0];
+    let repaired = s.sightings[1]; // its block is still ahead of the cursor
+    let later = s.sightings[2];
+
+    let (mut r, _) = replica("deferred-repair");
+    let da = Local(s.da.clone());
+
+    // A window carrying the first and third anchors, but not the repair.
+    let p = r
+        .apply_sightings_scanned(&[first, later], &da, false)
+        .unwrap();
+    assert_eq!(
+        p.verified, 1,
+        "only the anchor that continues the lineage applies"
+    );
+    assert_eq!(
+        p.deferred, 1,
+        "the rest is held for a later pass, not rejected"
+    );
+    assert!(
+        r.halted.is_none(),
+        "an incomplete view must never latch a halt"
+    );
+
+    // A later window reaches the block holding the repair.
+    let p = r.apply_sightings_scanned(&[repaired], &da, true).unwrap();
+    assert_eq!(
+        p.verified, 2,
+        "the repair, and the anchor that was waiting on it"
+    );
+    assert!(r.halted.is_none());
+    assert_eq!(r.verified_epoch, Some(a3.checkpoint.epoch));
+    assert_eq!(
+        r.ledger().head_root(),
+        s.head_root(),
+        "the same root, reached the long way round"
+    );
+}
+
+/// The same break, once the whole safe range has been read, is a real break:
+/// deferring changes when the decision is made, never what is accepted.
+#[test]
+fn a_lineage_break_that_survives_a_complete_scan_still_halts() {
+    let mut s = Seq::new("complete-break");
+    s.trade(8);
+    let _a1 = s.anchor();
+    s.trade(4);
+    let _a2 = s.anchor();
+    s.trade(4);
+    let _a3 = s.anchor();
+
+    let (mut r, _) = replica("complete-break");
+    let da = Local(s.da.clone());
+    let (first, later) = (s.sightings[0], s.sightings[2]);
+
+    let e = r
+        .apply_sightings_scanned(&[first, later], &da, true)
+        .unwrap_err();
+    assert!(
+        matches!(e, Halt::Lineage { .. }),
+        "expected a lineage halt, got {:?}",
+        e
+    );
+    assert!(r.halted.is_some(), "a break on a complete view is final");
 }

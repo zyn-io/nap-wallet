@@ -24,12 +24,15 @@ use zyn_vm::Fixed;
 
 use crate::vault::ChainOrigin;
 
+/// The embedding VM's opaque deterministic asset identity.
+pub type AssetId = [u8; 32];
+
 /// One account's exit, as it will be paid out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Payout {
     pub account: AccountId,
     /// The application's own asset id. Opaque here.
-    pub asset: u32,
+    pub asset: AssetId,
     pub amount: Fixed,
     /// Epoch the exit was requested in. Carried so a settlement can be paid
     /// oldest-first.
@@ -52,7 +55,7 @@ pub struct Settlement {
     /// two nodes must agree byte-for-byte on what they are signing.
     pub payouts: Vec<Payout>,
     /// Total per asset, in asset order — what the vault must be able to cover.
-    pub totals: Vec<(u32, Fixed)>,
+    pub totals: Vec<(AssetId, Fixed)>,
 }
 
 impl Settlement {
@@ -64,8 +67,12 @@ impl Settlement {
     }
 
     /// Total owed in one asset.
-    pub fn total_of(&self, asset: u32) -> Fixed {
-        self.totals.iter().find(|(a, _)| *a == asset).map(|(_, v)| *v).unwrap_or(Fixed::ZERO)
+    pub fn total_of(&self, asset: AssetId) -> Fixed {
+        self.totals
+            .iter()
+            .find(|(a, _)| *a == asset)
+            .map(|(_, v)| *v)
+            .unwrap_or(Fixed::ZERO)
     }
 
     /// Whether `confirmed` covers everything this settlement promises.
@@ -75,8 +82,10 @@ impl Settlement {
     /// are still counted in backing, so this should always hold — which is
     /// exactly why checking it is worth doing: it fails only if something else
     /// already went wrong.
-    pub fn is_covered(&self, confirmed: impl Fn(u32) -> Fixed) -> bool {
-        self.totals.iter().all(|(asset, owed)| confirmed(*asset) >= *owed)
+    pub fn is_covered(&self, confirmed: impl Fn(AssetId) -> Fixed) -> bool {
+        self.totals
+            .iter()
+            .all(|(asset, owed)| confirmed(*asset) >= *owed)
     }
 }
 
@@ -87,7 +96,7 @@ impl Settlement {
 /// settlement from the same state produce identical bytes for the signers to
 /// agree on.
 pub fn group(
-    exits: impl IntoIterator<Item = (AccountId, u32, ChainOrigin, Fixed, u64)>,
+    exits: impl IntoIterator<Item = (AccountId, AssetId, ChainOrigin, Fixed, u64)>,
 ) -> Vec<Settlement> {
     let mut out: Vec<Settlement> = Vec::new();
     for (account, asset, origin, amount, since) in exits {
@@ -97,11 +106,20 @@ pub fn group(
         let idx = match out.iter().position(|s| s.origin == origin) {
             Some(i) => i,
             None => {
-                out.push(Settlement { origin, payouts: Vec::new(), totals: Vec::new() });
+                out.push(Settlement {
+                    origin,
+                    payouts: Vec::new(),
+                    totals: Vec::new(),
+                });
                 out.len() - 1
             }
         };
-        out[idx].payouts.push(Payout { account, asset, amount, since });
+        out[idx].payouts.push(Payout {
+            account,
+            asset,
+            amount,
+            since,
+        });
         match out[idx].totals.iter_mut().find(|(a, _)| *a == asset) {
             Some((_, t)) => *t = t.add(amount).unwrap_or(*t),
             None => out[idx].totals.push((asset, amount)),
@@ -136,39 +154,67 @@ mod tests {
         [n; 32]
     }
 
+    fn asset(n: u32) -> AssetId {
+        let mut out = [0u8; 32];
+        out[28..].copy_from_slice(&n.to_be_bytes());
+        out
+    }
+
     #[test]
     fn exits_to_one_chain_become_one_settlement() {
         let mut exits = vec![];
         for n in 1..=20u8 {
-            exits.push((acct(n), 1, ORIGIN_ZCASH, Fixed::whole(n as i64), n as u64));
-            exits.push((acct(n), 5, ORIGIN_SOLANA, Fixed::whole(n as i64), n as u64));
+            exits.push((
+                acct(n),
+                asset(1),
+                ORIGIN_ZCASH,
+                Fixed::whole(n as i64),
+                n as u64,
+            ));
+            exits.push((
+                acct(n),
+                asset(5),
+                ORIGIN_SOLANA,
+                Fixed::whole(n as i64),
+                n as u64,
+            ));
         }
         let all = group(exits);
         assert_eq!(all.len(), 2, "one settlement per chain with exits waiting");
         let sol = all.iter().find(|s| s.origin == ORIGIN_SOLANA).unwrap();
         assert_eq!(sol.len(), 20, "twenty users leaving in one transaction");
-        assert_eq!(sol.total_of(5), Fixed::whole(210)); // 1 + 2 + ... + 20
+        assert_eq!(sol.total_of(asset(5)), Fixed::whole(210)); // 1 + 2 + ... + 20
         assert_eq!(exits_per_transaction(&all), 20);
         assert!(sol.is_covered(|_| Fixed::whole(210)));
-        assert!(!sol.is_covered(|_| Fixed::whole(209)), "an uncovered settlement passed");
+        assert!(
+            !sol.is_covered(|_| Fixed::whole(209)),
+            "an uncovered settlement passed"
+        );
     }
 
     #[test]
     fn grouping_is_canonical_whatever_order_it_is_given() {
         let a = vec![
-            (acct(3), 1, ORIGIN_ZCASH, Fixed::whole(1), 7),
-            (acct(1), 5, ORIGIN_SOLANA, Fixed::whole(2), 7),
-            (acct(2), 1, ORIGIN_ZCASH, Fixed::whole(3), 7),
+            (acct(3), asset(1), ORIGIN_ZCASH, Fixed::whole(1), 7),
+            (acct(1), asset(5), ORIGIN_SOLANA, Fixed::whole(2), 7),
+            (acct(2), asset(1), ORIGIN_ZCASH, Fixed::whole(3), 7),
         ];
         let mut b = a.clone();
         b.reverse();
-        assert_eq!(group(a), group(b), "the order it was collected in leaked through");
+        assert_eq!(
+            group(a),
+            group(b),
+            "the order it was collected in leaked through"
+        );
 
         let g = group(vec![
-            (acct(9), 1, ORIGIN_BITCOIN, Fixed::whole(1), 0),
-            (acct(1), 1, ORIGIN_ZCASH, Fixed::whole(1), 0),
+            (acct(9), asset(1), ORIGIN_BITCOIN, Fixed::whole(1), 0),
+            (acct(1), asset(1), ORIGIN_ZCASH, Fixed::whole(1), 0),
         ]);
-        assert!(g[0].origin < g[1].origin, "settlements are not in chain order");
+        assert!(
+            g[0].origin < g[1].origin,
+            "settlements are not in chain order"
+        );
     }
 
     /// Oldest first. If a settlement is ever truncated, the person who has
@@ -176,9 +222,9 @@ mod tests {
     #[test]
     fn a_settlement_pays_the_longest_wait_first() {
         let g = group(vec![
-            (acct(1), 1, ORIGIN_ZCASH, Fixed::whole(1), 90),
-            (acct(9), 1, ORIGIN_ZCASH, Fixed::whole(1), 10),
-            (acct(5), 1, ORIGIN_ZCASH, Fixed::whole(1), 50),
+            (acct(1), asset(1), ORIGIN_ZCASH, Fixed::whole(1), 90),
+            (acct(9), asset(1), ORIGIN_ZCASH, Fixed::whole(1), 10),
+            (acct(5), asset(1), ORIGIN_ZCASH, Fixed::whole(1), 50),
         ]);
         let order: Vec<u64> = g[0].payouts.iter().map(|p| p.since).collect();
         assert_eq!(order, vec![10, 50, 90], "settlement was not oldest-first");
@@ -191,6 +237,6 @@ mod tests {
         assert!(group(vec![]).is_empty());
         assert_eq!(exits_per_transaction(&[]), 0);
         // A zero exit is not a payout.
-        assert!(group(vec![(acct(1), 1, ORIGIN_ZCASH, Fixed::ZERO, 0)]).is_empty());
+        assert!(group(vec![(acct(1), asset(1), ORIGIN_ZCASH, Fixed::ZERO, 0)]).is_empty());
     }
 }

@@ -26,8 +26,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::commit::{merkle_root, verify_proof};
 use crate::commit::Hash;
+use crate::commit::{merkle_root, verify_proof};
 use crate::spec::{MicrochainVm, Provable, MIN_SECTIONS, SECTION_ACCOUNTS};
 
 /// A rule a VM failed, with enough context to find it.
@@ -39,7 +39,10 @@ pub struct Violation {
 }
 
 fn fail(rule: &'static str, detail: impl Into<String>) -> Violation {
-    Violation { rule, detail: detail.into() }
+    Violation {
+        rule,
+        detail: detail.into(),
+    }
 }
 
 /// What a VM author supplies so the suite can drive their machine.
@@ -127,7 +130,9 @@ fn check_no_panics<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
     for len in [0usize, 1, 7, 33, 129, 1024] {
         let junk: Vec<u8> = (0..len)
             .map(|_| {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (seed >> 33) as u8
             })
             .collect();
@@ -146,12 +151,18 @@ fn check_no_panics<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
             V::decode_intent(&mut d)
         }));
         if decoded_intent.is_err() {
-            v.push(fail("S10", format!("decode_intent panicked on {} ({} bytes)", kind, bytes.len())));
+            v.push(fail(
+                "S10",
+                format!("decode_intent panicked on {} ({} bytes)", kind, bytes.len()),
+            ));
             return;
         }
         let decoded_state = catch_unwind(AssertUnwindSafe(|| V::decode(&bytes)));
         if decoded_state.is_err() {
-            v.push(fail("S10", format!("decode panicked on {} ({} bytes)", kind, bytes.len())));
+            v.push(fail(
+                "S10",
+                format!("decode panicked on {} ({} bytes)", kind, bytes.len()),
+            ));
             return;
         }
     }
@@ -198,16 +209,27 @@ fn check_determinism<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
 /// step, not merely at the end.
 fn check_conservation<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
     if let Err(why) = f.state.conserved() {
-        v.push(fail("S11", format!("the fixture's own state does not balance: {}", why)));
+        v.push(fail(
+            "S11",
+            format!("the fixture's own state does not balance: {}", why),
+        ));
         return;
     }
     let mut s = f.state.clone();
     let mut seq = s.seq();
-    for (n, i) in f.sequence.iter().chain(core::iter::once(&f.accepted)).enumerate() {
+    for (n, i) in f
+        .sequence
+        .iter()
+        .chain(core::iter::once(&f.accepted))
+        .enumerate()
+    {
         seq += 1;
         s.apply(seq, i);
         if let Err(why) = s.conserved() {
-            v.push(fail("S11", format!("intent {} left the books unbalanced: {}", n, why)));
+            v.push(fail(
+                "S11",
+                format!("intent {} left the books unbalanced: {}", n, why),
+            ));
             return;
         }
     }
@@ -232,23 +254,38 @@ fn check_sections<V: MicrochainVm>(s: &V, v: &mut Vec<Violation>) {
     if sections.len() < MIN_SECTIONS {
         v.push(fail(
             "S6",
-            format!("{} sections; a header and an accounts section are required", sections.len()),
+            format!(
+                "{} sections; a header and an accounts section are required",
+                sections.len()
+            ),
         ));
         return;
     }
     if s.state_root() != merkle_root(&sections) {
-        v.push(fail("S6", "state_root is not the Merkle root of sections()"));
+        v.push(fail(
+            "S6",
+            "state_root is not the Merkle root of sections()",
+        ));
     }
     if sections[SECTION_ACCOUNTS] != merkle_root(&s.account_leaves()) {
-        v.push(fail("S6", "section 1 is not the root over account_leaves()"));
+        v.push(fail(
+            "S6",
+            "section 1 is not the root over account_leaves()",
+        ));
     }
     if s.account_ids().len() != s.account_leaves().len() {
-        v.push(fail("S6", "account_ids() and account_leaves() differ in length"));
+        v.push(fail(
+            "S6",
+            "account_ids() and account_leaves() differ in length",
+        ));
     }
     // Ids must be strictly ordered, or the tree is not reproducible from them.
     let ids = s.account_ids();
     if ids.windows(2).any(|w| w[0] >= w[1]) {
-        v.push(fail("S6", "account_ids() is not in strictly ascending order"));
+        v.push(fail(
+            "S6",
+            "account_ids() is not in strictly ascending order",
+        ));
     }
 }
 
@@ -256,17 +293,26 @@ fn check_exit_proofs<V: MicrochainVm>(s: &V, v: &mut Vec<Violation>) {
     let root = s.state_root();
     let ids = s.account_ids();
     if ids.is_empty() {
-        v.push(fail("S6", "fixture has no accounts, so the exit hatch is untested"));
+        v.push(fail(
+            "S6",
+            "fixture has no accounts, so the exit hatch is untested",
+        ));
         return;
     }
     for id in &ids {
         match (s.account_leaf(id), s.account_proof(id)) {
             (Some(leaf), Some(path)) => {
                 if !verify_proof(leaf, &path, root) {
-                    v.push(fail("S6", format!("exit proof for {:?} did not verify", &id[..4])));
+                    v.push(fail(
+                        "S6",
+                        format!("exit proof for {:?} did not verify", &id[..4]),
+                    ));
                 }
             }
-            _ => v.push(fail("S6", format!("no exit proof for committed account {:?}", &id[..4]))),
+            _ => v.push(fail(
+                "S6",
+                format!("no exit proof for committed account {:?}", &id[..4]),
+            )),
         }
     }
     // A published record must rebuild the committed leaf, or a holder cannot
@@ -277,11 +323,17 @@ fn check_exit_proofs<V: MicrochainVm>(s: &V, v: &mut Vec<Violation>) {
                 if V::leaf_of_record(&rec) != s.account_leaf(id).unwrap_or_default() {
                     v.push(fail(
                         "S6",
-                        format!("account_record for {:?} does not hash to its leaf", &id[..4]),
+                        format!(
+                            "account_record for {:?} does not hash to its leaf",
+                            &id[..4]
+                        ),
                     ));
                 }
             }
-            None => v.push(fail("S6", format!("no record for committed account {:?}", &id[..4]))),
+            None => v.push(fail(
+                "S6",
+                format!("no record for committed account {:?}", &id[..4]),
+            )),
         }
     }
 
@@ -290,7 +342,10 @@ fn check_exit_proofs<V: MicrochainVm>(s: &V, v: &mut Vec<Violation>) {
     let mut absent = [0xFFu8; 32];
     absent[0] = 0xAB;
     if !ids.contains(&absent) && s.account_proof(&absent).is_some() {
-        v.push(fail("S6", "an account the chain never saw was given a proof"));
+        v.push(fail(
+            "S6",
+            "an account the chain never saw was given a proof",
+        ));
     }
 }
 
@@ -306,13 +361,26 @@ fn check_sequencing<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
         let before = s.state_root();
         let receipts = s.apply(bad, &f.accepted);
         if !receipts.iter().any(V::rejected) {
-            v.push(fail("S2", format!("an intent at seq {} (expected {}) was accepted", bad, at + 1)));
+            v.push(fail(
+                "S2",
+                format!(
+                    "an intent at seq {} (expected {}) was accepted",
+                    bad,
+                    at + 1
+                ),
+            ));
         }
         if s.state_root() != before {
-            v.push(fail("S2", format!("an out-of-order intent at seq {} moved state", bad)));
+            v.push(fail(
+                "S2",
+                format!("an out-of-order intent at seq {} moved state", bad),
+            ));
         }
         if s.seq() != at {
-            v.push(fail("S2", "an out-of-order intent consumed a sequence number"));
+            v.push(fail(
+                "S2",
+                "an out-of-order intent consumed a sequence number",
+            ));
         }
     }
 
@@ -337,7 +405,10 @@ fn check_rejection<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
         return;
     }
     if s.seq() != at + 1 {
-        v.push(fail("S3", "a rejected intent did not consume its sequence number"));
+        v.push(fail(
+            "S3",
+            "a rejected intent did not consume its sequence number",
+        ));
     }
     if s.account_leaves() != accounts_before {
         v.push(fail("S3", "a rejected intent moved application state"));
@@ -345,7 +416,10 @@ fn check_rejection<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
     if s.state_root() == root_before {
         // The header carries the sequence and the intent commitment, so a
         // rejection that leaves the root untouched has not recorded itself.
-        v.push(fail("S3", "a rejected intent left no trace in the state root"));
+        v.push(fail(
+            "S3",
+            "a rejected intent left no trace in the state root",
+        ));
     }
 }
 
@@ -385,10 +459,16 @@ fn check_sealing<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
         v.push(fail("S7", "the checkpoint names a different chain"));
     }
     if cp.epoch != epoch {
-        v.push(fail("S7", "the checkpoint does not name the epoch it sealed"));
+        v.push(fail(
+            "S7",
+            "the checkpoint does not name the epoch it sealed",
+        ));
     }
     if cp.seq != at + 1 {
-        v.push(fail("S7", "the checkpoint does not cover its own sealing intent"));
+        v.push(fail(
+            "S7",
+            "the checkpoint does not cover its own sealing intent",
+        ));
     }
     if s.epoch() != epoch + 1 {
         v.push(fail("S7", "sealing did not open the next epoch"));
@@ -408,13 +488,19 @@ fn check_sealing<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
                 match (view.account_leaf(&id), view.account_proof(&id)) {
                     (Some(leaf), Some(path)) if verify_proof(leaf, &path, cp.state_root) => {}
                     _ => {
-                        v.push(fail("S7", "a holder could not prove against the sealed root"));
+                        v.push(fail(
+                            "S7",
+                            "a holder could not prove against the sealed root",
+                        ));
                         break;
                     }
                 }
             }
         }
-        None => v.push(fail("S7", "as_sealed() could not recover the view it just sealed")),
+        None => v.push(fail(
+            "S7",
+            "as_sealed() could not recover the view it just sealed",
+        )),
     }
 
     // And once the accounts have moved, it must say so rather than hand back a
@@ -423,7 +509,10 @@ fn check_sealing<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
     later.apply(later.seq() + 1, &f.accepted);
     if let Some(view) = later.as_sealed(&cp) {
         if view.state_root() != cp.state_root {
-            v.push(fail("S7", "as_sealed() returned a view that does not match the checkpoint"));
+            v.push(fail(
+                "S7",
+                "as_sealed() returned a view that does not match the checkpoint",
+            ));
         }
     }
 }
@@ -440,13 +529,19 @@ fn check_carriable<V: MicrochainVm>(f: &Fixture<V>, v: &mut Vec<Violation>) {
         }
     };
     if back.state_root() != f.state.state_root() {
-        v.push(fail("S8", "a decoded state does not commit to the same root"));
+        v.push(fail(
+            "S8",
+            "a decoded state does not commit to the same root",
+        ));
     }
     if back.encode() != bytes {
         v.push(fail("S8", "re-encoding a decoded state changed the bytes"));
     }
     if back.seq() != f.state.seq() || back.epoch() != f.state.epoch() {
-        v.push(fail("S8", "a decoded state lost its position in the history"));
+        v.push(fail(
+            "S8",
+            "a decoded state lost its position in the history",
+        ));
     }
 
     // A restarted node must be indistinguishable from one that never stopped.
@@ -540,7 +635,14 @@ mod catches_violations {
         const VM_VERSION: u16 = 1;
 
         fn genesis(chain_id: u32, how: Break) -> Self {
-            Vm { chain_id, epoch: 0, seq: 0, total: 0, claimed: 0, how }
+            Vm {
+                chain_id,
+                epoch: 0,
+                seq: 0,
+                total: 0,
+                claimed: 0,
+                how,
+            }
         }
         fn chain_id(&self) -> u32 {
             self.chain_id
@@ -562,7 +664,11 @@ mod catches_violations {
             self.total += n;
             // The books are `total == claimed`. Breaking conservation means
             // moving one without the other.
-            self.claimed += if self.how == Break::Conservation { n + 1 } else { *n };
+            self.claimed += if self.how == Break::Conservation {
+                n + 1
+            } else {
+                *n
+            };
             vec![true]
         }
         fn sections(&self) -> Vec<H> {
@@ -594,7 +700,10 @@ mod catches_violations {
         }
         fn encode(&self) -> Vec<u8> {
             let mut e = crate::commit::Encoder::new();
-            e.u32(self.chain_id).u64(self.epoch).u64(self.seq).i128(self.total as i128);
+            e.u32(self.chain_id)
+                .u64(self.epoch)
+                .u64(self.seq)
+                .i128(self.total as i128);
             if self.how == Break::Determinism {
                 // The classic: something outside the state reaching the bytes.
                 e.u64(crate::commit::hash_leaf(&self.seq.to_be_bytes())[0] as u64);
@@ -613,7 +722,14 @@ mod catches_violations {
             }
             let how = Break::Nothing;
             let chain_id = u32::from_be_bytes(b[0..4].try_into().ok()?);
-            Some(Vm { chain_id, epoch: 0, seq: 0, total: 0, claimed: 0, how })
+            Some(Vm {
+                chain_id,
+                epoch: 0,
+                seq: 0,
+                total: 0,
+                claimed: 0,
+                how,
+            })
         }
         fn account_ids(&self) -> Vec<crate::spec::AccountId> {
             Vec::new()
@@ -646,7 +762,12 @@ mod catches_violations {
     fn fixture(how: Break) -> Fixture<Vm> {
         let mut s = Vm::genesis(1, how);
         s.apply(1, &10);
-        Fixture { state: s, accepted: 5, rejected: -1, sequence: vec![3, 4] }
+        Fixture {
+            state: s,
+            accepted: 5,
+            rejected: -1,
+            sequence: vec![3, 4],
+        }
     }
 
     fn rules(v: &[Violation]) -> Vec<&'static str> {
@@ -664,21 +785,40 @@ mod catches_violations {
     #[test]
     fn the_baseline_triggers_neither_targeted_rule() {
         let r = rules(&check(fixture(Break::Nothing)));
-        assert!(!r.contains(&"S1"), "the baseline is already non-deterministic: {:?}", r);
-        assert!(!r.contains(&"S11"), "the baseline already fails to balance: {:?}", r);
+        assert!(
+            !r.contains(&"S1"),
+            "the baseline is already non-deterministic: {:?}",
+            r
+        );
+        assert!(
+            !r.contains(&"S11"),
+            "the baseline already fails to balance: {:?}",
+            r
+        );
         // And it does find other things, which is the point of having it.
-        assert!(!r.is_empty(), "the suite found nothing at all in a minimal VM");
+        assert!(
+            !r.is_empty(),
+            "the suite found nothing at all in a minimal VM"
+        );
     }
 
     #[test]
     fn a_nondeterministic_encoding_is_caught_as_s1() {
         let v = check(fixture(Break::Determinism));
-        assert!(rules(&v).contains(&"S1"), "S1 was not reported: {:?}", rules(&v));
+        assert!(
+            rules(&v).contains(&"S1"),
+            "S1 was not reported: {:?}",
+            rules(&v)
+        );
     }
 
     #[test]
     fn creating_value_from_nowhere_is_caught_as_s11() {
         let v = check(fixture(Break::Conservation));
-        assert!(rules(&v).contains(&"S11"), "S11 was not reported: {:?}", rules(&v));
+        assert!(
+            rules(&v).contains(&"S11"),
+            "S11 was not reported: {:?}",
+            rules(&v)
+        );
     }
 }

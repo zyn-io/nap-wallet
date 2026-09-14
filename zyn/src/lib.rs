@@ -73,16 +73,16 @@ pub mod anchor;
 pub mod da;
 pub mod epoch;
 pub mod host;
-pub mod node;
 #[cfg(feature = "std")]
 pub mod journal;
+pub mod node;
 #[cfg(feature = "std")]
 pub mod replay;
 #[cfg(feature = "std")]
 pub mod store;
 pub mod verify;
 
-pub use anchor::{Anchor, AnchorId, Certificate, LineageError, Ledger, SignerSet};
+pub use anchor::{Anchor, AnchorId, Certificate, Ledger, LineageError, SignerSet};
 pub use da::{proof_from, verify_record, Snapshot, SnapshotError};
 pub use epoch::{Compression, Economics, EpochPolicy, Report, Unit};
 pub use node::{Node, Sealed, Step};

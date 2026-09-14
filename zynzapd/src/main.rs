@@ -92,8 +92,11 @@ fn address_network(n: zyn_custody::zebra::Network) -> zcash_protocol::consensus:
     zcash_network(n).network_type()
 }
 
-fn load_attributions(path: &std::path::Path) -> Result<std::collections::BTreeMap<[u8; 32], [u8; 32]>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+fn load_attributions(
+    path: &std::path::Path,
+) -> Result<std::collections::BTreeMap<[u8; 32], [u8; 32]>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
     let mut out = std::collections::BTreeMap::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -102,18 +105,35 @@ fn load_attributions(path: &std::path::Path) -> Result<std::collections::BTreeMa
         }
         let f: Vec<&str> = line.split_whitespace().collect();
         if f.len() != 2 {
-            return Err(format!("{} line {}: expected `<txid> <account-hex>`", path.display(), n + 1));
+            return Err(format!(
+                "{} line {}: expected `<txid> <account-hex>`",
+                path.display(),
+                n + 1
+            ));
         }
         let mut txid: [u8; 32] = parse_hex(f[0], 32, "txid")?.try_into().expect("32 bytes");
         txid.reverse();
-        let account: [u8; 32] = parse_hex(f[1], 32, "account")?.try_into().expect("32 bytes");
+        let account: [u8; 32] = parse_hex(f[1], 32, "account")?
+            .try_into()
+            .expect("32 bytes");
         out.insert(txid, account);
     }
     Ok(out)
 }
 
-fn note_tree_path(dir: &std::path::Path, chain_id: u32, pool: orchard::ValuePool) -> std::path::PathBuf {
-    dir.join(format!("notes-{}-{}.tree", chain_id, match pool { orchard::ValuePool::Orchard => "orchard", orchard::ValuePool::Ironwood => "ironwood" }))
+fn note_tree_path(
+    dir: &std::path::Path,
+    chain_id: u32,
+    pool: orchard::ValuePool,
+) -> std::path::PathBuf {
+    dir.join(format!(
+        "notes-{}-{}.tree",
+        chain_id,
+        match pool {
+            orchard::ValuePool::Orchard => "orchard",
+            orchard::ValuePool::Ironwood => "ironwood",
+        }
+    ))
 }
 
 /// Write both trees, atomically each. A tree that fails to write is a
@@ -121,10 +141,15 @@ fn note_tree_path(dir: &std::path::Path, chain_id: u32, pool: orchard::ValuePool
 fn save_trees(cfg: &Config, trees: Option<&zyn_custody::shielded::PoolStores>) {
     let Some(t) = trees else { return };
     for pool in [orchard::ValuePool::Orchard, orchard::ValuePool::Ironwood] {
-        let Ok(store) = t.of(pool).lock() else { continue };
+        let Ok(store) = t.of(pool).lock() else {
+            continue;
+        };
         let path = note_tree_path(&cfg.data_dir, cfg.chain_id, pool);
         let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, store.encode()).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+        if std::fs::write(&tmp, store.encode())
+            .and_then(|_| std::fs::rename(&tmp, &path))
+            .is_err()
+        {
             eprintln!("zynzapd: could not save the {:?} note tree", pool);
         }
     }
@@ -135,15 +160,29 @@ fn parse_hex(hex: &str, len: usize, name: &str) -> Result<Vec<u8>, String> {
         return Err(format!("{} must be {} hex characters", name, len * 2));
     }
     (0..len)
-        .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| format!("{} must be hex", name)))
+        .map(|i| {
+            u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                .map_err(|_| format!("{} must be hex", name))
+        })
         .collect()
 }
 
 fn shares_len(dir: &std::path::Path) -> usize {
-    std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with("share-")).count()).unwrap_or(0)
+    std::fs::read_dir(dir)
+        .map(|d| {
+            d.filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("share-"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
-fn a_settler_txid(settler: &Option<zynzapd::anchor::AnchorSettler<zyn_custody::zebra::Zebra, zynzapd::anchor::ZcashBuilder>>, anchor_id: [u8; 32]) -> String {
+fn a_settler_txid(
+    settler: &Option<
+        zynzapd::anchor::AnchorSettler<zyn_custody::zebra::Zebra, zynzapd::anchor::ZcashBuilder>,
+    >,
+    anchor_id: [u8; 32],
+) -> String {
     settler
         .as_ref()
         .and_then(|s| s.ledger().entries.iter().find(|e| e.nonce == anchor_id))
@@ -152,7 +191,10 @@ fn a_settler_txid(settler: &Option<zynzapd::anchor::AnchorSettler<zyn_custody::z
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn main() {
@@ -178,7 +220,14 @@ fn run() -> Result<(), String> {
         manual,
         &cfg.da_dir,
     )?;
-    let zynzapd::boot::Booted { mut node, store, journal, resumed, base_root, replay } = booted;
+    let zynzapd::boot::Booted {
+        mut node,
+        store,
+        journal,
+        resumed,
+        base_root,
+        replay,
+    } = booted;
     if let Some((keys, threshold)) = &cfg.signer_set {
         match zyn::anchor::SignerSet::new(keys.clone(), *threshold) {
             Ok(set) => {
@@ -197,55 +246,64 @@ fn run() -> Result<(), String> {
             node.ledger().len()
         );
     } else {
-        eprintln!("zynzapd: new chain {} with {:?} parameters", cfg.chain_id, cfg.profile);
+        eprintln!(
+            "zynzapd: new chain {} with {:?} parameters",
+            cfg.chain_id, cfg.profile
+        );
     }
 
     let shared: rpc::Shared = Arc::new(Mutex::new(node));
 
-    if cfg.launch {
-        let mut n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
-        let mut params = swapvm::launch::Launch::v1();
-        if let Some(t) = &cfg.launch_threshold {
-            params.threshold = zynzapd::client::fixed_of(t).map_err(|e| format!("ZYN_LAUNCH_THRESHOLD: {}", e))?;
-        }
-        let current = n.state().launch.as_ref().map(|l| (l.params, l.graduated()));
-        match current {
-            Some((_, true)) => eprintln!("zynzapd: ZYN launch graduated; its numbers are history"),
-            _ => {
-                let step = n.submit_operator(swapvm::tx::Intent::SetLaunch { params }, now_secs());
-                if step.rejected() {
-                    return Err(format!("ZYN_LAUNCH refused: {:?}", step.receipts));
-                }
-                eprintln!("zynzapd: ZYN launch set: {} bps bridge fee to the genesis pot, graduation at {} ZEC.zy, {} ZYN genesis, cap {}", params.fee_bps, params.threshold, params.genesis, params.cap);
-            }
-        }
+    if cfg.launch || cfg.launch_threshold.is_some() {
+        return Err("ZYN_LAUNCH and ZYN_LAUNCH_THRESHOLD belong to the superseded bridge-fee/halving design; remove them. Cave LaunchCurve is the only public fungible launch path".into());
     }
 
     if let Some(on) = cfg.batch_clearing {
-        let mut n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+        let mut n = shared
+            .lock()
+            .map_err(|_| "node lock poisoned".to_string())?;
         if n.state().batch_clearing != on {
             let step = n.submit_operator(swapvm::tx::Intent::SetClearing { on }, now_secs());
             if step.rejected() {
-                return Err(format!("ZYN_BATCH_CLEARING={} refused: {:?}", on, step.receipts));
+                return Err(format!(
+                    "ZYN_BATCH_CLEARING={} refused: {:?}",
+                    on, step.receipts
+                ));
             }
-            eprintln!("zynzapd: batch clearing {}: single-hop swaps {} at the seal", if on { "on" } else { "off" }, if on { "clear together" } else { "no longer queue; they execute on arrival" });
+            eprintln!(
+                "zynzapd: batch clearing {}: single-hop swaps {} at the seal",
+                if on { "on" } else { "off" },
+                if on {
+                    "clear together"
+                } else {
+                    "no longer queue; they execute on arrival"
+                }
+            );
         }
     }
 
     if let Some(epochs) = cfg.exit_timeout_epochs {
-        let mut n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+        let mut n = shared
+            .lock()
+            .map_err(|_| "node lock poisoned".to_string())?;
         if n.state().params.exit_timeout_epochs != epochs {
             let mut params = n.state().params;
             params.exit_timeout_epochs = epochs;
             let step = n.submit_operator(swapvm::tx::Intent::SetParams { params }, now_secs());
             if step.rejected() {
-                return Err(format!("ZYN_EXIT_TIMEOUT_EPOCHS={} refused: {:?}", epochs, step.receipts));
+                return Err(format!(
+                    "ZYN_EXIT_TIMEOUT_EPOCHS={} refused: {:?}",
+                    epochs, step.receipts
+                ));
             }
-            eprintln!("zynzapd: exit timeout / redirect delay set to {} epochs (TESTNET posture)", epochs);
+            eprintln!(
+                "zynzapd: exit timeout / redirect delay set to {} epochs (TESTNET posture)",
+                epochs
+            );
         }
     }
-    let listener = TcpListener::bind(cfg.listen)
-        .map_err(|e| format!("cannot bind {}: {}", cfg.listen, e))?;
+    let listener =
+        TcpListener::bind(cfg.listen).map_err(|e| format!("cannot bind {}: {}", cfg.listen, e))?;
 
     eprintln!(
         "zynzapd: chain {} listening on {} — DEVNET, units are unbacked",
@@ -261,18 +319,22 @@ fn run() -> Result<(), String> {
     // one credits nothing in the other (`DECISIONS` §14b, §14e).
     let mut deposits: Vec<bridge::Bridge> = Vec::new();
     // The deposit-address register, once a Zcash vault is configured.
-    let mut deposit_book: Option<Arc<Mutex<(zynzapd::deposits::Book, zyn_custody::shielded::VaultKeys)>>> = None;
+    let mut deposit_book: Option<
+        Arc<Mutex<(zynzapd::deposits::Book, zyn_custody::shielded::VaultKeys)>>,
+    > = None;
 
     let mut zcash_settler: Option<settle::ZcashSettler> = None;
-    let mut anchor_settler: Option<zynzapd::anchor::AnchorSettler<Zebra, zynzapd::anchor::ZcashBuilder>> = None;
+    let mut anchor_settler: Option<
+        zynzapd::anchor::AnchorSettler<Zebra, zynzapd::anchor::ZcashBuilder>,
+    > = None;
     let mut note_trees: Option<zyn_custody::shielded::PoolStores> = None;
     if let Some(z) = &cfg.zebra {
         let auth = match (&z.user, &z.password) {
             (Some(u), Some(p)) => Some((u.as_str(), p.as_str())),
             _ => None,
         };
-        let zebra = Zebra::connect(&z.host, z.port, auth, cfg.network)
-            .map_err(|e| e.to_string())?;
+        let zebra =
+            Zebra::connect(&z.host, z.port, auth, cfg.network).map_err(|e| e.to_string())?;
         // Ask the node which chain it is on, and refuse to run if it disagrees
         // with what we were configured for. Every other safeguard assumes the
         // chain underneath is the configured one; get that wrong and a
@@ -291,30 +353,46 @@ fn run() -> Result<(), String> {
             ),
             (None, Some(fvk_hex)) => {
                 let bytes = parse_hex(fvk_hex, 96, "ZYN_VAULT_FVK")?;
-                let fvk = orchard::keys::FullViewingKey::from_bytes(&bytes.try_into().expect("96 bytes"))
-                    .ok_or("ZYN_VAULT_FVK is not a valid Orchard full viewing key")?;
+                let fvk =
+                    orchard::keys::FullViewingKey::from_bytes(&bytes.try_into().expect("96 bytes"))
+                        .ok_or("ZYN_VAULT_FVK is not a valid Orchard full viewing key")?;
                 Some(zyn_custody::shielded::VaultKeys::from_full_viewing_key(fvk))
             }
             (None, None) => None,
         };
         let source = match (shielded_keys, &z.addresses) {
             (Some(keys), _) => {
-                eprintln!("zynzapd: shielded vault own address (change, anchors, top-ups): {}", keys.address(0, address_network(cfg.network)));
+                eprintln!(
+                    "zynzapd: shielded vault own address (change, anchors, top-ups): {}",
+                    keys.address(0, address_network(cfg.network))
+                );
                 // One deposit address per account, so a depositor needs no
                 // memo and a verifier can rederive whose the money is. The
                 // register only says which account to credit; whether that
                 // credit is honest is settled against the chain.
-                let book = zynzapd::deposits::Book::open(&cfg.data_dir, cfg.chain_id, address_network(cfg.network))?;
-                eprintln!("zynzapd: {} account deposit address(es) issued so far", book.len());
+                let book = zynzapd::deposits::Book::open(
+                    &cfg.data_dir,
+                    cfg.chain_id,
+                    address_network(cfg.network),
+                )?;
+                eprintln!(
+                    "zynzapd: {} account deposit address(es) issued so far",
+                    book.len()
+                );
                 let addresses = book.shared();
                 deposit_book = Some(Arc::new(Mutex::new((book, keys.clone()))));
-                let mut scanner = zyn_custody::shielded::Scanner::new(keys, z.from_height, z.max_blocks)
-                    .with_tree_lag(cfg.confirmations)
-                    .with_addresses(addresses);
+                let mut scanner =
+                    zyn_custody::shielded::Scanner::new(keys, z.from_height, z.max_blocks)
+                        .with_tree_lag(cfg.confirmations)
+                        .with_addresses(addresses);
                 if let Some(path) = &z.attributions {
                     let a = load_attributions(path)?;
                     if !a.is_empty() {
-                        eprintln!("zynzapd: {} memo-less deposit(s) attributed by hand from {}", a.len(), path.display());
+                        eprintln!(
+                            "zynzapd: {} memo-less deposit(s) attributed by hand from {}",
+                            a.len(),
+                            path.display()
+                        );
                     }
                     scanner = scanner.with_attributions(a);
                 }
@@ -336,26 +414,27 @@ fn run() -> Result<(), String> {
                     // would walk five thousand blocks into the resumed tree
                     // a second time — which is exactly the divergence this
                     // check exists to catch, manufactured at boot.
-                    let resume = |pool: orchard::ValuePool| -> Option<zyn_custody::notes::NoteStore> {
-                        let path = note_tree_path(&cfg.data_dir, cfg.chain_id, pool);
-                        let bytes = std::fs::read(&path).ok()?;
-                        let store = match zyn_custody::notes::NoteStore::decode(&bytes) {
-                            Some(s) => s,
-                            None => {
-                                eprintln!("zynzapd: {:?} note tree on disk did not decode; re-seeding", pool);
-                                return None;
+                    let resume =
+                        |pool: orchard::ValuePool| -> Option<zyn_custody::notes::NoteStore> {
+                            let path = note_tree_path(&cfg.data_dir, cfg.chain_id, pool);
+                            let bytes = std::fs::read(&path).ok()?;
+                            let store = match zyn_custody::notes::NoteStore::decode(&bytes) {
+                                Some(s) => s,
+                                None => {
+                                    eprintln!("zynzapd: {:?} note tree on disk did not decode; re-seeding", pool);
+                                    return None;
+                                }
+                            };
+                            let at = store.synced_to().unwrap_or(seed_height);
+                            let ts = zebra.tree_state_of(at, pool).ok()?;
+                            if store.root_bytes() == Some(ts.final_root) {
+                                eprintln!("zynzapd: {:?} note tree resumed from disk at {}, root matches the node ({} notes held)", pool, at, store.held().count());
+                                Some(store)
+                            } else {
+                                eprintln!("zynzapd: {:?} note tree on disk does not match the node at {}; re-seeding", pool, at);
+                                None
                             }
                         };
-                        let at = store.synced_to().unwrap_or(seed_height);
-                        let ts = zebra.tree_state_of(at, pool).ok()?;
-                        if store.root_bytes() == Some(ts.final_root) {
-                            eprintln!("zynzapd: {:?} note tree resumed from disk at {}, root matches the node ({} notes held)", pool, at, store.held().count());
-                            Some(store)
-                        } else {
-                            eprintln!("zynzapd: {:?} note tree on disk does not match the node at {}; re-seeding", pool, at);
-                            None
-                        }
-                    };
                     let fresh = |pool: orchard::ValuePool| -> Result<zyn_custody::notes::NoteStore, String> {
                         let ts = zebra.tree_state_of(seed_height, pool).map_err(|e| format!("z_gettreestate {}: {}", seed_height, e))?;
                         let store = zyn_custody::notes::NoteStore::from_frontier(&ts.final_state, seed_height)
@@ -366,15 +445,24 @@ fn run() -> Result<(), String> {
                         eprintln!("zynzapd: {:?} note tree seeded at {}, root matches the node", pool, seed_height);
                         Ok(store)
                     };
-                    let (o, i) = match (resume(orchard::ValuePool::Orchard), resume(orchard::ValuePool::Ironwood)) {
+                    let (o, i) = match (
+                        resume(orchard::ValuePool::Orchard),
+                        resume(orchard::ValuePool::Ironwood),
+                    ) {
                         (Some(o), Some(i)) if o.synced_to() == i.synced_to() => (o, i),
                         (Some(_), Some(_)) => {
                             eprintln!("zynzapd: the two note trees stopped at different heights; re-seeding both");
-                            (fresh(orchard::ValuePool::Orchard)?, fresh(orchard::ValuePool::Ironwood)?)
+                            (
+                                fresh(orchard::ValuePool::Orchard)?,
+                                fresh(orchard::ValuePool::Ironwood)?,
+                            )
                         }
                         _ => {
                             eprintln!("zynzapd: re-seeding both note trees together — they are fed together");
-                            (fresh(orchard::ValuePool::Orchard)?, fresh(orchard::ValuePool::Ironwood)?)
+                            (
+                                fresh(orchard::ValuePool::Orchard)?,
+                                fresh(orchard::ValuePool::Ironwood)?,
+                            )
                         }
                     };
                     let stores = zyn_custody::shielded::PoolStores {
@@ -384,21 +472,52 @@ fn run() -> Result<(), String> {
                     let notes = stores.clone();
                     note_trees = Some(stores.clone());
                     scanner = scanner.with_notes(stores);
-                    let fvk_hex = z.vault_fvk.as_ref().expect("config requires a viewing key with shares");
+                    let fvk_hex = z
+                        .vault_fvk
+                        .as_ref()
+                        .expect("config requires a viewing key with shares");
                     let bytes = parse_hex(fvk_hex, 96, "ZYN_VAULT_FVK")?;
-                    let fvk = orchard::keys::FullViewingKey::from_bytes(&bytes.try_into().expect("96 bytes")).expect("checked above");
-                    let shares = zyn_custody::shares::load::<zyn_custody::ceremony::Zcash>(&st.shares)
-                        .map_err(|e| format!("cannot load shares from {}: {}", st.shares.display(), e))?;
-                    let reveals = settle::load_zcash_reveals(&st.reveals, zcash_network(cfg.network))?;
-                    let exit_public = zyn_custody::shares::load_public::<zyn_custody::ceremony::Zcash>(&st.shares)
-                        .map_err(|e| format!("cannot load the public package from {}: {}", st.shares.display(), e))?;
-                    let exit_shares = if st.custodians.is_some() { Vec::new() } else { shares };
+                    let fvk = orchard::keys::FullViewingKey::from_bytes(
+                        &bytes.try_into().expect("96 bytes"),
+                    )
+                    .expect("checked above");
+                    let shares =
+                        zyn_custody::shares::load::<zyn_custody::ceremony::Zcash>(&st.shares)
+                            .map_err(|e| {
+                                format!("cannot load shares from {}: {}", st.shares.display(), e)
+                            })?;
+                    let reveals =
+                        settle::load_zcash_reveals(&st.reveals, zcash_network(cfg.network))?;
+                    let exit_public = zyn_custody::shares::load_public::<
+                        zyn_custody::ceremony::Zcash,
+                    >(&st.shares)
+                    .map_err(|e| {
+                        format!(
+                            "cannot load the public package from {}: {}",
+                            st.shares.display(),
+                            e
+                        )
+                    })?;
+                    let exit_shares = if st.custodians.is_some() {
+                        Vec::new()
+                    } else {
+                        shares
+                    };
                     let settler = settle::ZcashSettler::new(
-                        Zebra::connect(&z.host, z.port, auth, cfg.network).map_err(|e| e.to_string())?,
+                        Zebra::connect(&z.host, z.port, auth, cfg.network)
+                            .map_err(|e| e.to_string())?,
                         zcash_network(cfg.network),
-                        exit_shares, st.threshold, fvk.clone(), notes.clone(), reveals,
-                        swapvm::types::XZEC, cfg.confirmations, cfg.data_dir.clone(), cfg.chain_id,
-                        exit_public, st.custodians.clone(),
+                        exit_shares,
+                        st.threshold,
+                        fvk.clone(),
+                        notes.clone(),
+                        reveals,
+                        swapvm::types::XZEC,
+                        cfg.confirmations,
+                        cfg.data_dir.clone(),
+                        cfg.chain_id,
+                        exit_public,
+                        st.custodians.clone(),
                     )?;
                     eprintln!(
                         "zynzapd: settling Zcash exits from {} — {} of {} shares ON THIS MACHINE, which is a devnet key; Ironwood exits pay shielded addresses, Orchard exits transparent (NU6.3)",
@@ -408,13 +527,23 @@ fn run() -> Result<(), String> {
                     // The anchor path: same key, same node, its own ledger. With
                     // custodians configured the box loads only the public
                     // package and signs remotely; otherwise it loads the shares.
-                    let anchor_public = zyn_custody::shares::load_public::<zyn_custody::ceremony::Zcash>(&st.shares)
-                        .map_err(|e| format!("cannot load the public package from {}: {}", st.shares.display(), e))?;
+                    let anchor_public = zyn_custody::shares::load_public::<
+                        zyn_custody::ceremony::Zcash,
+                    >(&st.shares)
+                    .map_err(|e| {
+                        format!(
+                            "cannot load the public package from {}: {}",
+                            st.shares.display(),
+                            e
+                        )
+                    })?;
                     let anchor_shares = if st.custodians.is_some() {
                         Vec::new()
                     } else {
                         zyn_custody::shares::load::<zyn_custody::ceremony::Zcash>(&st.shares)
-                            .map_err(|e| format!("cannot load shares from {}: {}", st.shares.display(), e))?
+                            .map_err(|e| {
+                                format!("cannot load shares from {}: {}", st.shares.display(), e)
+                            })?
                     };
                     let builder = zynzapd::anchor::ZcashBuilder::new(
                         zcash_network(cfg.network),
@@ -422,15 +551,27 @@ fn run() -> Result<(), String> {
                         st.threshold,
                         fvk,
                         notes,
-                        Zebra::connect(&z.host, z.port, auth, cfg.network).map_err(|e| e.to_string())?,
+                        Zebra::connect(&z.host, z.port, auth, cfg.network)
+                            .map_err(|e| e.to_string())?,
                         z.from_height,
                         cfg.confirmations,
-                        z.attributions.as_ref().map(|p| load_attributions(p)).transpose()?.unwrap_or_default(),
+                        z.attributions
+                            .as_ref()
+                            .map(|p| load_attributions(p))
+                            .transpose()?
+                            .unwrap_or_default(),
                         anchor_public,
                         st.custodians.clone(),
                     )?;
-                    let chain = Zebra::connect(&z.host, z.port, auth, cfg.network).map_err(|e| e.to_string())?;
-                    let mut settler = zynzapd::anchor::AnchorSettler::new(chain, builder, cfg.confirmations, &cfg.data_dir, cfg.chain_id)?;
+                    let chain = Zebra::connect(&z.host, z.port, auth, cfg.network)
+                        .map_err(|e| e.to_string())?;
+                    let mut settler = zynzapd::anchor::AnchorSettler::new(
+                        chain,
+                        builder,
+                        cfg.confirmations,
+                        &cfg.data_dir,
+                        cfg.chain_id,
+                    )?;
                     if cfg.signer_set.is_some() {
                         settler = settler.requiring_signatures();
                     }
@@ -443,7 +584,10 @@ fn run() -> Result<(), String> {
                     if let Ok(list) = std::env::var("ZYN_REANCHOR_EPOCHS") {
                         for epoch in list.split(',').filter_map(|e| e.trim().parse::<u64>().ok()) {
                             match zynzapd::publish::read_local(&cfg.da_dir, cfg.chain_id, epoch) {
-                                Err(e) => eprintln!("zynzapd: re-anchor {}: cannot read the published bundle: {}", epoch, e),
+                                Err(e) => eprintln!(
+                                    "zynzapd: re-anchor {}: cannot read the published bundle: {}",
+                                    epoch, e
+                                ),
                                 Ok(b) => {
                                     // Queued, not sent: the note store is not
                                     // current until the scanner has caught up.
@@ -478,7 +622,8 @@ fn run() -> Result<(), String> {
         // the first live pass appends rather than skips.
         if let bridge::Source::Shielded(scanner) = &source {
             if scanner.notes().is_some() {
-                let mut target = bridge::scanned_height(&cfg.data_dir, cfg.chain_id, swapvm::types::XZEC);
+                let mut target =
+                    bridge::scanned_height(&cfg.data_dir, cfg.chain_id, swapvm::types::XZEC);
                 if let Some(r) = z.rescan_from {
                     target = target.min(r.saturating_sub(1));
                 }
@@ -489,7 +634,10 @@ fn run() -> Result<(), String> {
                         // A memo-less deposit stops the tree here, and the live
                         // scan will say so every pass until it is attributed.
                         // Not a reason to refuse to start.
-                        Err(zyn_custody::shielded::ScanRangeError::Unattributable { height, amount }) => {
+                        Err(zyn_custody::shielded::ScanRangeError::Unattributable {
+                            height,
+                            amount,
+                        }) => {
                             eprintln!("zynzapd: note tree catch-up stopped at {}: shielded funds ({:?}) carry no Zyn memo — attribute them (ZYN_ZEBRA_ATTRIBUTIONS) and restart", height, amount);
                             break;
                         }
@@ -506,7 +654,9 @@ fn run() -> Result<(), String> {
             cfg.data_dir.clone(),
             cfg.chain_id,
             {
-                let n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+                let n = shared
+                    .lock()
+                    .map_err(|_| "node lock poisoned".to_string())?;
                 n.state().next_deposit_index(swapvm::types::XZEC)
             },
         )?;
@@ -525,7 +675,10 @@ fn run() -> Result<(), String> {
             if let Some(from) = cfg.forced_rescan_from {
                 match b.rescan_forced(from) {
                     Ok(0) => {}
-                    Ok(n) => eprintln!("zynzapd: forced-intent rescan from {}: {} queued for application", from, n),
+                    Ok(n) => eprintln!(
+                        "zynzapd: forced-intent rescan from {}: {} queued for application",
+                        from, n
+                    ),
                     Err(e) => eprintln!("zynzapd: forced-intent rescan failed: {}", e),
                 }
             }
@@ -539,12 +692,13 @@ fn run() -> Result<(), String> {
         // URL finds a real contract with real logs.
         let rpc = zyn_custody::evm::Rpc::connect(
             &e.url,
-            zyn_custody::evm::Network { chain_id: e.chain_id },
+            zyn_custody::evm::Network {
+                chain_id: e.chain_id,
+            },
         )
         .map_err(|err| err.to_string())?;
-        let observed =
-            zyn_custody::evm::Observed::new(rpc, e.vault, e.asset, e.token, e.decimals)
-                .map_err(|err| err.to_string())?;
+        let observed = zyn_custody::evm::Observed::new(rpc, e.vault, e.asset, e.token, e.decimals)
+            .map_err(|err| err.to_string())?;
         // Finality, not depth: a finalized block cannot be reorged, so there is
         // nothing left for a confirmation count to protect against.
         let mut b = bridge::Bridge::new(
@@ -554,7 +708,9 @@ fn run() -> Result<(), String> {
             cfg.data_dir.clone(),
             cfg.chain_id,
             {
-                let n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+                let n = shared
+                    .lock()
+                    .map_err(|_| "node lock poisoned".to_string())?;
                 n.state().next_deposit_index(e.asset)
             },
         )?;
@@ -562,8 +718,11 @@ fn run() -> Result<(), String> {
         eprintln!(
             "zynzapd: watching EVM chain {} vault 0x{} for asset {}, finalized tip, scanned to {}",
             e.chain_id,
-            e.vault.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
-            e.asset,
+            e.vault
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>(),
+            zynzapd::client::hex(&e.asset),
             b.scanned_to()
         );
         {
@@ -571,7 +730,10 @@ fn run() -> Result<(), String> {
             if let Some(from) = cfg.forced_rescan_from {
                 match b.rescan_forced(from) {
                     Ok(0) => {}
-                    Ok(n) => eprintln!("zynzapd: forced-intent rescan from {}: {} queued for application", from, n),
+                    Ok(n) => eprintln!(
+                        "zynzapd: forced-intent rescan from {}: {} queued for application",
+                        from, n
+                    ),
                     Err(e) => eprintln!("zynzapd: forced-intent rescan failed: {}", e),
                 }
             }
@@ -586,25 +748,50 @@ fn run() -> Result<(), String> {
         // none: `SOL.zy` with a Solana vault and no supply until deposits
         // arrive. Operator-only, sequenced like anything else.
         let sol_asset = {
-            let mut n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
-            match n.state().bridged_assets().into_iter().find(|(_, o)| *o == swapvm::types::ORIGIN_SOLANA) {
+            let mut n = shared
+                .lock()
+                .map_err(|_| "node lock poisoned".to_string())?;
+            match n
+                .state()
+                .bridged_assets()
+                .into_iter()
+                .find(|(_, o)| *o == swapvm::types::ORIGIN_SOLANA)
+            {
                 Some((id, _)) => id,
                 None => {
                     let step = n.submit_operator(
-                        swapvm::tx::Intent::CreateBridgedAsset { symbol: swapvm::state::symbol(b"SOL.zy"), origin: swapvm::types::ORIGIN_SOLANA },
+                        swapvm::tx::Intent::CreateBridgedAsset {
+                            symbol: swapvm::state::symbol(b"SOL.zy"),
+                            origin: swapvm::types::ORIGIN_SOLANA,
+                            origin_network: b"solana".to_vec(),
+                            origin_asset: Vec::new(),
+                        },
                         now_secs(),
                     );
                     if step.rejected() {
                         return Err(format!("could not create SOL.zy: {:?}", step.receipts));
                     }
-                    let id = n.state().bridged_assets().into_iter().find(|(_, o)| *o == swapvm::types::ORIGIN_SOLANA).map(|(id, _)| id).ok_or("SOL.zy not created")?;
-                    eprintln!("zynzapd: created SOL.zy as asset {}", id);
+                    let id = n
+                        .state()
+                        .bridged_assets()
+                        .into_iter()
+                        .find(|(_, o)| *o == swapvm::types::ORIGIN_SOLANA)
+                        .map(|(id, _)| id)
+                        .ok_or("SOL.zy not created")?;
+                    eprintln!(
+                        "zynzapd: created SOL.zy as asset {}",
+                        zynzapd::client::hex(&id)
+                    );
                     id
                 }
             }
         };
-        if sol.asset != 0 && sol.asset != sol_asset {
-            return Err(format!("ZYN_SOLANA_ASSET={} but the chain's Solana asset is {}", sol.asset, sol_asset));
+        if sol.asset != [0; 32] && sol.asset != sol_asset {
+            return Err(format!(
+                "ZYN_SOLANA_ASSET={} but the chain's Solana asset is {}",
+                zynzapd::client::hex(&sol.asset),
+                zynzapd::client::hex(&sol_asset)
+            ));
         }
         solana_asset = Some(sol_asset);
         let cluster = match sol.cluster.as_str() {
@@ -619,43 +806,67 @@ fn run() -> Result<(), String> {
         };
         // Refuses mainnet, and checks the endpoint's genesis hash is the
         // cluster configured.
-        let rpc = zyn_custody::solana::Rpc::connect(&sol.url, cluster)
-            .map_err(|e| e.to_string())?;
+        let rpc =
+            zyn_custody::solana::Rpc::connect(&sol.url, cluster).map_err(|e| e.to_string())?;
         // Mirrored tokens: each configured mint exists on the chain as an
         // indivisible bridged item whose `content` is the mint, and the
         // vault's token account for it is watched alongside the vault.
         let mirrored = {
-            let mut n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+            let mut n = shared
+                .lock()
+                .map_err(|_| "node lock poisoned".to_string())?;
             for (mint_b58, symbol) in &sol.mints {
-                let mint = zyn_custody::solana::pubkey(mint_b58).ok_or_else(|| format!("ZYN_SOLANA_MINTS: {} is not a Solana address", mint_b58))?;
+                let mint = zyn_custody::solana::pubkey(mint_b58).ok_or_else(|| {
+                    format!("ZYN_SOLANA_MINTS: {} is not a Solana address", mint_b58)
+                })?;
                 let exists = n.state().tokens.values().any(|t| t.content == Some(mint));
                 if !exists {
-                    let mut sym = [0u8; 8];
-                    let b = symbol.as_bytes();
-                    sym[..b.len().min(8)].copy_from_slice(&b[..b.len().min(8)]);
-                    let step = n.submit_operator(swapvm::tx::Intent::CreateBridgedItem { symbol: sym, origin: swapvm::types::ORIGIN_SOLANA, content: mint }, now_secs());
+                    let sym = swapvm::state::Symbol::new(symbol.as_bytes())
+                        .ok_or("ZYN_SOLANA_MINTS symbol is invalid")?;
+                    let step = n.submit_operator(
+                        swapvm::tx::Intent::CreateBridgedItem {
+                            symbol: sym,
+                            origin: swapvm::types::ORIGIN_SOLANA,
+                            content: mint,
+                        },
+                        now_secs(),
+                    );
                     if step.rejected() {
-                        return Err(format!("could not mirror {}: {:?}", mint_b58, step.receipts));
+                        return Err(format!(
+                            "could not mirror {}: {:?}",
+                            mint_b58, step.receipts
+                        ));
                     }
                     eprintln!("zynzapd: mirroring mint {} as {}", mint_b58, symbol);
                 }
             }
-            let vault_pk = zyn_custody::solana::pubkey(&sol.vault).ok_or("ZYN_SOLANA_VAULT is not a Solana address")?;
+            let vault_pk = zyn_custody::solana::pubkey(&sol.vault)
+                .ok_or("ZYN_SOLANA_VAULT is not a Solana address")?;
             n.state()
                 .tokens
                 .iter()
-                .filter(|(_, t)| t.vault.map(|v| v.origin) == Some(swapvm::types::ORIGIN_SOLANA) && t.unit == swapvm::Fixed::ONE)
+                .filter(|(_, t)| {
+                    t.vault.map(|v| v.origin) == Some(swapvm::types::ORIGIN_SOLANA)
+                        && t.unit == swapvm::Fixed::ONE
+                })
                 .filter_map(|(id, t)| t.content.map(|mint| (id, mint)))
                 .map(|(id, mint)| zyn_custody::solana::Mirrored {
                     mint: zyn_custody::solana::base58_encode(&mint),
                     asset: *id,
-                    ata: zyn_custody::solana::base58_encode(&zyn_bridge::solana::associated_token_address(&vault_pk, &mint)),
+                    ata: zyn_custody::solana::base58_encode(
+                        &zyn_bridge::solana::associated_token_address(&vault_pk, &mint),
+                    ),
                     per_unit: 1,
                 })
                 .collect::<Vec<_>>()
         };
         for mr in &mirrored {
-            eprintln!("zynzapd: watching token account {} for mint {} (asset {})", mr.ata, mr.mint, mr.asset);
+            eprintln!(
+                "zynzapd: watching token account {} for mint {} (asset {})",
+                mr.ata,
+                mr.mint,
+                zynzapd::client::hex(&mr.asset)
+            );
         }
         solana_mirrored = mirrored.clone();
         let observed = zyn_custody::solana::Observed::new(rpc, &sol.vault)
@@ -668,7 +879,9 @@ fn run() -> Result<(), String> {
             cfg.data_dir.clone(),
             cfg.chain_id,
             {
-                let n = shared.lock().map_err(|_| "node lock poisoned".to_string())?;
+                let n = shared
+                    .lock()
+                    .map_err(|_| "node lock poisoned".to_string())?;
                 n.state().next_deposit_index(sol_asset)
             },
         )?;
@@ -680,18 +893,19 @@ fn run() -> Result<(), String> {
             "zynzapd: watching Solana {} vault {} for asset {}, finalized tip, scanned to {}",
             sol.cluster,
             sol.vault,
-            sol_asset,
+            zynzapd::client::hex(&sol_asset),
             b.scanned_to()
         );
-        eprintln!(
-            "zynzapd: depositors must attach the memo ZYN1:<their 32-byte account, hex>"
-        );
+        eprintln!("zynzapd: depositors must attach the memo ZYN1:<their 32-byte account, hex>");
         {
             let mut b = b.with_replay(Arc::clone(&replay));
             if let Some(from) = cfg.forced_rescan_from {
                 match b.rescan_forced(from) {
                     Ok(0) => {}
-                    Ok(n) => eprintln!("zynzapd: forced-intent rescan from {}: {} queued for application", from, n),
+                    Ok(n) => eprintln!(
+                        "zynzapd: forced-intent rescan from {}: {} queued for application",
+                        from, n
+                    ),
                     Err(e) => eprintln!("zynzapd: forced-intent rescan failed: {}", e),
                 }
             }
@@ -702,24 +916,50 @@ fn run() -> Result<(), String> {
     // Exits, Solana only so far. Deposits and exits are separate opt-ins: a
     // vault that fills and never pays out is a legitimate devnet posture, and
     // a settler that starts because a watcher did is one nobody decided on.
-    let mut settler = match cfg.solana.as_ref().and_then(|s| s.settle.as_ref().map(|x| (s, x))) {
+    let mut settler = match cfg
+        .solana
+        .as_ref()
+        .and_then(|s| s.settle.as_ref().map(|x| (s, x)))
+    {
         None => None,
         Some((sol, st)) => {
-            let cluster = if sol.cluster == "testnet" { zyn_custody::solana::Cluster::Testnet } else { zyn_custody::solana::Cluster::Devnet };
-            let rpc = zyn_custody::solana::Rpc::connect(&sol.url, cluster).map_err(|e| e.to_string())?;
+            let cluster = if sol.cluster == "testnet" {
+                zyn_custody::solana::Cluster::Testnet
+            } else {
+                zyn_custody::solana::Cluster::Devnet
+            };
+            let rpc =
+                zyn_custody::solana::Rpc::connect(&sol.url, cluster).map_err(|e| e.to_string())?;
             // With custodians configured this box loads only the public
             // package: there is no secret share here to load.
             let shares = if st.custodians.is_some() {
                 Vec::new()
             } else {
-                zyn_custody::solana::shares::load(&st.shares).map_err(|e| format!("cannot load shares from {}: {}", st.shares.display(), e))?
+                zyn_custody::solana::shares::load(&st.shares).map_err(|e| {
+                    format!("cannot load shares from {}: {}", st.shares.display(), e)
+                })?
             };
-            let public = zyn_custody::shares::load_public::<zyn_custody::ceremony::Solana>(&st.shares)
-                .map_err(|e| format!("cannot load the public package from {}: {}", st.shares.display(), e))?;
+            let public =
+                zyn_custody::shares::load_public::<zyn_custody::ceremony::Solana>(&st.shares)
+                    .map_err(|e| {
+                        format!(
+                            "cannot load the public package from {}: {}",
+                            st.shares.display(),
+                            e
+                        )
+                    })?;
             let reveals = settle::load_reveals(&st.reveals)?;
             let s = settle::SolanaSettler::new(
-                rpc, shares, public, st.custodians.clone(), st.threshold, &st.nonce_account, reveals,
-                solana_asset.unwrap_or(sol.asset), cfg.data_dir.clone(), cfg.chain_id,
+                rpc,
+                shares,
+                public,
+                st.custodians.clone(),
+                st.threshold,
+                &st.nonce_account,
+                reveals,
+                solana_asset.unwrap_or(sol.asset),
+                cfg.data_dir.clone(),
+                cfg.chain_id,
             )?
             .with_mirrored(solana_mirrored.clone());
             match &st.custodians {
@@ -742,50 +982,29 @@ fn run() -> Result<(), String> {
 
     install_signal_handlers();
 
-    // The launch's clock: the Zcash tip, reported when it moves.
-    if cfg.launch {
-        if let Some(z) = cfg.zebra.as_ref() {
-            let auth = match (&z.user, &z.password) { (Some(u), Some(p)) => Some((u.as_str(), p.as_str())), _ => None };
-            match zyn_custody::zebra::Zebra::connect_reader(&z.host, z.port, auth, zyn_custody::zebra::Network::Testnet) {
-                Ok(zebra) => {
-                    let shared2 = Arc::clone(&shared);
-                    std::thread::spawn(move || {
-                        let mut last = 0u64;
-                        loop {
-                            if let Ok(h) = zebra.block_count() {
-                                if h > last {
-                                    if let Ok(mut n) = shared2.lock() {
-                                        let step = n.submit_operator(swapvm::tx::Intent::ZcashHeight { height: h }, now_secs());
-                                        if !step.rejected() { last = h; }
-                                    }
-                                }
-                            }
-                            std::thread::sleep(std::time::Duration::from_secs(30));
-                        }
-                    });
-                }
-                Err(e) => eprintln!("zynzapd: launch clock: cannot reach Zebra: {}", e),
-            }
-        } else {
-            eprintln!("zynzapd: launch set but no Zebra configured; the clock will not advance");
-        }
-    }
-
     let health: Arc<Mutex<Vec<alert::Health>>> = Arc::new(Mutex::new(Vec::new()));
     // The reference-price feed, on its own thread: it reads public markets
     // and posts `UpdateReference` for every pool whose two sides it can
     // price. Its health joins the watchers' in `OP_STATUS`.
-    let feed_health: Arc<Mutex<feeds::FeedHealth>> = Arc::new(Mutex::new(feeds::FeedHealth::default()));
+    let feed_health: Arc<Mutex<feeds::FeedHealth>> =
+        Arc::new(Mutex::new(feeds::FeedHealth::default()));
     if cfg.feeds {
         let mut map = feeds::default_map();
         if let Some(spec) = &cfg.feed_map {
             feeds::apply_overrides(&mut map, spec).map_err(|e| format!("ZYN_FEED_MAP: {}", e))?;
         }
-        let fc = feeds::FeedConfig { interval_secs: cfg.feed_interval.max(15), ..feeds::FeedConfig::default() };
+        let fc = feeds::FeedConfig {
+            interval_secs: cfg.feed_interval.max(15),
+            ..feeds::FeedConfig::default()
+        };
         let mut f = feeds::Feeds::new(fc.clone(), map, feeds::Http::default());
         let shared2 = Arc::clone(&shared);
         let fh = Arc::clone(&feed_health);
-        eprintln!("zynzapd: price feeds on: every {} s, {} symbols known", fc.interval_secs, f.map.len());
+        eprintln!(
+            "zynzapd: price feeds on: every {} s, {} symbols known",
+            fc.interval_secs,
+            f.map.len()
+        );
         std::thread::spawn(move || loop {
             match feeds::cycle(&mut f, &shared2, now_secs(), &fh) {
                 Ok(0) => {}
@@ -795,11 +1014,17 @@ fn run() -> Result<(), String> {
             std::thread::sleep(std::time::Duration::from_secs(fc.interval_secs));
         });
     }
-    let mut alerter = alert::Alerter::new(cfg.alert_url.as_deref().map(alert::Webhook::new), cfg.chain_id);
+    let mut alerter = alert::Alerter::new(
+        cfg.alert_url.as_deref().map(alert::Webhook::new),
+        cfg.chain_id,
+    );
     alerter.after_failures = cfg.alert_after_failures;
     alerter.stall_secs = cfg.stall_secs;
     match &cfg.alert_url {
-        Some(u) => eprintln!("zynzapd: alerts to {} after {} failed passes or {}s stalled", u, cfg.alert_after_failures, cfg.stall_secs),
+        Some(u) => eprintln!(
+            "zynzapd: alerts to {} after {} failed passes or {}s stalled",
+            u, cfg.alert_after_failures, cfg.stall_secs
+        ),
         None => eprintln!("zynzapd: alerts to the journal only (set ZYN_ALERT_URL for a webhook)"),
     }
     let inbox: Arc<Mutex<rpc::Inbox>> = Arc::new(Mutex::new(rpc::Inbox::default()));
@@ -822,7 +1047,8 @@ fn run() -> Result<(), String> {
     if !manual {
         eprintln!("zynzapd: anchors IN MEMORY ONLY (no ZYN_ZEBRA_SHARES): roots never reach Zcash — a devnet posture, not a mainnet one");
     }
-    let mut publisher = zynzapd::publish::Publisher::new(zynzapd::publish::parse_mirrors(&cfg.da_mirrors));
+    let mut publisher =
+        zynzapd::publish::Publisher::new(zynzapd::publish::parse_mirrors(&cfg.da_mirrors));
     if let Some(root) = base_root {
         // The base is mirrored like any bundle file, every start, so a mirror
         // added later still gets it.
@@ -830,11 +1056,23 @@ fn run() -> Result<(), String> {
         if let Ok(bytes) = std::fs::read(cfg.da_dir.join(&base_rel)) {
             publisher.queue(vec![(base_rel, bytes)]);
         }
-        eprintln!("zynzapd: replicas start from base root {}", root.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        eprintln!(
+            "zynzapd: replicas start from base root {}",
+            root.iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>()
+        );
     }
     match publisher.mirrors().len() {
-        0 => eprintln!("zynzapd: DA bundles written to {} only — set ZYN_DA_MIRRORS so they outlive this box", cfg.da_dir.display()),
-        n => eprintln!("zynzapd: DA bundles written to {} and pushed to {} mirror(s)", cfg.da_dir.display(), n),
+        0 => eprintln!(
+            "zynzapd: DA bundles written to {} only — set ZYN_DA_MIRRORS so they outlive this box",
+            cfg.da_dir.display()
+        ),
+        n => eprintln!(
+            "zynzapd: DA bundles written to {} and pushed to {} mirror(s)",
+            cfg.da_dir.display(),
+            n
+        ),
     }
     let mut last_save = now_secs();
     let mut last_scan = 0u64;
@@ -864,7 +1102,17 @@ fn run() -> Result<(), String> {
         };
 
         if sealed || now.saturating_sub(last_save) >= cfg.save_every_secs {
-            { zynzapd::boot::save(&store, &journal, &shared); if let Ok(n) = shared.lock() { zynzapd::boot::save_replay(&cfg.data_dir, cfg.chain_id, &replay, n.state().epoch()); } }
+            {
+                zynzapd::boot::save(&store, &journal, &shared);
+                if let Ok(n) = shared.lock() {
+                    zynzapd::boot::save_replay(
+                        &cfg.data_dir,
+                        cfg.chain_id,
+                        &replay,
+                        n.state().epoch(),
+                    );
+                }
+            }
             save_trees(&cfg, note_trees.as_ref());
             last_save = now;
         }
@@ -874,19 +1122,35 @@ fn run() -> Result<(), String> {
         if let Ok(mut ib) = inbox.lock() {
             if !ib.lines.is_empty() {
                 for r in ib.zcash.drain(..) {
-                    if let Some(s) = zcash_settler.as_mut() { s.add_reveal(r); }
+                    if let Some(s) = zcash_settler.as_mut() {
+                        s.add_reveal(r);
+                    }
                 }
                 for r in ib.solana.drain(..) {
-                    if let Some(s) = settler.as_mut() { s.add_reveal(r); }
+                    if let Some(s) = settler.as_mut() {
+                        s.add_reveal(r);
+                    }
                 }
                 for (kind, line) in ib.lines.drain(..) {
                     let path = match kind {
-                        "zcash" => cfg.zebra.as_ref().and_then(|z| z.settle.as_ref()).map(|st| st.reveals.clone()),
-                        _ => cfg.solana.as_ref().and_then(|s| s.settle.as_ref()).map(|st| st.reveals.clone()),
+                        "zcash" => cfg
+                            .zebra
+                            .as_ref()
+                            .and_then(|z| z.settle.as_ref())
+                            .map(|st| st.reveals.clone()),
+                        _ => cfg
+                            .solana
+                            .as_ref()
+                            .and_then(|s| s.settle.as_ref())
+                            .map(|st| st.reveals.clone()),
                     };
                     if let Some(p) = path {
                         use std::io::Write;
-                        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&p) {
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(&p)
+                        {
                             let _ = writeln!(f, "{}", line);
                         }
                     }
@@ -918,19 +1182,47 @@ fn run() -> Result<(), String> {
                             c.height,
                             c.anchor.checkpoint.state_root.iter().map(|b| format!("{:02x}", b)).collect::<String>()
                         );
-                        { zynzapd::boot::save(&store, &journal, &shared); if let Ok(n) = shared.lock() { zynzapd::boot::save_replay(&cfg.data_dir, cfg.chain_id, &replay, n.state().epoch()); } }
+                        {
+                            zynzapd::boot::save(&store, &journal, &shared);
+                            if let Ok(n) = shared.lock() {
+                                zynzapd::boot::save_replay(
+                                    &cfg.data_dir,
+                                    cfg.chain_id,
+                                    &replay,
+                                    n.state().epoch(),
+                                );
+                            }
+                        }
                         // The bundle: what lets anyone else check that root.
                         let built = shared
                             .lock()
                             .map_err(|_| "node lock poisoned".to_string())
-                            .and_then(|n| zynzapd::publish::bundle_for(&n, &cfg.data_dir, cfg.chain_id, &c.anchor, &c.txid, c.height))
-                            .and_then(|b| zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b));
+                            .and_then(|n| {
+                                zynzapd::publish::bundle_for(
+                                    &n,
+                                    &cfg.data_dir,
+                                    cfg.chain_id,
+                                    &c.anchor,
+                                    &c.txid,
+                                    c.height,
+                                )
+                            })
+                            .and_then(|b| {
+                                zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b)
+                            });
                         match built {
                             Ok(files) => {
-                                eprintln!("zynzapd: DA bundle for epoch {} written ({} files)", c.anchor.checkpoint.epoch, files.len());
+                                eprintln!(
+                                    "zynzapd: DA bundle for epoch {} written ({} files)",
+                                    c.anchor.checkpoint.epoch,
+                                    files.len()
+                                );
                                 publisher.queue(files);
                             }
-                            Err(e) => eprintln!("zynzapd: DA BUNDLE NOT WRITTEN for epoch {}: {}", c.anchor.checkpoint.epoch, e),
+                            Err(e) => eprintln!(
+                                "zynzapd: DA BUNDLE NOT WRITTEN for epoch {}: {}",
+                                c.anchor.checkpoint.epoch, e
+                            ),
                         }
                     }
                     Ok(None) => {}
@@ -965,7 +1257,11 @@ fn run() -> Result<(), String> {
                     });
                     if let Some((a, snap, txid)) = parts {
                         let epoch = a.checkpoint.epoch;
-                        let on_disk = cfg.da_dir.join(zynzapd::publish::rel_dir(cfg.chain_id, epoch)).join("anchor.bin").exists();
+                        let on_disk = cfg
+                            .da_dir
+                            .join(zynzapd::publish::rel_dir(cfg.chain_id, epoch))
+                            .join("anchor.bin")
+                            .exists();
                         if !on_disk {
                             let built = shared
                                 .lock()
@@ -973,9 +1269,24 @@ fn run() -> Result<(), String> {
                                 // Flush the journal first: the bundle is read
                                 // back off disk, and an epoch still buffered
                                 // would publish without its seal.
-                                .inspect(|_| { if let Ok(mut j) = journal.lock() { let _ = j.sync(); } })
-                                .and_then(|n| zynzapd::publish::proposed_bundle(&n, &cfg.data_dir, cfg.chain_id, &a, &snap, &txid))
-                                .and_then(|b| zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b));
+                                .inspect(|_| {
+                                    if let Ok(mut j) = journal.lock() {
+                                        let _ = j.sync();
+                                    }
+                                })
+                                .and_then(|n| {
+                                    zynzapd::publish::proposed_bundle(
+                                        &n,
+                                        &cfg.data_dir,
+                                        cfg.chain_id,
+                                        &a,
+                                        &snap,
+                                        &txid,
+                                    )
+                                })
+                                .and_then(|b| {
+                                    zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b)
+                                });
                             match built {
                                 Ok(files) => { eprintln!("zynzapd: proposed bundle for epoch {} published for endorsement ({} files)", epoch, files.len()); publisher.queue(files); }
                                 Err(e) => eprintln!("zynzapd: could not publish the proposed bundle for epoch {}: {}", epoch, e),
@@ -1051,7 +1362,12 @@ fn run() -> Result<(), String> {
             n.anchor_now(now);
         }
     }
-    { zynzapd::boot::save(&store, &journal, &shared); if let Ok(n) = shared.lock() { zynzapd::boot::save_replay(&cfg.data_dir, cfg.chain_id, &replay, n.state().epoch()); } }
+    {
+        zynzapd::boot::save(&store, &journal, &shared);
+        if let Ok(n) = shared.lock() {
+            zynzapd::boot::save_replay(&cfg.data_dir, cfg.chain_id, &replay, n.state().epoch());
+        }
+    }
     save_trees(&cfg, note_trees.as_ref());
     eprintln!("zynzapd: state saved, exiting");
     Ok(())

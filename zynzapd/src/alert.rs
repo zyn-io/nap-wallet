@@ -45,7 +45,12 @@ pub struct Webhook {
 
 impl Webhook {
     pub fn new(url: &str) -> Webhook {
-        Webhook { url: url.to_string(), agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build() }
+        Webhook {
+            url: url.to_string(),
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(10))
+                .build(),
+        }
     }
 }
 
@@ -74,14 +79,30 @@ pub struct Alerter<S: Sink> {
 
 impl<S: Sink> Alerter<S> {
     pub fn new(sink: Option<S>, chain_id: u32) -> Alerter<S> {
-        Alerter { sink, chain_id, after_failures: 3, stall_secs: 900, remind_secs: 3600, states: BTreeMap::new(), announced: BTreeMap::new() }
+        Alerter {
+            sink,
+            chain_id,
+            after_failures: 3,
+            stall_secs: 900,
+            remind_secs: 3600,
+            states: BTreeMap::new(),
+            announced: BTreeMap::new(),
+        }
     }
 
     /// Record one pass of `name`. `Ok(scanned_to)` or the error it ended in.
     pub fn report(&mut self, name: &str, now: u64, result: Result<u64, String>) {
-        let h = self.states.entry(name.to_string()).or_insert_with(|| Health {
-            name: name.to_string(), scanned_to: 0, last_ok: None, failures: 0, last_error: None, down: false,
-        });
+        let h = self
+            .states
+            .entry(name.to_string())
+            .or_insert_with(|| Health {
+                name: name.to_string(),
+                scanned_to: 0,
+                last_ok: None,
+                failures: 0,
+                last_error: None,
+                down: false,
+            });
         match result {
             Ok(to) => {
                 h.scanned_to = to;
@@ -94,7 +115,10 @@ impl<S: Sink> Alerter<S> {
                 h.last_error = Some(e);
             }
         }
-        let stalled = h.last_ok.map(|t| now.saturating_sub(t) >= self.stall_secs).unwrap_or(false);
+        let stalled = h
+            .last_ok
+            .map(|t| now.saturating_sub(t) >= self.stall_secs)
+            .unwrap_or(false);
         let failing = h.failures >= self.after_failures;
         let should_be_down = failing || stalled;
         let snapshot = h.clone();
@@ -121,11 +145,21 @@ impl<S: Sink> Alerter<S> {
     }
 
     fn emit(&mut self, what: &str, h: &Health, now: u64) {
-        let detail = h.last_error.clone().unwrap_or_else(|| "no successful pass".to_string());
+        let detail = h
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "no successful pass".to_string());
         let text = format!(
             "zyn chain {} — {} {}: {} (scanned to {}, {} consecutive failure(s), last ok {})",
-            self.chain_id, h.name, what, detail, h.scanned_to, h.failures,
-            h.last_ok.map(|t| format!("{}s ago", now.saturating_sub(t))).unwrap_or_else(|| "never".into())
+            self.chain_id,
+            h.name,
+            what,
+            detail,
+            h.scanned_to,
+            h.failures,
+            h.last_ok
+                .map(|t| format!("{}s ago", now.saturating_sub(t)))
+                .unwrap_or_else(|| "never".into())
         );
         eprintln!("zynzapd: ALERT {}", text);
         if let Some(s) = self.sink.as_mut() {
@@ -179,7 +213,11 @@ mod tests {
         assert_eq!(sent(&a).len(), 1);
         assert!(sent(&a)[0].contains("DOWN") && sent(&a)[0].contains("memo"));
         a.report("zcash", 50, Err("memo".into()));
-        assert_eq!(sent(&a).len(), 1, "a component still down is not re-announced every pass");
+        assert_eq!(
+            sent(&a).len(),
+            1,
+            "a component still down is not re-announced every pass"
+        );
         a.report("zcash", 60, Ok(101));
         assert_eq!(sent(&a).len(), 2);
         assert!(sent(&a)[1].contains("RECOVERED"));

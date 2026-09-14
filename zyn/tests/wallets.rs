@@ -19,7 +19,7 @@ fn swap(min_out: i64) -> Intent {
     Intent::SwapExactIn {
         account: [0u8; 32],
         asset_in: XZEC,
-        path: vec![1],
+        path: vec![swapvm::types::legacy_id(1)],
         amount_in: Fixed::whole(100),
         min_out: Fixed::whole(min_out),
     }
@@ -152,7 +152,10 @@ fn a_malformed_recovery_byte_is_refused_rather_than_guessed() {
 #[test]
 fn one_key_under_two_schemes_is_two_accounts() {
     let key = [3u8; 32];
-    assert_ne!(account_of(Scheme::Ed25519, &key), account_of(Scheme::Ed25519Solana, &key));
+    assert_ne!(
+        account_of(Scheme::Ed25519, &key),
+        account_of(Scheme::Ed25519Solana, &key)
+    );
     // And an address is not a public key, so no EVM account can collide with
     // an ed25519 one by construction.
     assert_ne!(Scheme::Secp256k1Eip712.key_len(), Scheme::Ed25519.key_len());
@@ -192,7 +195,10 @@ fn an_expired_envelope_is_refused_before_the_signature_is_examined() {
         let at = state.seq();
         swapvm::vm::apply(
             &mut state,
-            &swapvm::tx::SequencedIntent { seq: at + 1, intent: Intent::Checkpoint },
+            &swapvm::tx::SequencedIntent {
+                seq: at + 1,
+                intent: Intent::Checkpoint,
+            },
         );
     }
     assert!(state.epoch() > auth.valid_until_epoch);
@@ -226,7 +232,14 @@ fn a_native_key_authorises_and_resolves_to_its_own_account() {
     let sig = sign_ed(&key, Scheme::Ed25519, &auth, &intent);
 
     assert_eq!(
-        signer_of::<SwapState>(&Credential::Ed25519 { key: pk, signature: sig }, &auth, &intent),
+        signer_of::<SwapState>(
+            &Credential::Ed25519 {
+                key: pk,
+                signature: sig
+            },
+            &auth,
+            &intent
+        ),
         Ok(account_of(Scheme::Ed25519, &pk))
     );
 }
@@ -240,7 +253,14 @@ fn a_solana_wallet_authorises_a_swap() {
     let sig = sign_ed(&key, Scheme::Ed25519Solana, &auth, &intent);
 
     assert_eq!(
-        signer_of::<SwapState>(&Credential::Solana { key: pk, signature: sig }, &auth, &intent),
+        signer_of::<SwapState>(
+            &Credential::Solana {
+                key: pk,
+                signature: sig
+            },
+            &auth,
+            &intent
+        ),
         Ok(account_of(Scheme::Ed25519Solana, &pk))
     );
 }
@@ -258,7 +278,10 @@ fn a_solana_signature_is_not_a_native_one() {
 
     assert_eq!(
         signer_of::<SwapState>(
-            &Credential::Ed25519 { key: pk, signature: solana_sig },
+            &Credential::Ed25519 {
+                key: pk,
+                signature: solana_sig
+            },
             &auth,
             &intent
         ),
@@ -278,7 +301,14 @@ fn a_tampered_ed25519_swap_is_refused_outright() {
     // unlike ECDSA a tampered message fails outright rather than resolving to
     // some other account.
     assert_eq!(
-        signer_of::<SwapState>(&Credential::Ed25519 { key: pk, signature: sig }, &auth, &swap(1)),
+        signer_of::<SwapState>(
+            &Credential::Ed25519 {
+                key: pk,
+                signature: sig
+            },
+            &auth,
+            &swap(1)
+        ),
         Err(VerifyError::BadSignature)
     );
 }
@@ -286,7 +316,10 @@ fn a_tampered_ed25519_swap_is_refused_outright() {
 #[test]
 fn a_key_that_is_not_a_point_is_refused_rather_than_panicking() {
     let auth = envelope(CHAIN);
-    let cred = Credential::Ed25519 { key: [0xFF; 32], signature: [0u8; 64] };
+    let cred = Credential::Ed25519 {
+        key: [0xFF; 32],
+        signature: [0u8; 64],
+    };
     assert!(matches!(
         signer_of::<SwapState>(&cred, &auth, &swap(90)),
         Err(VerifyError::BadKey) | Err(VerifyError::BadSignature)
@@ -339,21 +372,26 @@ fn the_zyn_domain_declares_no_evm_chain_id() {
 /// that editing the text cannot quietly invalidate them.
 #[test]
 fn a_solana_signature_over_our_message_can_never_be_a_transaction() {
-    let Signed::Message(msg) = signed_bytes_as::<SwapState>(
-        Scheme::Ed25519Solana,
-        &envelope(CHAIN),
-        &swap(90),
-    ) else {
+    let Signed::Message(msg) =
+        signed_bytes_as::<SwapState>(Scheme::Ed25519Solana, &envelope(CHAIN), &swap(90))
+    else {
         unreachable!()
     };
 
     // Legacy layout: [required_sigs, readonly_signed, readonly_unsigned,
     // <compact-u16 account count>, 32 bytes per account, ...].
-    assert_eq!(msg[0] & 0x80, 0, "must parse as legacy, not as a versioned transaction");
+    assert_eq!(
+        msg[0] & 0x80,
+        0,
+        "must parse as legacy, not as a versioned transaction"
+    );
     let required_sigs = msg[0] as usize;
     let readonly_signed = msg[1] as usize;
     let account_count = msg[3] as usize;
-    assert!(msg[3] < 0x80, "the account count must be a one-byte compact-u16 for this reasoning");
+    assert!(
+        msg[3] < 0x80,
+        "the account count must be a one-byte compact-u16 for this reasoning"
+    );
 
     // 1. Every required signer must be one of the accounts, and every
     //    read-only signed account one of the signers. Ours are neither.

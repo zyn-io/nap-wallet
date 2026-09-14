@@ -7,8 +7,8 @@ use swapvm::tx::Intent;
 use swapvm::types::XZEC;
 use swapvm::{Fixed, Params};
 use zyn::verify::{
-    authorize_delegated, authorize_delegated_intent, decode_authorized,
-    decode_committed_intent, encode_authorized, CommittedError, Credential, Delegated, VerifyError,
+    authorize_delegated, authorize_delegated_intent, decode_authorized, decode_committed_intent,
+    encode_authorized, CommittedError, Credential, Delegated, VerifyError,
 };
 use zyn_vm::auth::{account_of, delegation_bytes_as, Authorization, Scheme, Signed};
 use zyn_vm::session::{session_payload, Delegation, CAP_SWAP, CAP_TRANSFER, CAP_WITHDRAW};
@@ -44,7 +44,7 @@ fn swap() -> Intent {
     Intent::SwapExactIn {
         account: owner_account(),
         asset_in: XZEC,
-        path: vec![1],
+        path: vec![swapvm::types::legacy_id(1)],
         amount_in: Fixed::whole(100),
         min_out: Fixed::whole(90),
     }
@@ -61,7 +61,12 @@ fn withdrawal() -> Intent {
 
 /// One MetaMask popup, opening a session.
 fn open_session(caps: u32, until: u64) -> (Delegation, Credential) {
-    let mut d = Delegation::session(owner_account(), session_key().verifying_key().to_bytes(), 0, until);
+    let mut d = Delegation::session(
+        owner_account(),
+        session_key().verifying_key().to_bytes(),
+        0,
+        until,
+    );
     d.capabilities = caps;
     let Signed::Prehash(digest) =
         delegation_bytes_as::<SwapState>(Scheme::Secp256k1Eip712, CHAIN, &d)
@@ -78,7 +83,9 @@ fn open_session(caps: u32, until: u64) -> (Delegation, Credential) {
 /// A trade, signed in the page with no wallet involved.
 fn sign_with_session(d: &Delegation, auth: &Authorization, intent: &Intent) -> [u8; 64] {
     let id = d.id(CHAIN, &auth.vm_id);
-    session_key().sign(&session_payload::<SwapState>(&id, auth, intent)).to_bytes()
+    session_key()
+        .sign(&session_payload::<SwapState>(&id, auth, intent))
+        .to_bytes()
 }
 
 #[test]
@@ -92,7 +99,7 @@ fn one_wallet_popup_authorises_many_trades() {
         let intent = Intent::SwapExactIn {
             account: owner_account(),
             asset_in: XZEC,
-            path: vec![1],
+            path: vec![swapvm::types::legacy_id(1)],
             amount_in: Fixed::whole(100),
             min_out: Fixed::whole(min_out),
         };
@@ -173,13 +180,9 @@ fn a_committed_delegation_is_reverified_from_its_own_bytes() {
         owner,
         session_signature: sign_with_session(&delegation, &auth, &intent),
     };
-    let authorized = authorize_delegated_intent::<SwapState>(
-        &delegated,
-        &auth,
-        intent.clone(),
-        &state(),
-    )
-    .expect("sequencer verification");
+    let authorized =
+        authorize_delegated_intent::<SwapState>(&delegated, &auth, intent.clone(), &state())
+            .expect("sequencer verification");
     let committed = encode_authorized::<SwapState>(&authorized);
 
     let replayed = decode_authorized::<SwapState>(&committed, &state())
@@ -205,7 +208,10 @@ fn a_committed_delegation_is_reverified_from_its_own_bytes() {
 fn a_session_key_cannot_rebind_a_withdrawal_destination() {
     let (d, owner_cred) = open_session(CAP_SWAP | CAP_WITHDRAW, 50);
     let auth = envelope();
-    let intent = Intent::BindWithdrawal { account: owner_account(), destination: [9u8; 32] };
+    let intent = Intent::BindWithdrawal {
+        account: owner_account(),
+        destination: [9u8; 32],
+    };
     let del = Delegated {
         delegation: d.clone(),
         owner: owner_cred,
@@ -254,7 +260,10 @@ fn a_session_expires_even_though_the_intent_has_not() {
         let at = st.seq();
         swapvm::vm::apply(
             &mut st,
-            &swapvm::tx::SequencedIntent { seq: at + 1, intent: Intent::Checkpoint },
+            &swapvm::tx::SequencedIntent {
+                seq: at + 1,
+                intent: Intent::Checkpoint,
+            },
         );
     }
     // The intent envelope is still good; the session is not.
@@ -300,8 +309,14 @@ fn the_session_prompt_names_the_powers_in_words() {
         "AuthorizeSession(bytes32 account,bytes32 sessionKey,string mayOnly,bytes32 policyHash,uint256 validFromEpoch,uint256 validUntilEpoch)"
     );
     let rendered = format!("{:?}", typed.fields);
-    assert!(rendered.contains("swap"), "the prompt did not say what it grants");
-    assert!(!rendered.contains("withdraw"), "a default session claimed withdrawal");
+    assert!(
+        rendered.contains("swap"),
+        "the prompt did not say what it grants"
+    );
+    assert!(
+        !rendered.contains("withdraw"),
+        "a default session claimed withdrawal"
+    );
 
     // And the Solana prompt says it too, in the text the wallet displays.
     let msg = zyn_vm::auth::delegation_message::<SwapState>(CHAIN, &d);

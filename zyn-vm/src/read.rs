@@ -16,6 +16,8 @@ pub enum WireError {
     TrailingBytes,
     /// A count field larger than the format allows.
     TooLong,
+    /// A bounded field had the right shape but an invalid canonical value.
+    InvalidValue,
 }
 
 /// Cursor over a byte slice. Every read is bounds-checked; a malformed frame
@@ -81,6 +83,16 @@ impl<'a> Decoder<'a> {
     pub fn opt_u32(&mut self) -> Result<Option<u32>, WireError> {
         let present = self.u8()?;
         let v = self.u32()?;
+        match present {
+            0 => Ok(None),
+            1 => Ok(Some(v)),
+            b => Err(WireError::UnknownDiscriminant(b)),
+        }
+    }
+    /// A presence byte plus an opaque 32-byte identity.
+    pub fn opt_hash(&mut self) -> Result<Option<[u8; 32]>, WireError> {
+        let present = self.u8()?;
+        let v = self.hash()?;
         match present {
             0 => Ok(None),
             1 => Ok(Some(v)),
