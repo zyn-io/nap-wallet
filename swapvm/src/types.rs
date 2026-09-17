@@ -24,6 +24,25 @@ pub type AssetId = [u8; 32];
 /// persistent identity in one crate while the other kept the old bytes.
 pub use zyn_vm::derive::ADDRESS_SCOPE_V1;
 
+
+/// **Treasury 26460** — the protocol treasury, creator and fee recipient for
+/// both official collections (§66.17).
+///
+/// A 2-of-3 threshold account: no single holder can spend from it, and the
+/// three shares sit on three separate machines. Provisioned 14 Sep 2026 by the
+/// same ceremony and relay the vault uses, over Ed25519 rather than RedPallas
+/// (§80.10), with all three participants independently deriving this account.
+///
+/// It is an ordinary `Scheme::Ed25519` account — a FROST group signature
+/// verifies as a single signer's, which is why nothing in the VM knows it is
+/// threshold-controlled (§80.2).
+pub const TREASURY_26460: AccountId = [
+    0xb3, 0xe4, 0xc4, 0x93, 0xbb, 0x79, 0x34, 0x92,
+    0x70, 0x26, 0x0f, 0x7d, 0x2e, 0x28, 0x82, 0xb4,
+    0xf1, 0xa7, 0x36, 0x34, 0x89, 0x35, 0x49, 0x33,
+    0x31, 0xe1, 0x8c, 0x95, 0x09, 0x8c, 0xfe, 0x99,
+];
+
 /// xZEC — the 1:1 execution-layer representation of deposited ZEC.
 ///
 /// The naming rule from the project plan: internally `xZEC`, displayed to users
@@ -46,6 +65,28 @@ pub const XZEC: AssetId = [
 pub const ZYN_POL: AccountId = [
     0xf4, 0x04, 0x35, 0xd1, 0x40, 0x6a, 0xbc, 0x3a, 0xa4, 0xbe, 0xfa, 0xf3, 0x80, 0xac, 0xea, 0x34,
     0xa4, 0xa8, 0x7e, 0xd7, 0x6a, 0x51, 0x53, 0x8f, 0x88, 0xd0, 0x9b, 0xa0, 0xd2, 0x93, 0x7e, 0x61,
+];
+
+/// The 2,100,000 ZYN that becomes the ZYN side of the opening ZYN:ZEC.zy
+/// market (§71.9). Keyless: `derive(ADDRESS_SCOPE_V1, "zyn-pol-zyn", [ZYN])`.
+///
+/// Distinct from [`ZYN_POL`], which accumulates the *ZEC.zy* that will pair
+/// against it. Two sides of one future pool, two accounts, neither spendable.
+pub const ZYN_POL_ZYN: AccountId = [
+    0x51, 0xae, 0xce, 0x7b, 0x7b, 0x47, 0xd6, 0x59, 0xe0, 0x55, 0xbe, 0x84, 0x99, 0xfe, 0xa5, 0x54,
+    0x5e, 0xf1, 0xc1, 0xcd, 0xf7, 0x86, 0x36, 0x36, 0x87, 0xd9, 0x2d, 0x6a, 0x90, 0xdc, 0x6b, 0xa6,
+];
+
+/// The 18,900,000 ZYN reserve (§71.2), in one keyless pot.
+///
+/// One pot rather than several on purpose. §71.2 says "pots" and names none,
+/// and §71.13 says nothing is owed to anyone, so inventing named allocations
+/// now would commit to a design that does not exist. §71.4 already allows the
+/// split to happen later — "what changes is which pot holds it" — and a move
+/// between keyless pots leaves all three of §71.3's numbers untouched.
+pub const ZYN_RESERVE: AccountId = [
+    0xc1, 0x3c, 0x18, 0x26, 0x31, 0xd7, 0x1c, 0x00, 0x3b, 0x26, 0x7b, 0xe7, 0x41, 0xe6, 0xea, 0x8a,
+    0x8b, 0x6a, 0x66, 0x29, 0x6d, 0xdf, 0x35, 0x4e, 0xda, 0x68, 0xc5, 0x08, 0x34, 0x95, 0x39, 0xb0,
 ];
 
 pub const ZYN_MAINNET: AssetId = [
@@ -319,5 +360,59 @@ mod testnet_params_tests {
     #[test]
     fn testnet_params_are_valid() {
         assert!(Params::testnet().validate().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod pinned_address_tests {
+    use super::*;
+
+    /// The pinned treasury must be the account the ceremony actually produced.
+    /// A transcribed constant is a constant that can be transcribed wrongly,
+    /// and every official collection address derives from this one.
+    #[test]
+    fn the_pinned_treasury_is_the_account_the_ceremony_agreed_on() {
+        let hex: alloc::string::String =
+            TREASURY_26460.iter().map(|b| alloc::format!("{:02x}", b)).collect();
+        assert_eq!(hex, "b3e4c493bb79349270260f7d2e2882b4f1a736348935493331e18c95098cfe99");
+        assert_ne!(TREASURY_26460, [0u8; 32], "the zero account is the unprovisioned sentinel");
+    }
+
+
+    /// `XZEC` and `ZYN_POL` are pinned literals. They agree with their
+    /// derivations today, and nothing was stopping them from drifting apart —
+    /// which is how the asset whose whole job is to be 1:1 with ZEC ends up
+    /// identified by a constant that derives from nothing. Same shape as the
+    /// bug where `derive_for` silently dropped the VM version (§66).
+    #[test]
+    fn xzec_is_the_derived_bridged_address_for_zcash() {
+        assert_eq!(
+            XZEC,
+            zyn_vm::bridged_address(ADDRESS_SCOPE_V1, b"zcash", b""),
+            "XZEC must stay the §66.13 derivation, not a number someone typed"
+        );
+    }
+
+    #[test]
+    fn the_zyn_pot_is_the_derived_pot_for_zec_zy() {
+        assert_eq!(
+            ZYN_POL,
+            zyn_vm::pot_address(ADDRESS_SCOPE_V1, b"zyn-pol", &[&XZEC]),
+            "the protocol-owned-liquidity pot must stay recomputable by anyone"
+        );
+    }
+
+    /// The property that makes the pot mechanism reusable: a different purpose
+    /// or a different scope is a different account, so a later raise needs no
+    /// new mechanism and cannot collide with an existing pot.
+    #[test]
+    fn pots_separate_by_purpose_and_by_scope() {
+        let other_asset = [9u8; 32];
+        let raise = zyn_vm::pot_address(ADDRESS_SCOPE_V1, b"raise", &[&XZEC]);
+        let escrow = zyn_vm::pot_address(ADDRESS_SCOPE_V1, b"escrow", &[&XZEC]);
+        let raise_other = zyn_vm::pot_address(ADDRESS_SCOPE_V1, b"raise", &[&other_asset]);
+        assert_ne!(raise, escrow, "different purposes, different accounts");
+        assert_ne!(raise, raise_other, "different scopes, different accounts");
+        assert_ne!(raise, ZYN_POL, "and none of them collide with an existing pot");
     }
 }

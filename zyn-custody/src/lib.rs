@@ -52,6 +52,7 @@ pub mod shares;
 pub mod shielded;
 pub mod signing;
 pub mod solana;
+pub mod treasury;
 pub mod transparent;
 pub mod watcher;
 pub mod zebra;

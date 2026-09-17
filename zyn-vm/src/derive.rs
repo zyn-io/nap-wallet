@@ -212,6 +212,30 @@ pub fn collection_address(program: &[u8], creator: &Address, symbol: &[u8]) -> A
     derive(program, b"collection", &[creator, symbol])
 }
 
+/// Derive a **keyless pot**: an account that holds value for one stated purpose
+/// and that no key can spend from.
+///
+/// This is the mechanism behind ZYN's protocol-owned-liquidity pot, every Cave
+/// launch's reserve and escrow accounts, and anything later that needs to raise
+/// or hold value against a named purpose. It is deliberately the same call for
+/// all of them, so a future token's raise is not a new mechanism to audit — it
+/// is this one with a different `purpose` and `scope`.
+///
+/// Two properties make it auditable without trusting an operator:
+///
+/// * **Nobody can spend it.** A derived address has no private key (§4.2), so
+///   value leaves only by the rules that name the pot.
+/// * **Anyone can recompute it.** Given the purpose and scope, the address
+///   follows — so an auditor can name the account before looking at any state,
+///   and check what it holds without being told where to look.
+///
+/// `purpose` separates kinds, so `["raise", x]` and `["escrow", x]` are
+/// unrelated accounts even for the same `x`. Balances with different movement
+/// rules must never share one (§66.14).
+pub fn pot_address(program: &[u8], purpose: &[u8], scope: &[&[u8]]) -> Address {
+    derive(program, purpose, scope)
+}
+
 /// Derive an item's id within its collection, from its serial number.
 ///
 /// Derived rather than allocated so that every item's identity is computable

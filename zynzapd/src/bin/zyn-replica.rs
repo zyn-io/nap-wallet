@@ -158,7 +158,20 @@ fn run() -> Result<(), String> {
     };
 
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let fetch = Http::new(mirrors.clone());
+    // Bundles may be sealed (§92): the journal and base state carry ownership,
+    // so they are encrypted at rest on every mirror. Wrapping the fetch is the
+    // whole integration — everything downstream asks for a path and is handed
+    // plaintext, and a bundle published without a key still reads.
+    let da_key = match std::env::var("ZYN_DA_KEY").ok().filter(|s| !s.trim().is_empty()) {
+        Some(v) => Some(zynzapd::dacrypt::key_from_hex(&v)?),
+        None => None,
+    };
+    let raw = Http::new(mirrors.clone());
+    let fetch = zynzapd::dacrypt::Opening {
+        inner: raw,
+        key: da_key,
+        chain: chain_id,
+    };
     let base = match std::env::var("ZYN_BASE_ROOT")
         .ok()
         .filter(|s| !s.is_empty())
@@ -180,6 +193,9 @@ fn run() -> Result<(), String> {
         params,
         base.as_ref().map(|(b, r)| (b.as_slice(), *r)),
     )?;
+    // A replica that re-serves bundles must seal them again, or mirroring
+    // for others would publish in the clear what the sequencer encrypted.
+    replica = replica.sealing_with(da_key);
     if let Some(set) = require_set {
         replica = replica.requiring(set);
         eprintln!("zyn-replica: only roots this replica reproduces AND the signer set endorses will be believed");
@@ -204,6 +220,7 @@ fn run() -> Result<(), String> {
         )
         .strict(strict);
         replica = replica.backed_by(Box::new(backing));
+        eprintln!("zyn-replica: BACKING VERIFIER — each credit is checked against this node's own Zcash before any root is endorsed");
         eprintln!(
             "zyn-replica: deposits are checked against THIS node — a credit it cannot see is refused, not endorsed{}",
             if strict { "; STRICT: a credit whose owner only the operator can vouch for is refused too" } else { "" }
@@ -383,6 +400,11 @@ fn run() -> Result<(), String> {
                         outstanding.push((anchor_id, 0));
                     }
                 }
+                // What this replica has itself verified as anchored. Its own
+                // ledger is the only signal it can trust for "settled" — the
+                // sequencer's "clears" is a claim about memory it may lose.
+                let settled: std::collections::BTreeSet<[u8; 32]> =
+                    replica.ledger().anchors().iter().map(|a| a.id()).collect();
                 let mut still: Vec<([u8; 32], u32)> = Vec::new();
                 for (anchor_id, tries) in outstanding.drain(..) {
                     let hex = anchor_id
@@ -412,7 +434,22 @@ fn run() -> Result<(), String> {
                             } else if tries % 20 == 0 {
                                 eprintln!("zyn-replica: still re-offering endorsement for {} ({} pass(es)); the set has not reached threshold", hex, tries);
                             }
-                            if !clears {
+                            // Keep offering until the anchor is *settled*, not
+                            // until the sequencer first says the certificate
+                            // clears. "Clears" is a statement about this
+                            // instant: the sequencer holds the signatures in
+                            // memory for an in-flight anchor, so a restart
+                            // drops them, and a signer that stopped on the
+                            // first "clears" never offers again. That leaves
+                            // the remaining signers below threshold forever —
+                            // the same failure §63 was written to cure, one
+                            // level up (§81).
+                            //
+                            // Re-offering a settled anchor is idempotent and
+                            // costs one call, so the safe direction is to keep
+                            // going until this replica has seen it anchored in
+                            // its own verified ledger.
+                            if !settled.contains(&anchor_id) {
                                 still.push((anchor_id, tries + 1));
                             }
                         }
@@ -426,6 +463,14 @@ fn run() -> Result<(), String> {
                             still.push((anchor_id, tries + 1));
                         }
                     }
+                }
+                // An anchor this replica never sees settle would otherwise be
+                // offered forever. Keep the newest few — enough to cover a
+                // sequencer restart mid-flight, bounded so a permanently
+                // stranded anchor cannot grow the list without limit.
+                const MAX_OUTSTANDING: usize = 8;
+                if still.len() > MAX_OUTSTANDING {
+                    still.drain(..still.len() - MAX_OUTSTANDING);
                 }
                 outstanding = still;
             } else {

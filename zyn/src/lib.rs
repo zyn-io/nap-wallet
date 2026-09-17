@@ -1,8 +1,16 @@
-//! Zyn — the microchain underneath ZynZap.
+//! Zyn — the application execution layer built for Zcash.
 //!
-//! `swapvm` decides what a swap *means*. This crate decides what a microchain
-//! *is*: when an epoch closes, what gets carried to Zcash, what a holder can
-//! prove without asking anyone, and what the whole arrangement costs per trade.
+//! This crate is the generic part: it decides what a microchain *is* — when an
+//! epoch closes, what gets carried to Zcash, what a holder can prove without
+//! asking anyone, and what the whole arrangement costs per action. It knows
+//! nothing about swaps. `swapvm` is application #1 and could be replaced
+//! without this crate moving.
+//!
+//! **Built *for* Zcash, not *of* it.** Zcash does not recognise Zyn, and Zyn
+//! does not inherit Zcash's security. What Zcash provides is a vault that holds
+//! the backing ZEC, and a place to record deposits, withdrawals and 32-byte
+//! state commitments that nobody can rewrite. What it does not do is validate
+//! a Zyn state transition (§103.3).
 //!
 //! ## Why the microchain, and not just an AMM on Zcash
 //!
@@ -25,8 +33,9 @@
 //! That ratio is not a demo statistic. It is the business:
 //!
 //! - **Traction** is what the ratio makes possible — sub-second swaps, at a
-//!   cost per trade low enough that a small trade is worth making. Zcash keeps
-//!   custody and final settlement; the microchain keeps the interaction.
+//!   cost per trade low enough that a small trade is worth making. A threshold
+//!   vault on Zcash holds the backing ZEC and Zcash timestamps the
+//!   commitments; the microchain executes and keeps the interaction.
 //! - **Revenue** is a slice of the fee on that flow, against an L1 cost that is
 //!   amortised across every action inside an anchor. The margin per trade is
 //!   `fee_share - (settlement_cost / actions_per_anchor)`, and the denominator

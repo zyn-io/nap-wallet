@@ -14,7 +14,7 @@
 use alloc::vec::Vec;
 
 use crate::fixed::Fixed;
-use crate::state::Symbol;
+use crate::state::{SupplyPolicy, Symbol};
 use crate::types::ChainOrigin;
 use crate::types::{AccountId, AssetId, CollectionId, OfferId, Params, PoolId};
 
@@ -280,6 +280,55 @@ pub enum Intent {
     /// Fixed supply at creation: no mint authority is retained, because an
     /// asset whose supply can move underneath a pool is an asset whose LPs
     /// cannot price their risk.
+    /// Create a token and place its whole supply into named accounts, with no
+    /// pool.
+    ///
+    /// [`Intent::CreateToken`] is a *launch*: it insists on seeding a market,
+    /// which needs xZEC that a chain at genesis does not have, and it hands the
+    /// unseeded remainder to the creator. Issuance and launching are different
+    /// acts, and ZYN needs the first without the second — its supply goes
+    /// straight into keyless pots and its market opens much later, in Phase 2.
+    ///
+    /// `allocations` must be non-empty and must sum to exactly `supply`: a
+    /// genesis that does not add up is a genesis nobody can audit.
+    IssueToken {
+        creator: AccountId,
+        symbol: Symbol,
+        supply: Fixed,
+        unit: Fixed,
+        /// Where the supply goes, in order. Amounts must sum to `supply`.
+        allocations: Vec<(AccountId, Fixed)>,
+        policy: SupplyPolicy,
+        /// Issue into the **native** namespace rather than the user one.
+        ///
+        /// `is_official_asset` decides officialdom by address, and the whole
+        /// guarantee rests on users being unable to derive a native address.
+        /// So this is operator-only: a chain may issue its own token, and no
+        /// account may forge one. `false` derives from the creator, which is
+        /// what any ordinary issuance wants.
+        native: bool,
+    },
+    /// Issue more of an existing token, if its policy permits.
+    ///
+    /// Only the authority named by the token's [`SupplyPolicy`] may do this,
+    /// and never past a `Capped` ceiling. A `Fixed` token rejects always, which
+    /// is what makes "fixed supply" a fact about the chain rather than a claim
+    /// on a website.
+    MintToken {
+        authority: AccountId,
+        asset: AssetId,
+        to: AccountId,
+        amount: Fixed,
+    },
+    /// Give up the power to issue, permanently.
+    ///
+    /// One-way: any policy becomes `Fixed` and no intent moves it back. This is
+    /// the only transition the VM offers, so a token's supply guarantees can
+    /// only ever get stronger.
+    RenounceMintAuthority {
+        authority: AccountId,
+        asset: AssetId,
+    },
     CreateToken {
         creator: AccountId,
         symbol: Symbol,
@@ -294,6 +343,9 @@ pub enum Intent {
         /// creator, so a launch also sets the opening price.
         token_liquidity: Fixed,
         fee_bps: u16,
+        /// Whether more may ever be issued, and by whom. Chosen here and never
+        /// loosened: see [`crate::state::SupplyPolicy`].
+        policy: SupplyPolicy,
     },
 
     /// Create a pool over a pair and seed it with the first liquidity.
@@ -529,6 +581,10 @@ pub struct SequencedIntent {
 /// chain's history that anyone replaying must reproduce.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reject {
+    /// The token's policy names no authority, or names a different one.
+    NotTheIssuer,
+    /// Issuing this much would pass the policy's cap.
+    AboveSupplyCap,
     /// A token with this symbol already exists.
     DuplicateSymbol,
     /// No collection with that id.
@@ -934,6 +990,24 @@ pub enum Receipt {
         pot: Fixed,
         price: Fixed,
         contributors: u32,
+    },
+    /// A token was created and its whole supply placed.
+    TokenIssued {
+        asset: AssetId,
+        creator: AccountId,
+        supply: Fixed,
+    },
+    /// More of a token was issued under its supply policy.
+    TokenMinted {
+        asset: AssetId,
+        to: AccountId,
+        amount: Fixed,
+        /// Total supply after issuing, so a reader never has to accumulate.
+        supply: Fixed,
+    },
+    /// A token's issuer gave up the power to issue, for good.
+    MintAuthorityRenounced {
+        asset: AssetId,
     },
     Minted {
         amount: Fixed,

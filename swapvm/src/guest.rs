@@ -121,6 +121,7 @@ mod tests {
                 xzec_liquidity: Fixed::whole(1_000),
                 token_liquidity: Fixed::whole(500_000),
                 fee_bps: 30,
+                            policy: crate::state::SupplyPolicy::Fixed,
             },
         );
         s

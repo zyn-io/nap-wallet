@@ -546,7 +546,35 @@ impl<C: Chain, B: Builder> AnchorSettler<C, B> {
         let queued = std::mem::take(&mut self.reanchor_pending);
         for anchor in queued {
             match self.reanchor(&anchor) {
-                Ok(_) => {}
+                Ok(txid) => {
+                    // Point the ledger at the transaction that now carries
+                    // this root. Without this the repair works on Zcash and
+                    // the node never finds out: `reorged` re-checks the *old*
+                    // txid, keeps reporting a repaired anchor as lost, and
+                    // refuses to anchor for ever. Three anchors sat confirmed
+                    // with 1,500 confirmations on 16 Sep while the sequencer
+                    // insisted the lineage was broken.
+                    //
+                    // Only the txid. The status stays `Confirmed`: §50.6 —
+                    // the Zyn side settled long ago, and `follow_up` acts on
+                    // `Broadcast` entries by calling `confirm_anchor`, so
+                    // moving it back would settle those exits a second time.
+                    // `reorged` reads `Confirmed` entries, so pointing it at
+                    // the live transaction is all that is needed to stop it
+                    // reporting a repaired anchor as lost.
+                    let id = anchor.id();
+                    if let Some(e) = self
+                        .ledger
+                        .entries
+                        .iter_mut()
+                        .find(|e| e.nonce == id)
+                    {
+                        e.id = txid;
+                    }
+                    if let Err(e) = self.save() {
+                        eprintln!("zynzapd: could not save the re-anchored ledger: {}", e);
+                    }
+                }
                 Err(e) => {
                     eprintln!(
                         "zynzapd: re-anchor of epoch {} waiting: {}",
@@ -1072,6 +1100,53 @@ mod tests {
         assert!(
             s.lineage_health().is_err(),
             "and it is reported, not just refused"
+        );
+    }
+
+    /// The repair has to be visible to the thing that decides whether a repair
+    /// is needed. On 16 Sep all three re-anchors confirmed on Zcash with over
+    /// 1,500 confirmations while the sequencer went on refusing to anchor,
+    /// because `reorged` re-checked the *old* txid — which really was gone —
+    /// and nothing had told the ledger about the new one.
+    #[test]
+    fn a_repaired_anchor_stops_being_reported_as_lost() {
+        let dir = tmp("reanchor-clears");
+        let chain = FakeChain::default();
+        chain.0.borrow_mut().tip = 100;
+        let mut s = AnchorSettler::new(chain.clone(), FakeBuilder::default(), 10, &dir, 1).unwrap();
+        let shared = node();
+        s.poll_once(&shared, 0).unwrap();
+        // Captured before it confirms: confirming clears the proposal, and the
+        // repair needs the anchor itself.
+        let anchor = { shared.lock().unwrap().proposed().copied().unwrap() };
+
+        // Confirm it, then take that transaction off the chain — a reorg.
+        let first = s.in_flight().unwrap().clone();
+        chain.0.borrow_mut().depth.insert(first.id.clone(), 20);
+        s.poll_once(&shared, 1).unwrap();
+        chain.0.borrow_mut().depth.remove(&first.id);
+
+        assert!(
+            !s.reorged().unwrap().is_empty(),
+            "the anchor is reported lost once its transaction is gone"
+        );
+
+        // Repair it the way the operator does, and let the replacement confirm.
+        s.queue_reanchor(anchor);
+        s.drain_reanchors();
+        // The fake names transactions by how many it has taken, not by their
+        // bytes — `broadcasts` holds hex.
+        let replacement = format!("tx{}", chain.0.borrow().broadcasts.len());
+        chain.0.borrow_mut().depth.insert(replacement.clone(), 20);
+
+        assert!(
+            s.reorged().unwrap().is_empty(),
+            "once repaired it must stop being reported lost, or the node refuses for ever"
+        );
+        assert_eq!(
+            s.ledger().entries.iter().filter(|e| e.status == Status::Confirmed).count(),
+            1,
+            "and §50.6 still holds: one confirmed entry, not two"
         );
     }
 

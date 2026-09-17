@@ -2,8 +2,8 @@
 //!
 //! ZynZap's execution layer. Borrowed from elastic-perps' `perpvm`: the same
 //! architecture, a different domain. There it was per-lane perpetual markets
-//! settling to Robinhood Chain; here it is one shared swap microchain settling
-//! to Zcash.
+//! settling to Robinhood Chain; here it is one shared swap microchain
+//! executing on Zyn, with its state commitments anchored to Zcash.
 //!
 //! This crate is *truth*. The control plane decides the canonical order of
 //! intents; this crate decides what those intents mean. Pricing happens here,

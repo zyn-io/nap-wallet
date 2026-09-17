@@ -39,6 +39,7 @@ fn a_restart_keeps_the_lineage_and_the_journal_reproduces_the_state() {
         0,
         false,
         &dir.join("da"),
+        None,
     )
     .unwrap();
     assert!(!first.resumed);
@@ -82,6 +83,7 @@ fn a_restart_keeps_the_lineage_and_the_journal_reproduces_the_state() {
         5,
         false,
         &dir.join("da"),
+        None,
     )
     .unwrap();
     assert!(second.resumed);
@@ -123,6 +125,7 @@ fn a_ledger_without_a_state_and_a_stale_state_are_both_refused() {
         0,
         false,
         &dir.join("da"),
+        None,
     )
     .unwrap();
     let shared = Arc::new(Mutex::new(b.node));
@@ -152,6 +155,7 @@ fn a_ledger_without_a_state_and_a_stale_state_are_both_refused() {
         0,
         false,
         &dir.join("da"),
+        None,
     )
     .map(|_| ())
     .unwrap_err();
@@ -168,6 +172,7 @@ fn a_ledger_without_a_state_and_a_stale_state_are_both_refused() {
         0,
         false,
         &dir.join("da"),
+        None,
     )
     .map(|_| ())
     .unwrap_err();

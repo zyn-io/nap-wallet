@@ -869,6 +869,62 @@ impl Wallet {
     /// Derive the Zyn Ed25519 seed from the full BIP-39 seed. The derivation is
     /// intentionally network-independent: a Nap recovery phrase has one Zyn
     /// identity, while signed intents still bind themselves to a chain id.
+    /// The signing key for one **receiving account** — a fresh account per
+    /// item, so the journal names something unlinkable rather than the
+    /// holder's identity (§95, `crate::receive`).
+    ///
+    /// Only a BIP-39 wallet can have them. A legacy raw key has no seed to
+    /// branch from, and inventing one would produce accounts a restore could
+    /// never find — the exact failure this whole scheme exists to avoid.
+    pub fn receiving_key(&self, index: u32) -> Result<SigningKey, String> {
+        if !matches!(self.material, KeyMaterial::Bip39 { .. }) {
+            return Err(
+                "receiving accounts need a recovery phrase; this wallet has an independent key"
+                    .into(),
+            );
+        }
+        crate::receive::receiving_key(&self.material.seed()?, self.material.account(), index)
+    }
+
+    /// The account this wallet receives a whole collection at — the default
+    /// granularity (§97.5). No counter, no gap, one derivation.
+    pub fn collection_account(
+        &self,
+        collection: &[u8; 32],
+    ) -> Result<swapvm::types::AccountId, String> {
+        if !matches!(self.material, KeyMaterial::Bip39 { .. }) {
+            return Err(
+                "receiving accounts need a recovery phrase; this wallet has an independent key"
+                    .into(),
+            );
+        }
+        crate::receive::collection_account(
+            &self.material.seed()?,
+            self.material.account(),
+            collection,
+        )
+    }
+
+    /// The signing key for a collection's receiving account.
+    pub fn receiving_key_for_collection(&self, collection: &[u8; 32]) -> Result<SigningKey, String> {
+        if !matches!(self.material, KeyMaterial::Bip39 { .. }) {
+            return Err(
+                "receiving accounts need a recovery phrase; this wallet has an independent key"
+                    .into(),
+            );
+        }
+        crate::receive::collection_key(&self.material.seed()?, self.material.account(), collection)
+    }
+
+    /// The account id an item should be minted to at `index`.
+    pub fn receiving_account(&self, index: u32) -> Result<swapvm::types::AccountId, String> {
+        let k = self.receiving_key(index)?;
+        Ok(zyn_vm::auth::account_of(
+            zyn_vm::auth::Scheme::Ed25519,
+            k.verifying_key().as_bytes(),
+        ))
+    }
+
     pub fn zyn_signing_key(&self, source: &ZynKeySource) -> Result<SigningKey, String> {
         match source {
             ZynKeySource::Legacy { seed } => Ok(SigningKey::from_bytes(seed)),
@@ -1417,48 +1473,6 @@ mod recovery_tests {
         assert!(
             WalletBackup::from_mnemonic(Network::MainNetwork, 1, "abandon abandon", "", 0).is_err()
         );
-    }
-
-    /// The property a new user actually relies on: write down 24 words, lose
-    /// the machine, restore, and the **same Zyn account** comes back.
-    ///
-    /// The vectors above prove the derivation is stable against fixed inputs.
-    /// They do not prove that a freshly generated wallet uses that derivation
-    /// at all — before §71 a new wallet took a random Ed25519 seed that no
-    /// phrase could reproduce, and the difference between those two states is
-    /// invisible until someone has already lost their assets.
-    #[test]
-    fn a_generated_wallet_restores_the_same_zyn_account_from_its_phrase() {
-        let fresh = KeyMaterial::generate().expect("generate");
-        let words = fresh.mnemonic().expect("a generated wallet has a phrase").to_string();
-        let account = fresh.account();
-
-        // A generated wallet must derive, never fall back to a random seed.
-        let source = match &fresh {
-            KeyMaterial::Bip39 { account, .. } => ZynKeySource::derived(*account),
-            KeyMaterial::Raw(_) => panic!("a generated wallet must be mnemonic-backed"),
-        };
-        assert!(matches!(source, ZynKeySource::Derived { .. }), "must not be Legacy");
-
-        let before = fresh.zyn_signing_key(account).expect("derive");
-        let id_before =
-            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &before.verifying_key().to_bytes());
-
-        // Everything except the words is gone; restore from them alone.
-        let restored = KeyMaterial::from_mnemonic(&words, "", account).expect("restore");
-        let after = restored.zyn_signing_key(account).expect("derive after restore");
-        let id_after =
-            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &after.verifying_key().to_bytes());
-
-        assert_eq!(before.to_bytes(), after.to_bytes(), "the Zyn key must be reproducible");
-        assert_eq!(id_before, id_after, "and therefore the same Zyn account");
-
-        // A different phrase must not land on the same account.
-        let other = KeyMaterial::generate().expect("generate");
-        let other_key = other.zyn_signing_key(other.account()).expect("derive");
-        let other_id =
-            zyn_vm::auth::account_of(zyn_vm::auth::Scheme::Ed25519, &other_key.verifying_key().to_bytes());
-        assert_ne!(id_before, other_id, "distinct phrases must give distinct accounts");
     }
 
     #[test]

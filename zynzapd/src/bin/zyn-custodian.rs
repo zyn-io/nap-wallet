@@ -72,8 +72,14 @@ fn main() {
     let solana_dir = std::env::var("ZYN_CUSTODY_SOLANA_SHARE")
         .ok()
         .map(PathBuf::from);
-    if zcash_dir.is_none() && solana_dir.is_none() {
-        eprintln!("zyn-custodian: set ZYN_CUSTODY_SHARE and/or ZYN_CUSTODY_SOLANA_SHARE (a directory with one share-*.bin and public.bin)");
+    // The Zyn treasury share. Same ciphersuite as the Solana vault's, a
+    // different key and a different authority — acting as the treasury is not
+    // spending the vault, so it gets its own directory and its own slot.
+    let treasury_dir = std::env::var("ZYN_CUSTODY_TREASURY_SHARE")
+        .ok()
+        .map(PathBuf::from);
+    if zcash_dir.is_none() && solana_dir.is_none() && treasury_dir.is_none() {
+        eprintln!("zyn-custodian: set ZYN_CUSTODY_SHARE, ZYN_CUSTODY_SOLANA_SHARE and/or ZYN_CUSTODY_TREASURY_SHARE (a directory with one share-*.bin and public.bin)");
         std::process::exit(1);
     }
     let listen = std::env::var("ZYN_CUSTODY_LISTEN").unwrap_or_else(|_| "127.0.0.1:8110".into());
@@ -89,6 +95,11 @@ fn main() {
         let (id, keys) = one_share::<Solana>(dir, "solana");
         held.push(format!("solana {}", id));
         custodian.solana = Some(zyn_custody::custodian::solana::Participant::new(keys));
+    }
+    if let Some(dir) = &treasury_dir {
+        let (id, keys) = one_share::<Solana>(dir, "treasury");
+        held.push(format!("treasury {}", id));
+        custodian.treasury = Some(zyn_custody::custodian::solana::Participant::new(keys));
     }
 
     let listener = match std::net::TcpListener::bind(&listen) {

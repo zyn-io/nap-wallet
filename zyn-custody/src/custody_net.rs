@@ -31,6 +31,12 @@ pub const OP_ROUND2: u8 = 2;
 /// it does not have.
 pub const OP_SOL_ROUND1: u8 = 3;
 pub const OP_SOL_ROUND2: u8 = 4;
+/// Threshold signing for a **Zyn treasury** account. The same Ed25519
+/// ciphersuite and the same two rounds as the Solana path — the message is an
+/// opaque payload either way — but a different key, so it needs its own slot
+/// rather than borrowing the vault's.
+pub const OP_TREASURY_ROUND1: u8 = 5;
+pub const OP_TREASURY_ROUND2: u8 = 6;
 pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 const MAX_FRAME: usize = 4 << 20;
@@ -262,6 +268,11 @@ fn sol_id_bytes(id: SolId) -> Vec<u8> {
 pub struct Custodian {
     pub zcash: Option<Participant>,
     pub solana: Option<SolParticipant>,
+    /// The Zyn treasury share, if this box holds one. Same ciphersuite as
+    /// `solana` and therefore the same participant type, but a distinct key:
+    /// spending the vault and acting as the treasury are different authorities
+    /// and must never be one slot.
+    pub treasury: Option<SolParticipant>,
 }
 
 impl Custodian {
@@ -277,6 +288,13 @@ impl Custodian {
                 let p = self.solana.as_mut().ok_or("no solana share here")?;
                 solana_op(p, op, &mut r, now)
             }
+            OP_TREASURY_ROUND1 | OP_TREASURY_ROUND2 => {
+                let p = self.treasury.as_mut().ok_or("no treasury share here")?;
+                // Same rounds, different key. The op code is what keeps a
+                // treasury request from ever reaching the vault's share.
+                let inner = if op == OP_TREASURY_ROUND1 { OP_SOL_ROUND1 } else { OP_SOL_ROUND2 };
+                solana_op(p, inner, &mut r, now)
+            }
             _ => Err("unknown op".into()),
         }
     }
@@ -288,7 +306,26 @@ impl Custodian {
         if let Some(p) = self.solana.as_mut() {
             p.drop_expired(now);
         }
+        if let Some(p) = self.treasury.as_mut() {
+            p.drop_expired(now);
+        }
     }
+}
+
+/// `OP_TREASURY_ROUND1 ‖ request_id ‖ message`
+pub fn encode_treasury_round1(request_id: u64, message: &[u8]) -> Vec<u8> {
+    let mut out = vec![OP_TREASURY_ROUND1];
+    out.extend_from_slice(&request_id.to_be_bytes());
+    put_bytes(&mut out, message);
+    out
+}
+
+/// `OP_TREASURY_ROUND2 ‖ request_id ‖ package`
+pub fn encode_treasury_round2(request_id: u64, package: &SolPackage) -> Result<Vec<u8>, String> {
+    let mut out = vec![OP_TREASURY_ROUND2];
+    out.extend_from_slice(&request_id.to_be_bytes());
+    put_bytes(&mut out, &package.serialize().map_err(|_| "package".to_string())?);
+    Ok(out)
 }
 
 /// `OP_SOL_ROUND1 ‖ request_id ‖ message`
@@ -310,13 +347,13 @@ pub fn encode_sol_round2(request_id: u64, package: &SolPackage) -> Result<Vec<u8
     Ok(out)
 }
 
-fn decode_sol_commitments(b: &[u8]) -> Option<(SolId, SolCommitments)> {
+pub fn read_sol_commitments(b: &[u8]) -> Option<(SolId, SolCommitments)> {
     let mut r = Reader::new(b);
     let id = SolId::deserialize(r.bytes()?).ok()?;
     Some((id, SolCommitments::deserialize(r.bytes()?).ok()?))
 }
 
-fn decode_sol_share(b: &[u8]) -> Option<(SolId, SolShare)> {
+pub fn read_sol_share(b: &[u8]) -> Option<(SolId, SolShare)> {
     let mut r = Reader::new(b);
     let id = SolId::deserialize(r.bytes()?).ok()?;
     Some((id, SolShare::deserialize(r.bytes()?).ok()?))
@@ -515,7 +552,7 @@ impl SolanaQuorum for RemoteSolanaQuorum {
                 .inner
                 .call(&addr, &frame)
                 .ok()
-                .and_then(|b| decode_sol_commitments(&b))
+                .and_then(|b| read_sol_commitments(&b))
             {
                 Some((id, c)) => {
                     out.insert(id, c);
@@ -541,7 +578,7 @@ impl SolanaQuorum for RemoteSolanaQuorum {
                 .inner
                 .call(&addr, &frame)
                 .ok()
-                .and_then(|b| decode_sol_share(&b))
+                .and_then(|b| read_sol_share(&b))
             {
                 if chosen.contains(&id) {
                     out.insert(id, share);
@@ -633,6 +670,7 @@ mod tests {
             .map(|k| Custodian {
                 zcash: None,
                 solana: Some(SolParticipant::new(k)),
+                treasury: None,
             })
             .collect();
         let message = b"a solana settlement message".to_vec();
@@ -640,7 +678,7 @@ mod tests {
         let req = encode_sol_round1(9, &message);
         let mut r1 = BTreeMap::new();
         for d in &mut daemons {
-            let (id, c) = decode_sol_commitments(&d.handle(&req, 0).unwrap()).unwrap();
+            let (id, c) = read_sol_commitments(&d.handle(&req, 0).unwrap()).unwrap();
             r1.insert(id, c);
         }
         let chosen: Vec<SolId> = r1.keys().take(2).copied().collect();
@@ -651,7 +689,7 @@ mod tests {
         for d in &mut daemons {
             let Some(p) = d.solana.as_ref() else { continue };
             if chosen.contains(&p.id()) {
-                let (id, share) = decode_sol_share(&d.handle(&req2, 0).unwrap()).unwrap();
+                let (id, share) = read_sol_share(&d.handle(&req2, 0).unwrap()).unwrap();
                 r2.insert(id, share);
             }
         }
@@ -673,11 +711,12 @@ mod tests {
         let mut d = Custodian {
             zcash: None,
             solana: Some(SolParticipant::new(keys[0].clone())),
+                treasury: None,
         };
         let mut other = SolParticipant::new(keys[1].clone());
 
         let (id, c) =
-            decode_sol_commitments(&d.handle(&encode_sol_round1(1, b"pay alice"), 0).unwrap())
+            read_sol_commitments(&d.handle(&encode_sol_round1(1, b"pay alice"), 0).unwrap())
                 .unwrap();
         let c2 = other
             .round1(1, b"pay mallory".to_vec(), 0, &mut rand::rngs::OsRng)
@@ -706,6 +745,7 @@ mod tests {
         let mut d = Custodian {
             zcash: Some(Participant::new(keys)),
             solana: None,
+                treasury: None,
         };
         let err = d.handle(&encode_sol_round1(1, b"anything"), 0).unwrap_err();
         assert_eq!(err, "no solana share here");
@@ -735,6 +775,7 @@ mod tests {
             let c = Arc::new(Mutex::new(Custodian {
                 zcash: None,
                 solana: Some(SolParticipant::new(k)),
+                treasury: None,
             }));
             std::thread::spawn(move || serve(c, listener, || 0));
         }
@@ -761,4 +802,28 @@ mod tests {
         assert!(handle(&mut d, &[OP_ROUND1], 0).is_err());
         assert!(handle(&mut d, &[99], 0).is_err());
     }
+}
+
+/// One request to a custodian, length-prefixed both ways.
+pub fn ask(addr: &str, frame: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(addr).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(std::time::Duration::from_secs(20))).ok();
+    s.write_all(&(frame.len() as u32).to_be_bytes()).map_err(|e| e.to_string())?;
+    s.write_all(frame).map_err(|e| e.to_string())?;
+    let mut len = [0u8; 4];
+    s.read_exact(&mut len).map_err(|e| e.to_string())?;
+    let n = u32::from_be_bytes(len) as usize;
+    if n > 1 << 20 {
+        return Err("reply too large".into());
+    }
+    let mut body = vec![0u8; n];
+    s.read_exact(&mut body).map_err(|e| e.to_string())?;
+    // The reply is `status ‖ body`. Handing the status byte on to a decoder
+    // makes every custodian error look like a malformed package.
+    let (status, rest) = body.split_first().ok_or("empty reply")?;
+    if *status != STATUS_OK {
+        return Err(String::from_utf8_lossy(rest).into_owned());
+    }
+    Ok(rest.to_vec())
 }

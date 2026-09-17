@@ -292,9 +292,10 @@ impl VaultKeys {
             });
             return Ok(()); // not ours, which is almost always the case
         };
-        if memo::is_anchor(&memo_bytes) {
-            // The vault's own commitment to a Zyn root. It is money only in the
-            // sense that a stamp is: recorded, never credited, never a problem.
+        if memo::is_anchor(&memo_bytes) || memo::is_publication(&memo_bytes) {
+            // The vault's own commitment — to a Zyn root, or to a digest it is
+            // publishing so the thing can be shown to predate a block. Money
+            // only in the sense that a stamp is: recorded, never credited.
             out.actions.push(ScannedAction {
                 pool,
                 cmx,

@@ -25,4 +25,5 @@ zyn-bridge = { path = "../zyn-bridge", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
+cave-randomness = { path = "../cave-randomness" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }

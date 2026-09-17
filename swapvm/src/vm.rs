@@ -31,7 +31,7 @@ use alloc::vec::Vec;
 use crate::amm;
 use crate::fixed::Fixed;
 use crate::merkle::{fold_intent, Hash};
-use crate::state::{
+use crate::state::{SupplyPolicy, 
     symbol as make_symbol, Binding, Checkpoint, Order, PendingCredit, PendingExit, Phase, Pool,
     Reference, SwapState, Symbol, TokenInfo,
 };
@@ -248,6 +248,33 @@ pub fn apply_committed(
             content,
         } => create_bridged_item(state, *symbol, *origin, *content),
         Intent::Reblind { account, blind } => reblind(state, *account, *blind),
+        Intent::IssueToken {
+            creator,
+            symbol,
+            supply,
+            unit,
+            allocations,
+            policy,
+            native,
+        } => issue_token(
+            state,
+            *creator,
+            *symbol,
+            *supply,
+            *unit,
+            allocations,
+            *policy,
+            *native,
+        ),
+        Intent::MintToken {
+            authority,
+            asset,
+            to,
+            amount,
+        } => mint_token(state, *authority, *asset, *to, *amount),
+        Intent::RenounceMintAuthority { authority, asset } => {
+            renounce_mint_authority(state, *authority, *asset)
+        }
         Intent::CreateToken {
             creator,
             symbol,
@@ -256,6 +283,7 @@ pub fn apply_committed(
             xzec_liquidity,
             token_liquidity,
             fee_bps,
+            policy,
         } => launch_token(
             state,
             *creator,
@@ -265,6 +293,7 @@ pub fn apply_committed(
             *xzec_liquidity,
             *token_liquidity,
             *fee_bps,
+            *policy,
         ),
         Intent::CreatePool {
             creator,
@@ -805,6 +834,11 @@ pub fn checkpoint(state: &mut SwapState) -> Checkpoint {
 /// Accounts an intent could leave empty, so pruning need not sweep the map.
 fn accounts_named(i: &Intent) -> Vec<AccountId> {
     match i {
+        Intent::IssueToken { allocations, .. } => {
+            allocations.iter().map(|(to, _)| *to).collect()
+        }
+        Intent::MintToken { authority, to, .. } => alloc::vec![*authority, *to],
+        Intent::RenounceMintAuthority { authority, .. } => alloc::vec![*authority],
         Intent::MintCollectionItem { creator, to, .. }
         | Intent::MintCollectionItemLegacy { creator, to, .. } => alloc::vec![*creator, *to],
         // The escrow can be left empty by the last take or cancel, like any
@@ -826,8 +860,7 @@ fn accounts_named(i: &Intent) -> Vec<AccountId> {
         | Intent::CreditDeposit { account, .. }
         | Intent::Reblind { account, .. }
         | Intent::CreateToken {
-            creator: account, ..
-        }
+            creator: account, .. }
         | Intent::LaunchCurve {
             creator: account, ..
         }
@@ -1247,10 +1280,7 @@ fn charge_collection_fee(state: &mut SwapState, fee: CollectionFee) -> Result<Re
     c.pool = c.pool.add(to_pool).ok_or(ARITH)?;
     let (pool, redeem_price) = (c.pool, c.redeem_price());
     if to_pol.is_positive() {
-        state
-            .account_mut(&crate::types::ZYN_POL)
-            .credit(XZEC, to_pol)
-            .ok_or(ARITH)?;
+        crate::launch::credit_pol(state, to_pol)?;
     }
     if to_creator.is_positive() {
         state
@@ -1703,6 +1733,7 @@ fn mint_collection_item(
             vault: None,
             content: Some(content),
             collection: Some(collection),
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     let a = state.account_mut(&to);
@@ -1882,6 +1913,7 @@ fn mint_item(
             vault: None,
             content: Some(content),
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     let a = state.account_mut(&creator);
@@ -2102,6 +2134,159 @@ fn create_bridged_item(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Create a token and place its supply, with no market.
+///
+/// The sum check is the whole safety property: every unit that exists after
+/// this intent is accounted to a named address, so `total` really is the sum of
+/// what the allocations say. A genesis that does not add up cannot be audited
+/// later, and ZYN's three supply numbers (§71.3) are only meaningful if the
+/// first one was exact.
+fn issue_token(
+    state: &mut SwapState,
+    creator: AccountId,
+    sym: Symbol,
+    supply: Fixed,
+    unit: Fixed,
+    allocations: &[(AccountId, Fixed)],
+    policy: SupplyPolicy,
+    native: bool,
+) -> Result<Vec<Receipt>, Reject> {
+    if !supply.is_positive() || !unit.is_positive() {
+        return Err(Reject::NonPositiveAmount);
+    }
+    if allocations.is_empty() {
+        return Err(Reject::InvalidParams);
+    }
+    if let Some(cap) = policy.cap() {
+        if cap < supply {
+            return Err(Reject::AboveSupplyCap);
+        }
+    }
+    // Native assets live in their own namespace precisely so a user cannot
+    // derive one; see `types::is_official_asset`.
+    let asset = if native {
+        zyn_vm::native_address(ADDRESS_SCOPE_V1, state.chain_id, sym.as_bytes())
+    } else {
+        zyn_vm::asset_address(ADDRESS_SCOPE_V1, &creator, sym.as_bytes())
+    };
+    if state.tokens.contains_key(&asset) {
+        return Err(Reject::DuplicateSymbol);
+    }
+    let info = TokenInfo {
+        symbol: sym,
+        supply,
+        lp_of: None,
+        genesis_pool: None,
+        unit,
+        bond: Fixed::ZERO,
+        vault: None,
+        content: None,
+        collection: None,
+        supply_policy: policy,
+    };
+    let mut total = Fixed::ZERO;
+    for (_, amount) in allocations {
+        if !amount.is_positive() {
+            return Err(Reject::NonPositiveAmount);
+        }
+        if !info.admits(*amount) {
+            return Err(Reject::Indivisible);
+        }
+        total = total.add(*amount).ok_or(ARITH)?;
+    }
+    if total != supply {
+        return Err(Reject::InvalidParams);
+    }
+
+    // Validated in full before anything moves, so a rejection leaves no token
+    // half-issued.
+    state.tokens.insert(asset, info);
+    for (to, amount) in allocations {
+        state
+            .accounts
+            .entry(*to)
+            .or_default()
+            .credit(asset, *amount)
+            .ok_or(ARITH)?;
+    }
+    Ok(alloc::vec![Receipt::TokenIssued {
+        asset,
+        creator,
+        supply,
+    }])
+}
+
+/// Issue more of a token whose policy permits it.
+///
+/// The authority check is the whole intent: everything else follows from the
+/// token's own record. A `Fixed` token names no authority, so it rejects here
+/// no matter who asks, including whoever created it.
+fn mint_token(
+    state: &mut SwapState,
+    authority: AccountId,
+    asset: AssetId,
+    to: AccountId,
+    amount: Fixed,
+) -> Result<Vec<Receipt>, Reject> {
+    if !amount.is_positive() {
+        return Err(Reject::NonPositiveAmount);
+    }
+    let info = state.tokens.get(&asset).ok_or(Reject::UnknownAsset)?;
+    if info.supply_policy.authority() != Some(authority) {
+        return Err(Reject::NotTheIssuer);
+    }
+    // A bridged asset's supply tracks custody elsewhere, and an LP asset's
+    // tracks a pool. Letting an issuer add to either would break the identity
+    // `check_invariants` proves.
+    if info.is_bridged() || info.lp_of.is_some() {
+        return Err(Reject::NotTheIssuer);
+    }
+    if !info.admits(amount) {
+        return Err(Reject::Indivisible);
+    }
+    let supply = info.supply.add(amount).ok_or(ARITH)?;
+    if let Some(cap) = info.supply_policy.cap() {
+        if supply > cap {
+            return Err(Reject::AboveSupplyCap);
+        }
+    }
+    state
+        .tokens
+        .get_mut(&asset)
+        .ok_or(Reject::UnknownAsset)?
+        .supply = supply;
+    state
+        .accounts
+        .entry(to)
+        .or_default()
+        .credit(asset, amount)
+        .ok_or(ARITH)?;
+    Ok(alloc::vec![Receipt::TokenMinted {
+        asset,
+        to,
+        amount,
+        supply
+    }])
+}
+
+/// Give up the power to issue, permanently.
+///
+/// The only transition the VM offers between policies, and it runs one way.
+/// A token's supply guarantees can therefore strengthen over its life and
+/// never weaken, which is what makes the policy worth reading at all.
+fn renounce_mint_authority(
+    state: &mut SwapState,
+    authority: AccountId,
+    asset: AssetId,
+) -> Result<Vec<Receipt>, Reject> {
+    let info = state.tokens.get_mut(&asset).ok_or(Reject::UnknownAsset)?;
+    if info.supply_policy.authority() != Some(authority) {
+        return Err(Reject::NotTheIssuer);
+    }
+    info.supply_policy = SupplyPolicy::Fixed;
+    Ok(alloc::vec![Receipt::MintAuthorityRenounced { asset }])
+}
+
 fn launch_token(
     state: &mut SwapState,
     creator: AccountId,
@@ -2111,6 +2296,7 @@ fn launch_token(
     xzec_liquidity: Fixed,
     token_liquidity: Fixed,
     fee_bps: u16,
+    policy: SupplyPolicy,
 ) -> Result<Vec<Receipt>, Reject> {
     if !supply.is_positive() || !token_liquidity.is_positive() {
         return Err(Reject::NonPositiveAmount);
@@ -2133,6 +2319,11 @@ fn launch_token(
         return Err(Reject::InsufficientBalance);
     }
 
+    if let Some(cap) = policy.cap() {
+        if cap < supply {
+            return Err(Reject::AboveSupplyCap);
+        }
+    }
     let info = TokenInfo {
         symbol: sym,
         supply,
@@ -2143,6 +2334,7 @@ fn launch_token(
         vault: None,
         content: None,
         collection: None,
+        supply_policy: policy,
     };
     if !info.admits(supply) || !info.admits(token_liquidity) {
         return Err(Reject::Indivisible);
@@ -2200,6 +2392,7 @@ fn launch_token(
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     state.pools.insert(
@@ -2396,6 +2589,7 @@ fn create_pool(
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     state.pools.insert(
@@ -2716,10 +2910,7 @@ fn credit_external_pool_fee(state: &mut SwapState, h: &Hop) -> Result<(), Reject
             .account_mut(&creator)
             .credit(XZEC, h.creator_fee)
             .ok_or(ARITH)?;
-        state
-            .account_mut(&crate::types::ZYN_POL)
-            .credit(XZEC, h.pol_fee)
-            .ok_or(ARITH)?;
+        crate::launch::credit_pol(state, h.pol_fee)?;
     } else {
         if h.creator_fee.is_positive() || h.pol_fee.is_positive() {
             return Err(ARITH);
@@ -3227,6 +3418,7 @@ mod quote_tests {
                 xzec_liquidity: Fixed::whole(10_000),
                 token_liquidity: Fixed::whole(5_000_000),
                 fee_bps: 30,
+                            policy: SupplyPolicy::Fixed,
             },
         );
         let token = match r[0] {
@@ -3413,6 +3605,7 @@ mod clearing_tests {
                 xzec_liquidity: Fixed::whole(10_000),
                 token_liquidity: Fixed::whole(5_000_000),
                 fee_bps: 30,
+                            policy: SupplyPolicy::Fixed,
             },
         );
         let token = match r[0] {
@@ -4757,5 +4950,404 @@ mod offer_tests {
         assert_eq!(back.offers, s.offers);
         assert_eq!(back.next_offer_id, s.next_offer_id);
         assert_eq!(back.state_root(), s.state_root());
+    }
+}
+
+#[cfg(test)]
+mod supply_policy_tests {
+    use super::*;
+    use crate::state::{SupplyPolicy, SwapState};
+    use crate::types::XZEC;
+
+    const ISSUER: AccountId = [9u8; 32];
+    const HOLDER: AccountId = [8u8; 32];
+
+    fn go(s: &mut SwapState, i: Intent) -> Vec<Receipt> {
+        let at = s.seq + 1;
+        apply(s, &SequencedIntent { seq: at, intent: i })
+    }
+
+    fn rejected(rs: &[Receipt]) -> Option<Reject> {
+        rs.iter().find_map(|r| match r {
+            Receipt::Rejected { reason, .. } => Some(*reason),
+            _ => None,
+        })
+    }
+
+    /// A chain with enough xZEC for ISSUER to launch a token.
+    fn chain() -> SwapState {
+        let mut s = SwapState::new(7, Params::v1());
+        let amount = Fixed::whole(1_000_000);
+        let observed = s.backing_of(XZEC).add(amount).unwrap();
+        go(
+            &mut s,
+            Intent::AttestVaultBalance {
+                asset: XZEC,
+                observed,
+            },
+        );
+        let d = Intent::next_deposit(&s, ISSUER, XZEC, amount, [1u8; 32]);
+        go(&mut s, d);
+        // A credited deposit is not spendable until the epoch that carried it
+        // reaches Zcash, so the test has to confirm one to fund anything.
+        let epoch = s.epoch;
+        go(&mut s, Intent::Checkpoint);
+        go(&mut s, Intent::ConfirmAnchor { epoch });
+        s
+    }
+
+    fn launch(s: &mut SwapState, sym: &[u8], policy: SupplyPolicy) -> AssetId {
+        let rs = go(
+            s,
+            Intent::CreateToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(sym),
+                supply: Fixed::whole(1_000),
+                unit: Fixed::raw(1),
+                xzec_liquidity: Fixed::whole(20_000),
+                token_liquidity: Fixed::whole(500),
+                fee_bps: 30,
+                policy,
+            },
+        );
+        assert_eq!(rejected(&rs), None, "the launch itself must succeed");
+        zyn_vm::asset_address(ADDRESS_SCOPE_V1, &ISSUER, sym)
+    }
+
+    /// The default, and what every token created before this existed is: there
+    /// is no authority, so nobody can issue, including the creator.
+    #[test]
+    fn a_fixed_token_can_never_be_minted_by_anyone() {
+        let mut s = chain();
+        let asset = launch(&mut s, b"FIXED", SupplyPolicy::Fixed);
+        let before = s.tokens.get(&asset).unwrap().supply;
+
+        for who in [ISSUER, HOLDER] {
+            let rs = go(
+                &mut s,
+                Intent::MintToken {
+                    authority: who,
+                    asset,
+                    to: HOLDER,
+                    amount: Fixed::whole(1),
+                },
+            );
+            assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer));
+        }
+        assert_eq!(s.tokens.get(&asset).unwrap().supply, before);
+    }
+
+    #[test]
+    fn an_open_token_mints_only_for_its_authority() {
+        let mut s = chain();
+        let asset = launch(&mut s, b"OPEN", SupplyPolicy::Open { authority: ISSUER });
+        let before = s.tokens.get(&asset).unwrap().supply;
+
+        let rs = go(
+            &mut s,
+            Intent::MintToken {
+                authority: HOLDER,
+                asset,
+                to: HOLDER,
+                amount: Fixed::whole(5),
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer), "a stranger cannot issue");
+
+        go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset,
+                to: HOLDER,
+                amount: Fixed::whole(5),
+            },
+        );
+        assert_eq!(
+            s.tokens.get(&asset).unwrap().supply,
+            before.add(Fixed::whole(5)).unwrap(),
+            "supply rises by exactly what was issued"
+        );
+        assert_eq!(s.accounts.get(&HOLDER).unwrap().balance(asset), Fixed::whole(5));
+    }
+
+    /// The cap is the promise a capped token makes, so it has to hold at the
+    /// boundary, not merely somewhere past it.
+    #[test]
+    fn a_capped_token_mints_up_to_the_cap_and_not_one_unit_past() {
+        let mut s = chain();
+        let asset = launch(
+            &mut s,
+            b"CAPPED",
+            SupplyPolicy::Capped {
+                authority: ISSUER,
+                cap: Fixed::whole(1_500),
+            },
+        );
+        // Exactly to the cap is allowed.
+        go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset,
+                to: HOLDER,
+                amount: Fixed::whole(500),
+            },
+        );
+        assert_eq!(s.tokens.get(&asset).unwrap().supply, Fixed::whole(1_500));
+
+        let rs = go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset,
+                to: HOLDER,
+                amount: Fixed::raw(1),
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::AboveSupplyCap));
+        assert_eq!(s.tokens.get(&asset).unwrap().supply, Fixed::whole(1_500));
+    }
+
+    #[test]
+    fn a_cap_below_the_opening_supply_is_refused_at_creation() {
+        let mut s = chain();
+        let rs = go(
+            &mut s,
+            Intent::CreateToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(b"BAD"),
+                supply: Fixed::whole(1_000),
+                unit: Fixed::raw(1),
+                xzec_liquidity: Fixed::whole(20_000),
+                token_liquidity: Fixed::whole(500),
+                fee_bps: 30,
+                policy: SupplyPolicy::Capped {
+                    authority: ISSUER,
+                    cap: Fixed::whole(999),
+                },
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::AboveSupplyCap));
+    }
+
+    /// The only transition the VM offers, and it runs one way: a token's
+    /// supply guarantees can strengthen over its life and never weaken.
+    #[test]
+    fn renouncing_is_permanent_and_only_the_authority_may_do_it() {
+        let mut s = chain();
+        let asset = launch(&mut s, b"GIVEUP", SupplyPolicy::Open { authority: ISSUER });
+
+        let rs = go(
+            &mut s,
+            Intent::RenounceMintAuthority {
+                authority: HOLDER,
+                asset,
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer));
+
+        go(
+            &mut s,
+            Intent::RenounceMintAuthority {
+                authority: ISSUER,
+                asset,
+            },
+        );
+        assert_eq!(s.tokens.get(&asset).unwrap().supply_policy, SupplyPolicy::Fixed);
+
+        // And there is no way back: the former authority is now a stranger.
+        let rs = go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset,
+                to: HOLDER,
+                amount: Fixed::whole(1),
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer));
+    }
+
+    /// An issuer's mint and the VM's own supply bookkeeping must never share a
+    /// mechanism, or `check_invariants` stops meaning anything.
+    #[test]
+    fn bridged_and_lp_assets_refuse_an_issuers_mint() {
+        let mut s = chain();
+        let rs = go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset: XZEC,
+                to: HOLDER,
+                amount: Fixed::whole(1),
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer));
+    }
+    /// The property the whole genesis rests on: every unit that exists is
+    /// accounted to a named address, so `total` is exact by construction.
+    #[test]
+    fn issuance_places_the_whole_supply_and_refuses_anything_else() {
+        let mut s = SwapState::new(7, Params::v1());
+        let pot_a = [0xaau8; 32];
+        let pot_b = [0xbbu8; 32];
+        let supply = Fixed::whole(21_000_000);
+
+        // Short by one unit.
+        let rs = go(
+            &mut s,
+            Intent::IssueToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(b"ZYN"),
+                supply,
+                unit: Fixed::raw(1),
+                allocations: alloc::vec![
+                    (pot_a, Fixed::whole(2_100_000)),
+                    (pot_b, Fixed::whole(18_900_000).sub(Fixed::raw(1)).unwrap()),
+                ],
+                policy: SupplyPolicy::Fixed,
+                native: false,
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::InvalidParams));
+        let asset = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &ISSUER, b"ZYN");
+        assert!(
+            !s.tokens.contains_key(&asset),
+            "a rejected issuance leaves no token behind"
+        );
+
+        // Exact.
+        go(
+            &mut s,
+            Intent::IssueToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(b"ZYN"),
+                supply,
+                unit: Fixed::raw(1),
+                allocations: alloc::vec![
+                    (pot_a, Fixed::whole(2_100_000)),
+                    (pot_b, Fixed::whole(18_900_000)),
+                ],
+                policy: SupplyPolicy::Fixed,
+                native: false,
+            },
+        );
+        assert_eq!(s.tokens.get(&asset).unwrap().supply, supply);
+        assert_eq!(s.accounts.get(&pot_a).unwrap().balance(asset), Fixed::whole(2_100_000));
+        assert_eq!(s.accounts.get(&pot_b).unwrap().balance(asset), Fixed::whole(18_900_000));
+        assert_eq!(
+            s.accounts.get(&ISSUER).map(|a| a.balance(asset)).unwrap_or(Fixed::ZERO),
+            Fixed::ZERO,
+            "the creator keeps nothing it was not allocated"
+        );
+        // And being Fixed, nobody can add to it afterwards.
+        let rs = go(
+            &mut s,
+            Intent::MintToken {
+                authority: ISSUER,
+                asset,
+                to: ISSUER,
+                amount: Fixed::raw(1),
+            },
+        );
+        assert_eq!(rejected(&rs), Some(Reject::NotTheIssuer));
+    }
+
+    #[test]
+    fn issuance_needs_no_pool_and_so_needs_no_xzec() {
+        // A chain with no deposits at all: this is genesis.
+        let mut s = SwapState::new(7, Params::v1());
+        go(
+            &mut s,
+            Intent::IssueToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(b"GEN"),
+                supply: Fixed::whole(100),
+                unit: Fixed::raw(1),
+                allocations: alloc::vec![(HOLDER, Fixed::whole(100))],
+                policy: SupplyPolicy::Fixed,
+                native: false,
+            },
+        );
+        let asset = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &ISSUER, b"GEN");
+        assert_eq!(s.tokens.get(&asset).unwrap().supply, Fixed::whole(100));
+        assert!(s.pools.is_empty(), "issuance opens no market");
+    }
+
+    #[test]
+    fn issuing_the_same_symbol_twice_is_refused() {
+        let mut s = SwapState::new(7, Params::v1());
+        let i = || Intent::IssueToken {
+            creator: ISSUER,
+            symbol: crate::state::symbol(b"ONCE"),
+            supply: Fixed::whole(10),
+            unit: Fixed::raw(1),
+            allocations: alloc::vec![(HOLDER, Fixed::whole(10))],
+            policy: SupplyPolicy::Fixed,
+            native: false,
+        };
+        go(&mut s, i());
+        let rs = go(&mut s, i());
+        assert_eq!(rejected(&rs), Some(Reject::DuplicateSymbol));
+    }
+    /// The guarantee `is_official_asset` rests on: a user issuing under the
+    /// same symbol lands in the `asset` namespace, never the native one, so
+    /// the official ZYN and a lookalike are different addresses and the
+    /// lookalike is not official on any chain.
+    #[test]
+    fn a_user_cannot_forge_the_native_asset_by_reusing_its_symbol() {
+        let mut s = SwapState::new(26_460, Params::v1());
+        go(
+            &mut s,
+            Intent::IssueToken {
+                creator: ISSUER,
+                symbol: crate::state::symbol(b"ZYN"),
+                supply: Fixed::whole(21_000_000),
+                unit: Fixed::raw(1),
+                allocations: alloc::vec![(HOLDER, Fixed::whole(21_000_000))],
+                policy: SupplyPolicy::Fixed,
+                native: false,
+            },
+        );
+        let theirs = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &ISSUER, b"ZYN");
+        let real = zyn_vm::native_address(ADDRESS_SCOPE_V1, 26_460, b"ZYN");
+        assert_ne!(theirs, real, "a user issuance cannot reach the native address");
+        assert_eq!(real, crate::types::ZYN_MAINNET);
+        assert!(!crate::types::is_official_asset(26_460, &theirs));
+        assert!(crate::types::is_official_asset(26_460, &real));
+    }
+
+    /// Native issuance is the chain's own act, so no account speaks for it.
+    #[test]
+    fn a_native_issuance_names_no_signer_and_is_therefore_operator_only() {
+        use zyn_vm::spec::MicrochainVm;
+        let native = Intent::IssueToken {
+            creator: [0u8; 32],
+            symbol: crate::state::symbol(b"ZYN"),
+            supply: Fixed::whole(1),
+            unit: Fixed::raw(1),
+            allocations: alloc::vec![(HOLDER, Fixed::whole(1))],
+            policy: SupplyPolicy::Fixed,
+            native: true,
+        };
+        assert!(
+            <SwapState as MicrochainVm>::intent_authorities(&native).is_empty(),
+            "no account may authorise a native issuance"
+        );
+        let user = Intent::IssueToken {
+            creator: ISSUER,
+            symbol: crate::state::symbol(b"CAT"),
+            supply: Fixed::whole(1),
+            unit: Fixed::raw(1),
+            allocations: alloc::vec![(HOLDER, Fixed::whole(1))],
+            policy: SupplyPolicy::Fixed,
+            native: false,
+        };
+        assert_eq!(
+            <SwapState as MicrochainVm>::intent_authorities(&user),
+            alloc::vec![ISSUER],
+            "an ordinary issuance is authorised by its creator"
+        );
     }
 }

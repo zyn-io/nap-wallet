@@ -8,6 +8,13 @@
 //! ```text
 //!   zyn-dkg relay <participants>                    ZYN_DKG_LISTEN (0.0.0.0:8120)
 //!   zyn-dkg join  <relay host:port> <my-index> <threshold> <participants> <out-dir>
+//!   zyn-dkg treasury <relay host:port> <my-index> <threshold> <participants> <out-dir>
+//!
+//! `treasury` runs the identical ceremony over Ed25519 instead of RedPallas, so
+//! a threshold-controlled **Zyn account** comes out where `join` produces a
+//! Zcash vault. Same relay, same rounds, same one-share-per-box guarantee — the
+//! relay cannot tell the two apart, because it forwards bytes and keys them by
+//! identifier without decoding the package.
 //! ```
 //!
 //! Each participant ends with a share dir (`share-*.bin` + `public.bin`) — the
@@ -66,6 +73,40 @@ fn main() {
             }
             eprintln!("zyn-dkg: share written to {} — vault address is the group's; this box holds one share of {}", out.display(), participants);
         }
+        Some("treasury") if a.len() == 7 => {
+            let relay = &a[2];
+            let idx: u16 = a[3].parse().unwrap_or_else(|_| die("index"));
+            let threshold: u16 = a[4].parse().unwrap_or_else(|_| die("threshold"));
+            let participants: u16 = a[5].parse().unwrap_or_else(|_| die("participants"));
+            let out = std::path::PathBuf::from(&a[6]);
+            if threshold < 2 || threshold > participants {
+                die("threshold must be at least 2 and no more than the participants");
+            }
+            eprintln!(
+                "zyn-dkg: treasury ceremony — participant {} of {} (threshold {}) via {}",
+                idx, participants, threshold, relay
+            );
+            type T = zyn_custody::treasury::ZynAccount;
+            let keys = zyn_custody::dkg_net::net::participate_for::<T>(
+                relay,
+                idx,
+                threshold,
+                participants,
+            )
+            .unwrap_or_else(|e| die(&e));
+            std::fs::create_dir_all(&out).unwrap_or_else(|e| die(&e.to_string()));
+            zyn_custody::shares::save::<T>(&out, &[(*keys.key_package.identifier(), keys.clone())])
+                .unwrap_or_else(|e| die(&e.to_string()));
+            let account = zyn_custody::treasury::account_of_group(&keys.public_package)
+                .unwrap_or_else(|_| die("could not derive the account"));
+            let hex: String = account.iter().map(|b| format!("{:02x}", b)).collect();
+            // The account is public and every participant must see the same one;
+            // the share beside it is the secret, and this box holds exactly one.
+            eprintln!("zyn-dkg: share written to {}", out.display());
+            eprintln!("zyn-dkg: treasury account {}", hex);
+            eprintln!("zyn-dkg: every participant must print this same account — if one differs, the ceremony did not agree and the result must be discarded");
+            println!("{}", hex);
+        }
         // Reads a share dir's group viewing key and prints the vault's address.
         // Worth its own subcommand: the address has to be known and checked
         // *before* anyone funds it, and deriving it by hand from a hex blob at
@@ -101,7 +142,8 @@ fn main() {
             println!("{}", keys.address(0, network));
         }
         _ => {
-            eprintln!("usage:\n  zyn-dkg relay <participants>\n  zyn-dkg join <relay host:port> <my-index> <threshold> <participants> <out-dir>\n  zyn-dkg address <share-dir> <mainnet|testnet>");
+            eprintln!("usage:\n  zyn-dkg relay <participants>\n  zyn-dkg join <relay host:port> <my-index> <threshold> <participants> <out-dir>
+  zyn-dkg treasury <relay host:port> <my-index> <threshold> <participants> <out-dir>\n  zyn-dkg address <share-dir> <mainnet|testnet>");
             std::process::exit(2);
         }
     }

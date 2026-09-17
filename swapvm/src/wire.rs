@@ -29,7 +29,7 @@
 use alloc::vec::Vec;
 
 use crate::merkle::Encoder;
-use crate::state::Symbol;
+use crate::state::{SupplyPolicy, Symbol};
 use crate::tx::{Hop, Intent, Receipt, Reject, SequencedIntent};
 use crate::types::{AssetId, CollectionId, Params, PoolId};
 
@@ -218,6 +218,38 @@ fn encode_path(e: &mut Encoder, path: &[PoolId]) {
 // ---------------------------------------------------------------------------
 // Intents
 // ---------------------------------------------------------------------------
+
+/// Encode a supply policy: a tag, then only the fields that tag carries.
+/// A genesis allocation list is small by nature; the bound exists so a
+/// malformed frame cannot ask for an enormous allocation up front.
+const MAX_ALLOCATIONS: usize = 256;
+
+fn encode_policy(e: &mut Encoder, policy: &SupplyPolicy) {
+    e.u8(policy.code());
+    match policy {
+        SupplyPolicy::Fixed => {}
+        SupplyPolicy::Capped { authority, cap } => {
+            e.bytes(authority).fixed(*cap);
+        }
+        SupplyPolicy::Open { authority } => {
+            e.bytes(authority);
+        }
+    }
+}
+
+fn decode_policy(d: &mut Decoder) -> Result<SupplyPolicy, WireError> {
+    Ok(match d.u8()? {
+        0 => SupplyPolicy::Fixed,
+        1 => SupplyPolicy::Capped {
+            authority: d.account()?,
+            cap: d.fixed()?,
+        },
+        2 => SupplyPolicy::Open {
+            authority: d.account()?,
+        },
+        b => return Err(WireError::UnknownDiscriminant(b)),
+    })
+}
 
 pub fn encode_intent(e: &mut Encoder, i: &Intent) {
     match i {
@@ -431,6 +463,7 @@ pub fn encode_intent(e: &mut Encoder, i: &Intent) {
             xzec_liquidity,
             token_liquidity,
             fee_bps,
+            policy,
         } => {
             e.u8(3)
                 .bytes(creator)
@@ -440,6 +473,43 @@ pub fn encode_intent(e: &mut Encoder, i: &Intent) {
                 .fixed(*xzec_liquidity)
                 .fixed(*token_liquidity)
                 .u16(*fee_bps);
+            encode_policy(e, policy);
+        }
+        Intent::IssueToken {
+            creator,
+            symbol,
+            supply,
+            unit,
+            allocations,
+            policy,
+            native,
+        } => {
+            e.u8(44)
+                .bytes(creator)
+                .symbol(symbol)
+                .fixed(*supply)
+                .fixed(*unit)
+                .u32(allocations.len() as u32);
+            for (to, amount) in allocations {
+                e.bytes(to).fixed(*amount);
+            }
+            encode_policy(e, policy);
+            e.u8(*native as u8);
+        }
+        Intent::MintToken {
+            authority,
+            asset,
+            to,
+            amount,
+        } => {
+            e.u8(42)
+                .bytes(authority)
+                .bytes(asset)
+                .bytes(to)
+                .fixed(*amount);
+        }
+        Intent::RenounceMintAuthority { authority, asset } => {
+            e.u8(43).bytes(authority).bytes(asset);
         }
         Intent::CreatePool {
             creator,
@@ -601,6 +671,36 @@ pub fn decode_intent(d: &mut Decoder) -> Result<Intent, WireError> {
             xzec_liquidity: d.fixed()?,
             token_liquidity: d.fixed()?,
             fee_bps: d.u16()?,
+            policy: decode_policy(d)?,
+        },
+        44 => Intent::IssueToken {
+            creator: d.account()?,
+            symbol: d.symbol()?,
+            supply: d.fixed()?,
+            unit: d.fixed()?,
+            allocations: {
+                let n = d.u32()?;
+                if n as usize > MAX_ALLOCATIONS {
+                    return Err(WireError::TooLong);
+                }
+                let mut v = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    v.push((d.account()?, d.fixed()?));
+                }
+                v
+            },
+            policy: decode_policy(d)?,
+            native: d.u8()? != 0,
+        },
+        42 => Intent::MintToken {
+            authority: d.account()?,
+            asset: d.asset()?,
+            to: d.account()?,
+            amount: d.fixed()?,
+        },
+        43 => Intent::RenounceMintAuthority {
+            authority: d.account()?,
+            asset: d.asset()?,
         },
         4 => Intent::CreatePool {
             creator: d.account()?,
@@ -835,6 +935,8 @@ pub fn reject_code(r: Reject) -> u8 {
         Reject::OfferExpired => 44,
         Reject::CannotTakeOwnOffer => 45,
         Reject::NotTheMaker => 46,
+        Reject::NotTheIssuer => 53,
+        Reject::AboveSupplyCap => 54,
         Reject::CollectionFull => 37,
         Reject::NotACollectionItem => 38,
         Reject::NotTheWholeItem => 39,
@@ -942,6 +1044,28 @@ fn encode_hop(e: &mut Encoder, h: &Hop) {
 
 pub fn encode_receipt(e: &mut Encoder, r: &Receipt) {
     match r {
+        Receipt::TokenIssued {
+            asset,
+            creator,
+            supply,
+        } => {
+            e.u8(55).bytes(asset).bytes(creator).fixed(*supply);
+        }
+        Receipt::TokenMinted {
+            asset,
+            to,
+            amount,
+            supply,
+        } => {
+            e.u8(53)
+                .bytes(asset)
+                .bytes(to)
+                .fixed(*amount)
+                .fixed(*supply);
+        }
+        Receipt::MintAuthorityRenounced { asset } => {
+            e.u8(54).bytes(asset);
+        }
         Receipt::DepositCredited {
             account,
             asset,
@@ -1596,6 +1720,7 @@ mod tests {
             xzec_liquidity: Fixed::whole(10),
             token_liquidity: Fixed::whole(1_000_000),
             fee_bps: 30,
+                    policy: SupplyPolicy::Fixed,
         });
         round_trip(Intent::CreatePool {
             creator: acct(1),
@@ -1647,6 +1772,51 @@ mod tests {
         round_trip(Intent::Checkpoint);
         round_trip(Intent::SetParams {
             params: Params::v1(),
+        });
+        // The supply policy travels with the intent, and each shape carries a
+        // different number of fields, so each shape needs its own trip.
+        for policy in [
+            SupplyPolicy::Fixed,
+            SupplyPolicy::Capped {
+                authority: [7u8; 32],
+                cap: Fixed::whole(21_000_000),
+            },
+            SupplyPolicy::Open {
+                authority: [7u8; 32],
+            },
+        ] {
+            round_trip(Intent::CreateToken {
+                creator: [1u8; 32],
+                symbol: symbol(b"CAT"),
+                supply: Fixed::whole(1_000),
+                unit: Fixed::raw(1),
+                xzec_liquidity: Fixed::whole(10),
+                token_liquidity: Fixed::whole(500),
+                fee_bps: 30,
+                policy,
+            });
+        }
+        round_trip(Intent::MintToken {
+            authority: [7u8; 32],
+            asset: [2u8; 32],
+            to: [3u8; 32],
+            amount: Fixed::whole(5),
+        });
+        round_trip(Intent::RenounceMintAuthority {
+            authority: [7u8; 32],
+            asset: [2u8; 32],
+        });
+        round_trip(Intent::IssueToken {
+            creator: [1u8; 32],
+            symbol: symbol(b"ZYN"),
+            supply: Fixed::whole(21_000_000),
+            unit: Fixed::raw(1),
+            allocations: alloc::vec![
+                ([0xaau8; 32], Fixed::whole(2_100_000)),
+                ([0xbbu8; 32], Fixed::whole(18_900_000)),
+            ],
+            policy: SupplyPolicy::Fixed,
+            native: false,
         });
     }
 

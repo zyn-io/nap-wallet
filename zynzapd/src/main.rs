@@ -197,6 +197,52 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Issue ZYN at the chain's genesis, once.
+///
+/// ZYN is the chain's own asset, so the chain issues it: native addresses are
+/// operator-only precisely so that no account can forge one, which is what
+/// makes `is_official_asset` mean anything. The amounts and destinations are
+/// constants rather than configuration — DECISIONS §71 fixed them, and a
+/// genesis that could be fat-fingered at deploy time is not a fixed supply.
+///
+/// Idempotent: if the asset already exists this does nothing, so a restart
+/// never issues twice. And it cannot issue twice in any case, because the
+/// second attempt derives the same address and is refused as a duplicate.
+fn issue_zyn_at_genesis(n: &mut zyn::node::Node<swapvm::state::SwapState>, chain_id: u32) -> Result<(), String> {
+    let zyn = zyn_vm::native_address(swapvm::types::ADDRESS_SCOPE_V1, chain_id, b"ZYN");
+    if n.state().tokens.contains_key(&zyn) {
+        return Ok(());
+    }
+    let step = n.submit_operator(
+        swapvm::tx::Intent::IssueToken {
+            creator: [0u8; 32],
+            symbol: swapvm::state::symbol(b"ZYN"),
+            supply: swapvm::fixed::Fixed::whole(21_000_000),
+            unit: swapvm::fixed::Fixed::raw(1),
+            // All of it into the reserve. The POL pot fills from here as
+            // ZEC.zy accrues (§71.24), one unit of ZYN per 0.0002 ZEC — which
+            // is what makes the opening price a fact about real backing rather
+            // than an allocation decided at genesis. Pre-filling the pot would
+            // leave nothing to match and the market with no way to become due.
+            allocations: vec![(
+                swapvm::types::ZYN_RESERVE,
+                swapvm::fixed::Fixed::whole(21_000_000),
+            )],
+            policy: swapvm::state::SupplyPolicy::Fixed,
+            native: true,
+        },
+        now_secs(),
+    );
+    if step.rejected() {
+        return Err(format!("could not issue ZYN: {:?}", step.receipts));
+    }
+    eprintln!(
+        "zynzapd: ZYN issued — 21,000,000, fixed supply, no mint authority, all of it \
+         in the keyless reserve; the POL pot fills from it as ZEC.zy accrues"
+    );
+    Ok(())
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("zynzapd: {}", e);
@@ -219,6 +265,7 @@ fn run() -> Result<(), String> {
         now_secs(),
         manual,
         &cfg.da_dir,
+        cfg.da_key.as_ref(),
     )?;
     let zynzapd::boot::Booted {
         mut node,
@@ -232,6 +279,28 @@ fn run() -> Result<(), String> {
         match zyn::anchor::SignerSet::new(keys.clone(), *threshold) {
             Ok(set) => {
                 eprintln!("zynzapd: SIGNER SET configured — {} of {} endorsements release each root; a root nobody reproduces never settles", threshold, keys.len());
+                // Where the vault's viewing key is narrowed to some signers,
+                // say how many of *those* must endorse. Without it a threshold
+                // could be met entirely by signers who cannot check a credit
+                // at all, and a fabricated deposit would settle unexamined
+                // (§97.2).
+                let set = match &cfg.backing_signers {
+                    Some(who) => match set.requiring_backing(who.clone(), cfg.backing_threshold) {
+                        Ok(s) => {
+                            eprintln!(
+                                "zynzapd: BACKING — {} of {} endorsers must be verifiers that hold the vault's viewing key and check each credit against Zcash",
+                                cfg.backing_threshold,
+                                who.len()
+                            );
+                            s
+                        }
+                        Err(e) => return Err(format!("ZYN_BACKING_SIGNERS: {}", e)),
+                    },
+                    None => {
+                        eprintln!("zynzapd: BACKING — no subset named, so every signer is assumed to hold the vault's viewing key and check credits");
+                        set
+                    }
+                };
                 node = node.with_signers(set);
             }
             Err(e) => return Err(format!("ZYN_SIGNER_SET: {}", e)),
@@ -253,6 +322,15 @@ fn run() -> Result<(), String> {
     }
 
     let shared: rpc::Shared = Arc::new(Mutex::new(node));
+
+    // ZYN exists from the chain's first moment, so this runs before anything
+    // else touches state. §71.1: minted once, and there is no second chance.
+    {
+        let mut n = shared
+            .lock()
+            .map_err(|_| "node lock poisoned".to_string())?;
+        issue_zyn_at_genesis(&mut n, cfg.chain_id)?;
+    }
 
     if cfg.launch || cfg.launch_threshold.is_some() {
         return Err("ZYN_LAUNCH and ZYN_LAUNCH_THRESHOLD belong to the superseded bridge-fee/halving design; remove them. Cave LaunchCurve is the only public fungible launch path".into());
@@ -1019,6 +1097,26 @@ fn run() -> Result<(), String> {
         cfg.chain_id,
     );
     alerter.after_failures = cfg.alert_after_failures;
+    // Every custodian this node would need a signature from, deduped: anchors
+    // and exits are usually the same federation, and a set watched twice reads
+    // as two failures for one cause.
+    let custodian_addrs: Vec<String> = {
+        let mut v: Vec<String> = Vec::new();
+        for list in [
+            cfg.zebra.as_ref().and_then(|z| z.settle.as_ref()).and_then(|s| s.custodians.clone()),
+            cfg.solana.as_ref().and_then(|s| s.settle.as_ref()).and_then(|s| s.custodians.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for a in list {
+                if !v.contains(&a) {
+                    v.push(a);
+                }
+            }
+        }
+        v
+    };
     alerter.stall_secs = cfg.stall_secs;
     match &cfg.alert_url {
         Some(u) => eprintln!(
@@ -1074,11 +1172,67 @@ fn run() -> Result<(), String> {
             n
         ),
     }
+    // A Zebra connection kept for the clock alone. The ZYN market's opening
+    // schedule is measured in Zcash blocks (§71.29) because that is a clock
+    // nobody trading on Zyn can accelerate — but it only works if the chain is
+    // actually told the height, so this runs whether or not a bridge is
+    // configured and independently of whether a scan is making progress.
+    let mut height_clock = cfg.zebra.as_ref().and_then(|z| {
+        let auth = match (&z.user, &z.password) {
+            (Some(u), Some(p)) => Some((u.as_str(), p.as_str())),
+            _ => None,
+        };
+        match Zebra::connect(&z.host, z.port, auth, cfg.network) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                eprintln!("zynzapd: no Zcash height clock ({}); the ZYN market schedule cannot advance", e);
+                None
+            }
+        }
+    });
+    let mut last_height = 0u64;
+
     let mut last_save = now_secs();
     let mut last_scan = 0u64;
     while !STOPPING.load(Ordering::SeqCst) {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let now = now_secs();
+
+        // Once a minute is ample for a clock whose blocks are ~75 seconds.
+        if now.saturating_sub(last_height) >= 60 {
+            last_height = now;
+            if let Some(z) = height_clock.as_mut() {
+                match z.chain_info() {
+                    Ok(info) => {
+                        if let Ok(mut n) = shared.lock() {
+                            if info.blocks > n.state().zcash_height {
+                                let step = n.submit_operator(
+                                    swapvm::tx::Intent::ZcashHeight {
+                                        height: info.blocks,
+                                    },
+                                    now,
+                                );
+                                for r in &step.receipts {
+                                    if let swapvm::tx::Receipt::MarketOpened {
+                                        pool, amount, zec, ..
+                                    } = r
+                                    {
+                                        eprintln!(
+                                            "zynzapd: ZYN MARKET OPENED at Zcash height {} — {} ZYN against {} ZEC.zy in pool {}",
+                                            info.blocks,
+                                            amount,
+                                            zec,
+                                            pool.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("zynzapd: height clock unavailable: {}", e),
+                }
+            }
+        }
 
         let sealed = match shared.lock() {
             Err(_) => {
@@ -1208,7 +1362,7 @@ fn run() -> Result<(), String> {
                                 )
                             })
                             .and_then(|b| {
-                                zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b)
+                                zynzapd::publish::write_local_sealed(&cfg.da_dir, cfg.chain_id, &b, cfg.da_key.as_ref())
                             });
                         match built {
                             Ok(files) => {
@@ -1244,6 +1398,73 @@ fn run() -> Result<(), String> {
                     },
                 };
                 alerter.report("anchors", now, health);
+                // Each signer separately, because the aggregate cannot see
+                // this. `endorsement_health` fires when an anchor sits
+                // unendorsed — but with a threshold of two out of three, one
+                // signer can be dead for days while every certificate clears
+                // and every pass reports success. That is exactly what
+                // happened on 15-16 Sep (§89.2). A set is only as redundant as
+                // its quietest member, so the quietest member gets its own
+                // component and its own alert.
+                let rows: Vec<([u8; 32], Option<u64>, u64)> = shared
+                    .lock()
+                    .ok()
+                    .and_then(|n| {
+                        let at = n.ledger().len() as u64;
+                        n.signer_liveness().map(|(set, seen)| {
+                            set.signers()
+                                .iter()
+                                .map(|k| (*k, seen.get(k).copied(), at))
+                                .collect()
+                        })
+                    })
+                    .unwrap_or_default();
+                {
+                    // The custodians, by the cheapest honest question: does
+                    // anything accept a connection on that port. Threshold
+                    // signing needs them present, and a reverse tunnel that
+                    // dropped because its host went to sleep looks exactly like
+                    // a healthy quorum right up until a signature is needed
+                    // (§89.10). A connect proves the listener, not the share.
+                    for addr in custodian_addrs.iter() {
+                        let r = match std::net::TcpStream::connect_timeout(
+                            &match addr.parse() {
+                                Ok(a) => a,
+                                Err(e) => {
+                                    alerter.report(
+                                        &format!("custodian {}", addr),
+                                        now,
+                                        Err(format!("unparseable address: {}", e)),
+                                    );
+                                    continue;
+                                }
+                            },
+                            std::time::Duration::from_secs(3),
+                        ) {
+                            Ok(_) => Ok(0),
+                            Err(e) => Err(format!("not accepting connections: {}", e)),
+                        };
+                        alerter.report(&format!("custodian {}", addr), now, r);
+                    }
+                    for (key, last, at) in rows {
+                        let name = format!("signer {}", &zynzapd::client::hex(&key)[..8]);
+                        let behind = last.map(|l| at.saturating_sub(l));
+                        let r = match behind {
+                            // Silent for longer than an unendorsed anchor would
+                            // be tolerated: the same patience, per signer.
+                            Some(n) if cfg.endorse_stall_passes > 0
+                                && n > cfg.endorse_stall_passes as u64 => Err(format!(
+                                "no endorsement for {} anchors — the certificate still clears without it, which is why nothing else reports this",
+                                n
+                            )),
+                            Some(_) => Ok(at),
+                            None => Err(
+                                "never heard from since this node started".to_string()
+                            ),
+                        };
+                        alerter.report(&name, now, r);
+                    }
+                }
                 // Publish the proposal's bundle as soon as it is broadcast, so
                 // signers can verify and endorse before it settles. Idempotent:
                 // the index takes each epoch once, the files are rewritten (the
@@ -1285,7 +1506,7 @@ fn run() -> Result<(), String> {
                                     )
                                 })
                                 .and_then(|b| {
-                                    zynzapd::publish::write_local(&cfg.da_dir, cfg.chain_id, &b)
+                                    zynzapd::publish::write_local_sealed(&cfg.da_dir, cfg.chain_id, &b, cfg.da_key.as_ref())
                                 });
                             match built {
                                 Ok(files) => { eprintln!("zynzapd: proposed bundle for epoch {} published for endorsement ({} files)", epoch, files.len()); publisher.queue(files); }

@@ -224,6 +224,7 @@ fn run(federated: bool) {
             let c = Arc::new(Mutex::new(zyn_custody::custody_net::Custodian {
                 zcash: None,
                 solana: Some(zyn_custody::custodian::solana::Participant::new(k.clone())),
+                treasury: None,
             }));
             std::thread::spawn(move || zyn_custody::custody_net::serve(c, listener, now_secs));
         }

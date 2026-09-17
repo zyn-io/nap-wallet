@@ -70,10 +70,125 @@ pub const POT_ASSETS: AccountId = [0xF5; 32];
 /// escrow is not ours to spend, and `state.offers` is the ledger of whose it is.
 pub const POT_OFFERS: AccountId = [0xF6; 32];
 
+/// ZEC per ZYN at which the reserve matches the POL pot: `0.0002`.
+///
+/// §71.11's Phase-2 trigger and §71.9's 2,100,000 are the same statement seen
+/// twice — 420 ZEC.zy divided by this ratio is exactly 2,100,000 ZYN. Holding
+/// the ratio here makes the opening price a property of how the pot was filled
+/// rather than a number someone has to remember to hit.
+pub const POL_ZEC_PER_ZYN: Fixed = Fixed::raw(200_000_000_000_000); // 0.0002 WAD
+
+/// The most ZYN the reserve will ever match into the POL pot (§71.9).
+/// Zcash blocks between the ZYN market becoming due and it opening: ~7 days at
+/// 75 seconds a block.
+///
+/// The point is that the date is knowable in advance and by everyone. The chain
+/// records the arming height the moment the pot fills, so the opening block is
+/// arithmetic from public state — not an announcement anyone has to be trusted
+/// to make, or to make on time.
+pub const POL_OPEN_GRACE_BLOCKS: u64 = 8_064;
+
+pub const POL_ZYN_CAP: Fixed = Fixed::raw(2_100_000 * 1_000_000_000_000_000_000);
+
+/// Credit ZEC.zy to the POL pot, and match it with ZYN from the reserve.
+///
+/// Every route that accrues protocol-owned liquidity goes through here, so the
+/// matching cannot be forgotten at a call site added later — which is the whole
+/// reason this is a function and not five copies of a credit.
+///
+/// The reserve releases `zec / 0.0002` ZYN, stopping at [`POL_ZYN_CAP`]. That
+/// bound is what keeps this from being a tap: past 420 ZEC.zy the pot holds its
+/// full 2,100,000 and the reserve is never drawn on again by this path. What
+/// happens after is the AMM's job, not the reserve's — further accrual moves
+/// the price rather than the supply (§71.5's buyback).
+///
+/// No signature authorises this. A keyless pot cannot produce one, and that
+/// impossibility is exactly what §71.2 rests on: the release is a rule the VM
+/// applies, never a withdrawal anyone can request.
+pub fn credit_pol(state: &mut SwapState, zec: Fixed) -> Result<Fixed, Reject> {
+    if !zec.is_positive() {
+        return Ok(Fixed::ZERO);
+    }
+    state
+        .account_mut(&crate::types::ZYN_POL)
+        .credit(XZEC, zec)
+        .ok_or(Reject::ArithmeticFailure)?;
+
+    let zyn = crate::types::ZYN_MAINNET;
+    let held = state.balance(&crate::types::ZYN_POL_ZYN, zyn);
+    let room = POL_ZYN_CAP.sub(held).unwrap_or(Fixed::ZERO);
+    if !room.is_positive() {
+        // Full already: nothing to match, but the opening may still need
+        // arming. Returning here before that check once meant a pot that
+        // started full could never become due.
+        arm_pol_open(state);
+        return Ok(Fixed::ZERO);
+    }
+    let want = zec
+        .mul_div(Fixed::ONE, POL_ZEC_PER_ZYN)
+        .ok_or(Reject::ArithmeticFailure)?;
+    let available = state.balance(&crate::types::ZYN_RESERVE, zyn);
+    let release = want.min(room).min(available);
+    if !release.is_positive() {
+        return Ok(Fixed::ZERO);
+    }
+    state
+        .account_mut(&crate::types::ZYN_RESERVE)
+        .debit(zyn, release)
+        .ok_or(Reject::ArithmeticFailure)?;
+    state
+        .account_mut(&crate::types::ZYN_POL_ZYN)
+        .credit(zyn, release)
+        .ok_or(Reject::ArithmeticFailure)?;
+
+    // The moment the pot is full, the opening becomes *due* and the chain
+    // records when. Everything after that is arithmetic anyone can do from
+    // public state: the market opens at `armed + POL_OPEN_GRACE_BLOCKS`. That
+    // is the whole grace mechanism — not a promise to announce something, but a
+    // date that exists before anyone has to be told.
+    //
+    // Set once. Nothing can leave a keyless pot, so the condition cannot become
+    // false again and the date cannot move.
+    arm_pol_open(state);
+    Ok(release)
+}
+
+/// Record when the opening became due, once.
+fn arm_pol_open(state: &mut SwapState) {
+    if state.pol_open_armed_height.is_some() {
+        return;
+    }
+    if state.balance(&crate::types::ZYN_POL_ZYN, crate::types::ZYN_MAINNET) >= POL_ZYN_CAP {
+        state.pol_open_armed_height = Some(state.zcash_height);
+    }
+}
+
+/// The Zcash height at which the ZYN market opens, once it is due.
+///
+/// `None` until the POL pot fills. Public so a wallet or explorer can show the
+/// same countdown the chain is keeping.
+pub fn pol_open_height(state: &SwapState) -> Option<u64> {
+    state
+        .pol_open_armed_height
+        .map(|h| h.saturating_add(POL_OPEN_GRACE_BLOCKS))
+}
+
 pub fn is_pot(a: &AccountId) -> bool {
     matches!(
         *a,
-        POT_GENESIS | POT_LP | POT_BRIDGE | POT_POL | POT_FEES | POT_ASSETS | POT_OFFERS
+        POT_GENESIS
+            | POT_LP
+            | POT_BRIDGE
+            | POT_POL
+            | POT_FEES
+            | POT_ASSETS
+            | POT_OFFERS
+            // The derived ZYN pots. Keyless like the rest, and excluded from
+            // reward distribution for the same reason: a pot that cannot spend
+            // should not be paid, or its share is stranded on every epoch.
+            | crate::types::ZYN_POL
+            | crate::types::ZYN_POL_ZYN
+            | crate::types::ZYN_RESERVE
     )
 }
 
@@ -383,12 +498,91 @@ pub fn undo_partial(state: &mut SwapState) -> Result<(), Reject> {
 
 /// The operator reports the Zcash tip. Never backwards.
 pub fn observe_height(state: &mut SwapState, height: u64) -> Result<Vec<Receipt>, Reject> {
-    let l = state.launch.as_mut().ok_or(Reject::InvalidParams)?;
-    if height < l.zcash_height {
+    // The chain-level height is tracked whether or not a launch exists: the
+    // superseded launch machinery owned this once, and the ZYN market's opening
+    // schedule now depends on it (§71.29).
+    if height < state.zcash_height {
         return Err(Reject::StaleObservation);
     }
-    l.zcash_height = height;
-    Ok(vec![Receipt::HeightObserved { height }])
+    state.zcash_height = height;
+    if let Some(l) = state.launch.as_mut() {
+        l.zcash_height = height;
+    }
+    let mut out = vec![Receipt::HeightObserved { height }];
+    out.extend(open_pol_market_if_due(state)?);
+    Ok(out)
+}
+
+/// Open the ZYN market once its grace period has run out.
+///
+/// Called on every height observation, so the market opens on the first block
+/// at or past the published height and not a moment later. Idempotent: once the
+/// pool exists this does nothing, and it cannot run before `arm_pol_open` has
+/// recorded a height.
+pub fn open_pol_market_if_due(state: &mut SwapState) -> Result<Vec<Receipt>, Reject> {
+    let Some(armed) = state.pol_open_armed_height else {
+        return Ok(Vec::new());
+    };
+    if state.zcash_height < armed.saturating_add(POL_OPEN_GRACE_BLOCKS) {
+        return Ok(Vec::new());
+    }
+    let zyn = crate::types::ZYN_MAINNET;
+    if state.find_pool(XZEC, zyn).is_some() {
+        return Ok(Vec::new());
+    }
+    let zyn_side = state.balance(&crate::types::ZYN_POL_ZYN, zyn);
+    let zec_side = POL_ZYN_CAP
+        .mul_div(POL_ZEC_PER_ZYN, Fixed::ONE)
+        .ok_or(Reject::ArithmeticFailure)?;
+    if zyn_side < POL_ZYN_CAP || state.balance(&crate::types::ZYN_POL, XZEC) < zec_side {
+        return Ok(Vec::new());
+    }
+
+    // Exactly 2,100,000 against exactly 420, whatever else has accrued since.
+    // The opening price was published with the schedule; pairing everything in
+    // the pot would make it depend on how long the grace period happened to be
+    // busy, which is not a price anyone can prepare for. The surplus stays in
+    // the pot as buyback reserve (§71.5).
+    // Both sides move from the keyless pots to the treasury, which then opens
+    // the pool and therefore holds the LP shares. §71.27: this liquidity is
+    // withdrawable by 2-of-3 — deliberate, and the one part of the protocol's
+    // holdings that is.
+    let treasury = crate::types::TREASURY_26460;
+    state
+        .account_mut(&crate::types::ZYN_POL_ZYN)
+        .debit(zyn, POL_ZYN_CAP)
+        .ok_or(Reject::ArithmeticFailure)?;
+    state
+        .account_mut(&crate::types::ZYN_POL)
+        .debit(XZEC, zec_side)
+        .ok_or(Reject::ArithmeticFailure)?;
+    state
+        .account_mut(&treasury)
+        .credit(zyn, POL_ZYN_CAP)
+        .ok_or(Reject::ArithmeticFailure)?;
+    state
+        .account_mut(&treasury)
+        .credit(XZEC, zec_side)
+        .ok_or(Reject::ArithmeticFailure)?;
+
+    let (a0, a1) = if zyn < XZEC { (zyn, XZEC) } else { (XZEC, zyn) };
+    let (m0, m1) = if zyn < XZEC {
+        (POL_ZYN_CAP, zec_side)
+    } else {
+        (zec_side, POL_ZYN_CAP)
+    };
+    let fee_bps = state.params.default_fee_bps;
+    let mut out = crate::vm::create_pool_for(state, treasury, a0, a1, m0, m1, fee_bps)?;
+    let pool = zyn_vm::pool_address(crate::types::ADDRESS_SCOPE_V1, &a0, &a1);
+    out.push(Receipt::MarketOpened {
+        asset: zyn,
+        pool,
+        zec: zec_side,
+        amount: POL_ZYN_CAP,
+        price: POL_ZEC_PER_ZYN,
+        grant: Fixed::ZERO,
+    });
+    Ok(out)
 }
 
 /// Everything the launch does at a seal, in order.
@@ -1814,6 +2008,372 @@ mod tests {
         assert_eq!(
             fresh.launch.as_ref().unwrap().params.threshold,
             Fixed::whole(7)
+        );
+    }
+}
+
+#[cfg(test)]
+mod pol_release_tests {
+    use super::*;
+    use crate::types::{ZYN_MAINNET, ZYN_POL, ZYN_POL_ZYN, ZYN_RESERVE};
+
+    /// A chain with ZYN issued the way the node issues it at genesis.
+    fn genesis() -> SwapState {
+        let mut s = SwapState::new(26_460, crate::types::Params::v1());
+        s.account_mut(&ZYN_RESERVE)
+            .credit(ZYN_MAINNET, Fixed::whole(18_900_000))
+            .unwrap();
+        s.account_mut(&ZYN_POL_ZYN)
+            .credit(ZYN_MAINNET, Fixed::whole(2_100_000))
+            .unwrap();
+        s
+    }
+
+    /// The pot starts already full at genesis, so the reserve has nothing to
+    /// match — the cap is reached before any fee is ever earned.
+    #[test]
+    fn a_full_pot_draws_nothing_from_the_reserve() {
+        let mut s = genesis();
+        let released = credit_pol(&mut s, Fixed::whole(100)).unwrap();
+        assert_eq!(released, Fixed::ZERO);
+        assert_eq!(s.balance(&ZYN_RESERVE, ZYN_MAINNET), Fixed::whole(18_900_000));
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), Fixed::whole(2_100_000));
+        assert_eq!(s.balance(&ZYN_POL, XZEC), Fixed::whole(100), "the ZEC still accrues");
+    }
+
+    /// The ratio is the point: 420 ZEC.zy fills the pot to exactly 2,100,000,
+    /// which is §71.11's trigger and §71.9's number arriving at the same place.
+    #[test]
+    fn four_hundred_and_twenty_zec_matches_exactly_two_point_one_million() {
+        let mut s = SwapState::new(26_460, crate::types::Params::v1());
+        s.account_mut(&ZYN_RESERVE)
+            .credit(ZYN_MAINNET, Fixed::whole(21_000_000))
+            .unwrap();
+        let released = credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        assert_eq!(released, Fixed::whole(2_100_000));
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), POL_ZYN_CAP);
+        assert_eq!(s.balance(&ZYN_POL, XZEC), Fixed::whole(420));
+    }
+
+    /// Past the cap the reserve is never drawn on again by this path. What
+    /// happens after is the AMM's job: price, not supply.
+    #[test]
+    fn the_reserve_stops_at_the_cap_however_much_accrues_after() {
+        let mut s = SwapState::new(26_460, crate::types::Params::v1());
+        s.account_mut(&ZYN_RESERVE)
+            .credit(ZYN_MAINNET, Fixed::whole(21_000_000))
+            .unwrap();
+        credit_pol(&mut s, Fixed::whole(400)).unwrap();
+        let before = s.balance(&ZYN_RESERVE, ZYN_MAINNET);
+        // Far past the trigger — ten times the accrual that fills the pot.
+        let released = credit_pol(&mut s, Fixed::whole(4_200)).unwrap();
+        assert_eq!(
+            s.balance(&ZYN_POL_ZYN, ZYN_MAINNET),
+            POL_ZYN_CAP,
+            "the pot never exceeds 2,100,000"
+        );
+        assert_eq!(released, Fixed::whole(100_000), "only the last 20 ZEC worth");
+        assert_eq!(
+            before.sub(s.balance(&ZYN_RESERVE, ZYN_MAINNET)).unwrap(),
+            Fixed::whole(100_000)
+        );
+        assert_eq!(s.balance(&ZYN_POL, XZEC), Fixed::whole(4_600), "all of it still accrues");
+    }
+
+    /// Supply is conserved: the release moves ZYN between two keyless pots and
+    /// creates none, so §71.3's `total` never moves (§71.4).
+    #[test]
+    fn releasing_moves_zyn_between_pots_and_creates_none() {
+        let mut s = genesis();
+        s.account_mut(&ZYN_POL_ZYN)
+            .debit(ZYN_MAINNET, Fixed::whole(2_100_000))
+            .unwrap();
+        let total = |s: &SwapState| {
+            s.balance(&ZYN_RESERVE, ZYN_MAINNET)
+                .add(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET))
+                .unwrap()
+        };
+        let before = total(&s);
+        credit_pol(&mut s, Fixed::whole(50)).unwrap();
+        assert_eq!(total(&s), before, "conserved across the two pots");
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), Fixed::whole(250_000));
+    }
+
+    /// The reserve cannot go negative even if the cap would allow more.
+    #[test]
+    fn an_empty_reserve_releases_what_it_has_and_no_more() {
+        let mut s = SwapState::new(26_460, crate::types::Params::v1());
+        s.account_mut(&ZYN_RESERVE)
+            .credit(ZYN_MAINNET, Fixed::whole(1_000))
+            .unwrap();
+        let released = credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        assert_eq!(released, Fixed::whole(1_000), "capped by what the reserve holds");
+        assert_eq!(s.balance(&ZYN_RESERVE, ZYN_MAINNET), Fixed::ZERO);
+    }
+}
+
+#[cfg(test)]
+mod pot_registry_tests {
+    use super::*;
+
+    /// Every keyless account the protocol holds value in must be known to
+    /// `is_pot`, or reward distribution pays a pot that can never spend and
+    /// strands the share. The derived ZYN pots were missing when they were
+    /// added, which is the shape of mistake this test exists to catch.
+    #[test]
+    fn every_keyless_account_is_registered_as_a_pot() {
+        for (name, id) in [
+            ("ZYN_POL", crate::types::ZYN_POL),
+            ("ZYN_POL_ZYN", crate::types::ZYN_POL_ZYN),
+            ("ZYN_RESERVE", crate::types::ZYN_RESERVE),
+            ("POT_GENESIS", POT_GENESIS),
+            ("POT_LP", POT_LP),
+            ("POT_BRIDGE", POT_BRIDGE),
+            ("POT_POL", POT_POL),
+            ("POT_FEES", POT_FEES),
+            ("POT_ASSETS", POT_ASSETS),
+            ("POT_OFFERS", POT_OFFERS),
+        ] {
+            assert!(is_pot(&id), "{} is keyless but is_pot does not know it", name);
+        }
+    }
+
+    /// And the treasury is not one: it holds a key, earns LP rewards through
+    /// the ordinary path, and can move what it holds.
+    #[test]
+    fn the_treasury_is_not_a_pot() {
+        assert!(!is_pot(&crate::types::TREASURY_26460));
+    }
+}
+
+#[cfg(test)]
+mod pol_open_tests {
+    use super::*;
+    use crate::tx::Intent;
+    use crate::types::{ZYN_MAINNET, ZYN_POL, ZYN_POL_ZYN, ZYN_RESERVE, TREASURY_26460};
+
+    /// ZYN issued the way the node issues it at genesis, so the asset exists
+    /// and the reserve holds it.
+    fn chain_at(height: u64) -> SwapState {
+        let mut s = SwapState::new(26_460, crate::types::Params::v1());
+        let i = Intent::IssueToken {
+            creator: [0u8; 32],
+            symbol: crate::state::symbol(b"ZYN"),
+            supply: Fixed::whole(21_000_000),
+            unit: Fixed::raw(1),
+            allocations: vec![(ZYN_RESERVE, Fixed::whole(21_000_000))],
+            policy: crate::state::SupplyPolicy::Fixed,
+            native: true,
+        };
+        let rs = crate::vm::apply(&mut s, &crate::tx::SequencedIntent { seq: 1, intent: i });
+        assert!(
+            !rs.iter().any(|r| matches!(r, Receipt::Rejected { .. })),
+            "ZYN must issue: {:?}",
+            rs
+        );
+        s.zcash_height = height;
+        s
+    }
+
+    fn observe(s: &mut SwapState, height: u64) -> Vec<Receipt> {
+        observe_height(s, height).expect("height")
+    }
+
+    fn opened(rs: &[Receipt]) -> bool {
+        rs.iter().any(|r| matches!(r, Receipt::MarketOpened { .. }))
+    }
+
+    /// Filling the pot does not open the market. It publishes a date.
+    #[test]
+    fn filling_the_pot_arms_a_date_rather_than_opening() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        assert_eq!(s.pol_open_armed_height, Some(3_000_000));
+        assert_eq!(pol_open_height(&s), Some(3_000_000 + POL_OPEN_GRACE_BLOCKS));
+        assert!(
+            s.find_pool(XZEC, ZYN_MAINNET).is_none(),
+            "no market on the block the pot filled"
+        );
+    }
+
+    /// The whole point: nothing happens until the published height, and then
+    /// it happens without anyone acting.
+    #[test]
+    fn the_market_opens_on_the_published_block_and_not_before() {
+        let armed = 3_000_000;
+        let mut s = chain_at(armed);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let due = pol_open_height(&s).unwrap();
+
+        let rs = observe(&mut s, due - 1);
+        assert!(!opened(&rs), "still closed one block early");
+        assert!(s.find_pool(XZEC, ZYN_MAINNET).is_none());
+
+        let rs = observe(&mut s, due);
+        assert!(opened(&rs), "opens on the published block");
+        let pool = s.find_pool(XZEC, ZYN_MAINNET).expect("pool exists");
+
+        // Opened at exactly the announced ratio.
+        let p = s.pools.get(&pool).unwrap();
+        let (zyn_side, zec_side) = if ZYN_MAINNET < XZEC {
+            (p.reserve0, p.reserve1)
+        } else {
+            (p.reserve1, p.reserve0)
+        };
+        assert_eq!(zyn_side, POL_ZYN_CAP);
+        assert_eq!(zec_side, Fixed::whole(420));
+
+        // And the LP shares are the treasury's (§71.27).
+        let lp = zyn_vm::lp_address(crate::types::ADDRESS_SCOPE_V1, &pool);
+        assert!(
+            s.balance(&TREASURY_26460, lp).is_positive(),
+            "the treasury holds the LP shares"
+        );
+        for pot in [ZYN_POL_ZYN, ZYN_POL, ZYN_RESERVE] {
+            assert_eq!(s.balance(&pot, lp), Fixed::ZERO, "no pot holds LP");
+        }
+    }
+
+    /// Opening twice would mean a second pool against the same pair.
+    #[test]
+    fn opening_is_idempotent_across_later_blocks() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let due = pol_open_height(&s).unwrap();
+        observe(&mut s, due);
+        let pool = s.find_pool(XZEC, ZYN_MAINNET).unwrap();
+        let before = s.pools.get(&pool).unwrap().reserve0;
+
+        for h in [due + 1, due + 100, due + 10_000] {
+            let rs = observe(&mut s, h);
+            assert!(!opened(&rs), "opens once, at {}", h);
+        }
+        assert_eq!(s.pools.get(&pool).unwrap().reserve0, before);
+    }
+
+    /// Surplus accrued during the grace period does not change the opening
+    /// price. The date and the price were published together.
+    #[test]
+    fn accrual_during_the_grace_period_does_not_move_the_opening_price() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let due = pol_open_height(&s).unwrap();
+        // Twice as much ZEC.zy arrives while everyone waits.
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+
+        observe(&mut s, due);
+        let pool = s.find_pool(XZEC, ZYN_MAINNET).unwrap();
+        let p = s.pools.get(&pool).unwrap();
+        let (zyn_side, zec_side) = if ZYN_MAINNET < XZEC {
+            (p.reserve0, p.reserve1)
+        } else {
+            (p.reserve1, p.reserve0)
+        };
+        assert_eq!(zyn_side, POL_ZYN_CAP, "2,100,000 as announced");
+        assert_eq!(zec_side, Fixed::whole(420), "420 as announced");
+        assert_eq!(
+            s.balance(&ZYN_POL, XZEC),
+            Fixed::whole(420),
+            "the surplus stays in the pot as buyback reserve"
+        );
+    }
+
+    /// The date cannot be moved once set, and a stale observation is refused.
+    #[test]
+    fn the_date_never_moves_and_height_only_goes_forward() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let due = pol_open_height(&s).unwrap();
+
+        credit_pol(&mut s, Fixed::whole(1_000)).unwrap();
+        observe(&mut s, 3_000_500);
+        credit_pol(&mut s, Fixed::whole(1_000)).unwrap();
+        assert_eq!(pol_open_height(&s), Some(due), "the published date is fixed");
+
+        assert!(
+            matches!(observe_height(&mut s, 3_000_400), Err(Reject::StaleObservation)),
+            "height is monotonic"
+        );
+    }
+
+    /// An operator cannot bring the opening forward by feeding a false height:
+    /// it can only be the real one, because the same height governs deposits
+    /// and anchoring. But the grace is enforced on the *chain's* height, so a
+    /// node that stops observing simply delays the open — it cannot skip it.
+    #[test]
+    fn a_node_that_stops_observing_delays_the_open_and_cannot_skip_it() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let due = pol_open_height(&s).unwrap();
+        // Silence for a long time, then a single jump far past the date.
+        let rs = observe(&mut s, due + 50_000);
+        assert!(opened(&rs), "the open is owed and happens on the next observation");
+    }
+
+    #[test]
+    fn zcash_height_survives_an_encode_decode_round_trip() {
+        let mut s = chain_at(3_000_000);
+        credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        let back = SwapState::decode_state(&s.encode_state()).expect("round trip");
+        assert_eq!(back.zcash_height, s.zcash_height);
+        assert_eq!(back.pol_open_armed_height, s.pol_open_armed_height);
+        assert_eq!(pol_open_height(&back), pol_open_height(&s));
+    }
+
+    #[test]
+    fn height_observation_needs_no_account_signature() {
+        use zyn_vm::spec::MicrochainVm;
+        let i = Intent::ZcashHeight { height: 1 };
+        assert!(
+            <SwapState as MicrochainVm>::intent_authorities(&i).is_empty(),
+            "the clock is the operator's to report, not an account's"
+        );
+    }
+    /// Caught in rehearsal, not by a test: genesis put 2,100,000 straight into
+    /// the POL pot, `credit_pol` returned early because there was no room to
+    /// match, and the arming check sat *after* that return. The pot was full,
+    /// the market was never due, and nothing could ever open it.
+    #[test]
+    fn a_pot_that_is_already_full_still_becomes_due() {
+        let mut s = chain_at(3_000_000);
+        // Put it there directly, the way the old genesis did.
+        s.account_mut(&ZYN_RESERVE)
+            .debit(ZYN_MAINNET, POL_ZYN_CAP)
+            .unwrap();
+        s.account_mut(&ZYN_POL_ZYN)
+            .credit(ZYN_MAINNET, POL_ZYN_CAP)
+            .unwrap();
+        assert_eq!(s.pol_open_armed_height, None);
+
+        let released = credit_pol(&mut s, Fixed::whole(420)).unwrap();
+        assert_eq!(released, Fixed::ZERO, "nothing left to match");
+        assert_eq!(
+            s.pol_open_armed_height,
+            Some(3_000_000),
+            "but the opening is still due"
+        );
+    }
+
+    /// The reserve holds everything at genesis, so the pot fills only as real
+    /// ZEC.zy arrives. That is what makes 0.0002 a fact about backing.
+    #[test]
+    fn the_pot_starts_empty_and_fills_from_accrual() {
+        let mut s = chain_at(3_000_000);
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), Fixed::ZERO);
+        assert_eq!(s.balance(&ZYN_RESERVE, ZYN_MAINNET), Fixed::whole(21_000_000));
+        assert_eq!(pol_open_height(&s), None, "no date before there is backing");
+
+        credit_pol(&mut s, Fixed::whole(210)).unwrap();
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), Fixed::whole(1_050_000));
+        assert_eq!(pol_open_height(&s), None, "half-full is not due");
+
+        credit_pol(&mut s, Fixed::whole(210)).unwrap();
+        assert_eq!(s.balance(&ZYN_POL_ZYN, ZYN_MAINNET), POL_ZYN_CAP);
+        assert!(pol_open_height(&s).is_some(), "420 ZEC.zy makes it due");
+        assert_eq!(
+            s.balance(&ZYN_RESERVE, ZYN_MAINNET),
+            Fixed::whole(18_900_000),
+            "and 18,900,000 stays in the reserve"
         );
     }
 }

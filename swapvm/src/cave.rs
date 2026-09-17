@@ -10,9 +10,9 @@ use alloc::vec::Vec;
 
 use crate::amm;
 use crate::fixed::Fixed;
-use crate::state::{Pool, SwapState, Symbol, TokenInfo};
+use crate::state::{SupplyPolicy, Pool, SwapState, Symbol, TokenInfo};
 use crate::tx::{Receipt, Reject};
-use crate::types::{AccountId, AssetId, PoolId, ADDRESS_SCOPE_V1, XZEC, ZYN_POL};
+use crate::types::{AccountId, AssetId, PoolId, ADDRESS_SCOPE_V1, XZEC};
 
 pub const TOTAL_SUPPLY: Fixed = Fixed::raw(1_000_000_000_000_000_000_000_000_000);
 pub const CURVE_SUPPLY: Fixed = Fixed::raw(660_000_000_000_000_000_000_000_000);
@@ -293,6 +293,7 @@ pub fn create(
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     state
@@ -417,10 +418,7 @@ fn settle_buy(
             .account_mut(&vault)
             .debit(XZEC, to_pol)
             .ok_or(Reject::ArithmeticFailure)?;
-        state
-            .account_mut(&ZYN_POL)
-            .credit(XZEC, to_pol)
-            .ok_or(Reject::ArithmeticFailure)?;
+        crate::launch::credit_pol(state, to_pol)?;
     }
     let c = state
         .curves
@@ -485,10 +483,7 @@ pub fn sell(
         .account_mut(&seller)
         .credit(XZEC, received)
         .ok_or(Reject::ArithmeticFailure)?;
-    state
-        .account_mut(&ZYN_POL)
-        .credit(XZEC, to_pol)
-        .ok_or(Reject::ArithmeticFailure)?;
+    crate::launch::credit_pol(state, to_pol)?;
     let c = state
         .curves
         .get_mut(&asset)
@@ -552,10 +547,7 @@ fn graduate(state: &mut SwapState, asset: AssetId) -> Result<Receipt, Reject> {
             .account_mut(&vault)
             .debit(XZEC, overflow)
             .ok_or(Reject::ArithmeticFailure)?;
-        state
-            .account_mut(&ZYN_POL)
-            .credit(XZEC, overflow)
-            .ok_or(Reject::ArithmeticFailure)?;
+        crate::launch::credit_pol(state, overflow)?;
     }
     let pool_id = zyn_vm::pool_address(ADDRESS_SCOPE_V1, &asset, &XZEC);
     let lp_asset = zyn_vm::lp_address(ADDRESS_SCOPE_V1, &pool_id);
@@ -593,6 +585,7 @@ fn graduate(state: &mut SwapState, asset: AssetId) -> Result<Receipt, Reject> {
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     state.pools.insert(

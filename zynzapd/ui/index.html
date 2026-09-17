@@ -154,6 +154,9 @@ td { padding: 7px 0 7px 10px; border-bottom: 1px solid var(--line); vertical-ali
 td:first-child, th:first-child { padding-left: 0; }
 td.r, th.r { text-align: right; white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
+.badge.warn { display:inline-block; margin-left:.4em; padding:.05em .45em; border-radius:.5em;
+  font-size:.78em; font-weight:600; letter-spacing:.02em; vertical-align:baseline;
+  background:var(--warn-bg,#d9822b22); color:var(--warn-fg,#b3690f); border:1px solid #d9822b55; }
 .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11.5px; background: var(--surface-2); color: var(--ink-2); letter-spacing: 0.03em; white-space: nowrap; }
 .tag.pending { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .tag.exit { background: var(--accent-soft); color: var(--accent); }
@@ -174,6 +177,10 @@ tr:last-child td { border-bottom: 0; }
 #log { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); max-height: 200px; overflow: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
 #log li.err { color: var(--bad); }
 .empty { color: var(--ink-3); font-size: 13.5px; padding: 8px 0; }
+.memo-warning { margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--warn-fg, #b3690f);
+  background: var(--warn-bg, #d9822b1a); border-radius: 4px; font-size: 12px; line-height: 1.7; }
+.memo-warning b { color: var(--warn-fg, #b3690f); }
+.addr code.needs-memo { border-bottom: 2px dotted var(--warn-fg, #b3690f); }
 .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
 .busy { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink-2); }
@@ -282,13 +289,26 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
     <h2>Zyn account <small id="epoch" class="record"></small></h2>
     <div class="addr"><code id="account"></code><button class="btn small" id="copy-acct">Copy</button></div>
     <div class="wrap"><table id="balances"><thead><tr><th>Asset</th><th class="r">Amount</th><th></th></tr></thead><tbody></tbody></table></div>
-    <div class="hint">Balances on Zyn are private: only this key can read them. Zyn is anchored to Zcash testnet.</div>
+    <div class="hint">Only this key can read your balance over the RPC — a reader has to sign for it. The operator and its verifiers see activity in the journal. Zyn is anchored to Zcash testnet.</div>
     <div class="hint" id="zyn-exit"></div>
+  </section>
+  <section id="zyn-market" class="lead" hidden>
+    <h2>ZYN market <small id="zm-state" class="record"></small></h2>
+    <div id="zm-line"></div>
+    <div class="bar" id="zm-bar" hidden><div></div></div>
+    <div class="hint" id="zm-detail"></div>
   </section>
   <section id="zyn-move">
     <h2>Move ZEC in and out</h2>
     <div class="hint" id="dep-how"></div>
     <div class="addr"><code id="dep-addr"></code><button class="btn small" id="copy-dep">Copy</button></div>
+    <div class="memo-warning" id="dep-memo-warning" hidden>
+      <b>This address needs a memo.</b> Sending to it without one — from a faucet,
+      an exchange, or any wallet that cannot set a memo — will not credit your
+      account. The funds reach the vault and wait for an operator to place them
+      by hand. Include exactly:
+      <div class="addr"><code id="dep-memo-line"></code><button class="btn small" id="copy-memo">Copy memo</button></div>
+    </div>
     <div class="row"><input class="grow num" id="dep-amount" placeholder="amount" inputmode="decimal"><button class="btn primary" id="deposit">Deposit</button></div>
     <input type="hidden" id="dep-uri">
     <details id="dep-elsewhere">
@@ -397,6 +417,8 @@ dialog .d-foot { padding: 12px 18px; border-top: 1px solid var(--line); display:
     <label class="hint">Testnet block server<input id="lightd-testnet" class="mono" spellcheck="false"></label>
     <label class="hint">Mainnet block server<input id="lightd-mainnet" class="mono" placeholder="not configured yet" spellcheck="false"></label>
     <label class="hint"><input type="checkbox" id="set-price"> Show dollar values — asks a price host what ZEC is worth, about once every ten minutes. That tells them this wallet is awake; turn it off and every figure stays in ZEC.</label>
+    <label class="hint"><input type="checkbox" id="set-art"> Show collection art — fetches each item's picture from the gateway below, which tells that host which items you are looking at. Off by default; pictures you already hold are always shown.</label>
+    <label class="hint">Art gateway<input id="art-gateway" class="mono" placeholder="https://cavebro.win/blobs" spellcheck="false"></label>
     <div class="row"><button class="btn primary" id="save-settings">Save</button><span class="hint">Each network has its own wallet key and history.</span></div>
   </section>
   <section>
@@ -585,6 +607,70 @@ function setFiat(totalZec, s) {
   $('bal-fiat').innerHTML = '≈ ' + esc(money(totalZec * usd)) + note;
 }
 
+// The ZYN market's schedule, as the chain publishes it.
+//
+// Three states, and the honest one to show changes with them. Before the pot
+// fills there is no date, only progress toward one — so a countdown would be a
+// guess. Once it fills the date is fixed and public, so this counts down to a
+// block height rather than to anything anyone announced.
+function renderMarket(z) {
+  const m = z.market;
+  const sec = $('zyn-market');
+  if (!m) { sec.hidden = true; return; }
+  sec.hidden = false;
+
+  const chipFor = { filling: 'muted', scheduled: 'warn', open: 'ok' }[m.state] || 'muted';
+  $('zm-state').className = 'record ' + chipFor;
+
+  if (m.state === 'open') {
+    $('zm-state').textContent = 'open';
+    $('zm-line').textContent = `Trading since Zcash height ${m.open_height}.`;
+    $('zm-bar').hidden = true;
+    $('zm-detail').textContent = `Opened at ${m.open_price_zec} ZEC per ZYN.`;
+    return;
+  }
+
+  if (m.state === 'scheduled') {
+    $('zm-state').textContent = 'opens soon';
+    const blocks = Number(m.blocks_remaining || 0);
+    $('zm-line').innerHTML = blocks > 0
+      ? `Opens at Zcash height <b>${m.open_height}</b> — about <b>${humanDuration(m.seconds_remaining)}</b> from now.`
+      : `Due to open at Zcash height <b>${m.open_height}</b>, on the next block the chain sees.`;
+    // Progress through the grace period rather than through the fill.
+    const done = Math.max(0, Number(m.grace_blocks) - blocks);
+    $('zm-bar').hidden = false;
+    $('zm-bar').firstElementChild.style.width =
+      Math.min(100, Math.round(100 * done / Number(m.grace_blocks))) + '%';
+    $('zm-detail').textContent =
+      `${blocks.toLocaleString()} Zcash blocks to go. ${m.zyn_in_pot} ZYN will open against ` +
+      `${m.zec_target} ZEC.zy at ${m.open_price_zec} ZEC per ZYN — both fixed when the date was set.`;
+    return;
+  }
+
+  $('zm-state').textContent = 'not scheduled';
+  const have = Number(m.zec_in_pot || 0), want = Number(m.zec_target || 420);
+  $('zm-line').innerHTML =
+    `No opening date yet. One is set when the pot reaches <b>${want} ZEC.zy</b>, ` +
+    `and the market opens ${Number(m.grace_blocks).toLocaleString()} Zcash blocks after that.`;
+  $('zm-bar').hidden = false;
+  $('zm-bar').firstElementChild.style.width =
+    Math.min(100, Math.round(100 * have / want)) + '%';
+  $('zm-detail').textContent =
+    `${m.zec_in_pot} of ${want} ZEC.zy accrued · ${m.zyn_in_pot} of ${m.zyn_target} ZYN matched. ` +
+    `The pot fills from trading fees, so the date exists only once the backing does.`;
+}
+
+// Blocks are the chain's unit; hours and days are the reader's.
+function humanDuration(secs) {
+  const s = Number(secs || 0);
+  if (s <= 0) return 'moments';
+  const d = Math.floor(s / 86400), h = Math.round((s % 86400) / 3600);
+  if (d >= 1) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  const m = Math.round((s % 3600) / 60);
+  const hh = Math.floor(s / 3600);
+  return hh >= 1 ? `${hh}h ${m}m` : `${m}m`;
+}
+
 function renderPortfolio(z) {
   const p = z.portfolio || {};
   $('pf-total').textContent = p.total_zec != null ? `${p.total_zec} ZEC` : '—';
@@ -654,8 +740,23 @@ let itemSendOpen = false;
 // the file along with the item is the private path: it arrives once, by hand,
 // and is never requested again.
 const MEDIA_DB = 'nap-media';
+// Where art can be fetched from, when the holder has said it may be. Empty
+// until then: asking a host for the picture of an item tells that host which
+// item you are looking at, which on a shielded chain is the one thing the
+// chain itself will not reveal.
+const DEFAULT_ART_GATEWAY = 'https://cavebro.win/blobs';
 let mediaSources = [];
 try { mediaSources = JSON.parse(localStorage.getItem('nap_media_sources') || '[]'); } catch (_) { mediaSources = []; }
+
+// The toggle is the source of truth; `mediaSources` is derived from it, so
+// turning art off empties the list rather than leaving a stale gateway behind.
+function applyArtSetting() {
+  const on = localStorage.getItem('nap_art') === '1';
+  const base = (localStorage.getItem('nap_art_gateway') || '').trim() || DEFAULT_ART_GATEWAY;
+  mediaSources = on ? [base] : [];
+  return { on, base };
+}
+applyArtSetting();
 
 function mediaStore(mode) {
   return new Promise((ok, no) => {
@@ -963,6 +1064,10 @@ function render(s) {
   if (document.activeElement !== $('lightd-testnet')) $('lightd-testnet').value = s.settings.lightd_testnet;
   if (document.activeElement !== $('lightd-mainnet')) $('lightd-mainnet').value = s.settings.lightd_mainnet;
   if (document.activeElement !== $('set-price')) $('set-price').checked = s.settings.price !== false;
+  if (document.activeElement !== $('set-art')) $('set-art').checked = localStorage.getItem('nap_art') === '1';
+  if (document.activeElement !== $('art-gateway')) {
+    $('art-gateway').value = localStorage.getItem('nap_art_gateway') || '';
+  }
 
   // Zyn
   const z = s.zyn;
@@ -979,18 +1084,41 @@ function render(s) {
   // with nothing to remember and no memo to get wrong. Older nodes cannot
   // issue one, and then the shared vault address plus the memo is still it.
   const dep = z.deposit_address || null;
+  // The fallback used to hand over the shared vault address as an ordinary
+  // copyable string. A deposit there is attributed by *memo*, and no faucet or
+  // exchange sets one — the funds arrive, sit unattributed, and wait for an
+  // operator to place them by hand. That is what happened to a 0.1 TAZ test
+  // deposit on 16 Sep (§71.39). So the bare address is no longer offered as
+  // though it were safe to paste anywhere; the memo travels with it.
   setAddr('dep-addr', dep || z.vault);
+  $('dep-addr').classList.toggle('needs-memo', !dep);
+  $('dep-memo-warning').hidden = !!dep;
+  $('dep-memo-line').textContent = dep ? '' : 'ZYN1:' + (z.account || '');
   renderPortfolio(z);
+  renderMarket(z);
   renderItems(z);
   $('dep-qr').innerHTML = z.deposit_qr_svg || '';
   $('dep-uri').value = z.deposit_uri || '';
   $('dep-how').textContent = dep
     ? 'This address is yours alone. Anything sent to it from any shielded Zcash wallet is credited to this account — no memo needed. Deposit below pays it from this wallet.'
     : 'This node issues no per-account address, so deposits go to the shared vault and must carry the memo naming your account. Deposit below attaches it for you.';
+
+// Whether more of a token can ever exist. Shown only when the answer is yes:
+// a fixed-supply token is the ordinary case and needs no badge, while a
+// mintable one is a fact a holder should not have to go looking for.
+function mintBadge(assetId) {
+  const a = (z.assets || []).find((x) => x.id === assetId);
+  if (!a || !a.supply_policy || a.supply_policy === 'fixed') return '';
+  const title = a.supply_policy === 'capped'
+    ? `More can be issued, up to a cap of ${esc(String(a.supply_cap || '?'))}`
+    : 'The issuer can mint more of this at any time, without limit';
+  return ` <span class="badge warn" title="${title}">mintable</span>`;
+}
+
   const r = z.record;
   const bb = $('balances').querySelector('tbody'); bb.innerHTML = '';
-  for (const b of r.spendable) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td></td></tr>`);
-  for (const b of r.unreleased) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td><span class="tag pending">arriving · epoch ${b.epoch}</span></td></tr>`);
+  for (const b of r.spendable) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}${mintBadge(b.asset)}</td><td class="r num">${fmt(b.amount)}</td><td></td></tr>`);
+  for (const b of r.unreleased) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}${mintBadge(b.asset)}</td><td class="r num">${fmt(b.amount)}</td><td><span class="tag pending">arriving · epoch ${b.epoch}</span></td></tr>`);
   for (const b of r.exiting) bb.insertAdjacentHTML('beforeend', `<tr><td>${b.symbol}</td><td class="r num">${fmt(b.amount)}</td><td><span class="tag exit">leaving · since ${b.since}</span></td></tr>`);
   if (!bb.children.length) bb.innerHTML = `<tr><td colspan="3" class="muted">${r.known ? 'Nothing held on Zyn.' : 'Zyn has not seen this account yet. A deposit creates it.'}</td></tr>`;
   const bound = r.bound_here;
@@ -1121,7 +1249,13 @@ $('zt-send').onclick = () => run($('zt-send'), 'Sending…', async () => {
   const force = $('zt-force').checked;
   const r = await api('/api/transfer', { to, asset: assetId($('zt-asset').value), amount, force }); logLine(force ? `forced via Zcash in tx ${r.txid.slice(0, 12)}… — the node has 20 blocks` : `sent on Zyn at seq ${r.seq}`); $('zt-amount').value = ''; $('zt-force').checked = false;
 });
-$('save-settings').onclick = () => run($('save-settings'), 'Saving…', async () => { const net = document.querySelector('input[name=net]:checked').value; await api('/api/settings', { network: net, lightd_testnet: $('lightd-testnet').value, lightd_mainnet: $('lightd-mainnet').value, price: $('set-price').checked }); logLine('settings saved; now on ' + net); });
+$('save-settings').onclick = () => run($('save-settings'), 'Saving…', async () => { const net = document.querySelector('input[name=net]:checked').value; await api('/api/settings', { network: net, lightd_testnet: $('lightd-testnet').value, lightd_mainnet: $('lightd-mainnet').value, price: $('set-price').checked }); 
+  localStorage.setItem('nap_art', $('set-art').checked ? '1' : '0');
+  localStorage.setItem('nap_art_gateway', $('art-gateway').value.trim());
+  const art = applyArtSetting();
+  logLine('settings saved; now on ' + net + (art.on ? ' · art from ' + art.base : ' · art off'));
+  if (state) render(state);
+});
 $('agent-create').onclick = () => run($('agent-create'), 'Opening…', async () => {
   const allowed_assets = ids($('agent-assets').value), allowed_pools = ids($('agent-pools').value);
   const asset = assetId($('agent-input-asset').value), amount = $('agent-max').value.trim();
@@ -1227,7 +1361,7 @@ $('t-shield').onclick = async () => {
   await run($('t-shield'), 'Moving in…', async () => { await api('/api/shield', {}); });
   await loadTransparent();
 };
-for (const [b, src] of [['copy-addr', 'address'], ['copy-acct', 'account'], ['copy-dep', 'dep-addr'], ['copy-content', 'it-content'], ['copy-taddr', 't-address'], ['copy-it-account', 'it-account']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
+for (const [b, src] of [['copy-addr', 'address'], ['copy-acct', 'account'], ['copy-dep', 'dep-addr'], ['copy-memo', 'dep-memo-line'], ['copy-content', 'it-content'], ['copy-taddr', 't-address'], ['copy-it-account', 'it-account']]) $(b).onclick = () => navigator.clipboard.writeText($(src).dataset.full || $(src).textContent).then(() => toast('copied')).catch(() => {});
 
 try { const t = localStorage.getItem('tab'); if (t) showTab(t); } catch {}
 load();

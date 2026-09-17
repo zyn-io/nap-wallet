@@ -213,6 +213,11 @@ pub struct Progress {
 
 pub struct Replica {
     pub chain_id: u32,
+    /// The data-availability key, when this replica re-serves bundles. Set
+    /// after construction because a replica that only verifies never needs
+    /// one: it reads through an [`crate::dacrypt::Opening`] fetch and is handed
+    /// plaintext (§92).
+    pub da_key: Option<[u8; 32]>,
     dir: PathBuf,
     store: FileStore,
     ledger: Ledger,
@@ -321,6 +326,7 @@ impl Replica {
         let (pending_forced, censored, noted) = load_forced(dir, chain_id);
         Ok(Replica {
             chain_id,
+            da_key: None,
             dir: dir.to_path_buf(),
             store,
             ledger,
@@ -343,6 +349,13 @@ impl Replica {
 
     /// Refuse to advance past an anchor whose certificate does not clear this
     /// set — for a replica that only believes k-of-n-endorsed roots.
+    /// Seal the ownership-bearing files when this replica re-serves bundles,
+    /// so a replica mirroring for others does not undo the sequencer's work.
+    pub fn sealing_with(mut self, key: Option<[u8; 32]>) -> Replica {
+        self.da_key = key;
+        self
+    }
+
     pub fn requiring(mut self, set: zyn::anchor::SignerSet) -> Replica {
         self.require_set = Some(set);
         self
@@ -721,7 +734,7 @@ impl Replica {
             .save_ledger(&self.ledger)
             .map_err(|e| format!("cannot save verified ledger: {:?}", e))?;
         let da = self.da_dir();
-        publish::write_local(&da, self.chain_id, bundle)?;
+        publish::write_local_sealed(&da, self.chain_id, bundle, self.da_key.as_ref())?;
         let snap_path = da
             .join(publish::rel_dir(
                 self.chain_id,

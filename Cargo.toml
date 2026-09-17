@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "apps/nap/src-tauri","zyn-vm", "zyn-bridge", "zyn-custody", "swapvm", "zyn", "zynzapd"]
+    "apps/nap/src-tauri","cave-randomness",
+    "zyn-vm", "zyn-bridge", "zyn-custody", "swapvm", "zyn", "zynzapd"]
 resolver = "2"
 
 # Three layers, bottom up:

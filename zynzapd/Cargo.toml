@@ -25,6 +25,9 @@ zyn = { path = "../zyn" }
 zyn-vm = { path = "../zyn-vm" }
 swapvm = { path = "../swapvm" }
 zyn-custody = { path = "../zyn-custody" }
+# The allocation engine. This crate wires it to a chain and a clock; the engine
+# itself owns neither, which is what lets anyone replay an allocation offline.
+cave-randomness = { path = "../cave-randomness" }
 # Signals. A node that is killed between seals loses the intents since the last
 # one, which is exactly the loss a clean shutdown exists to avoid.
 libc = "0.2"
@@ -33,6 +36,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 bip39 = { version = "2.2.0", features = ["rand"] }
 zip32 = "0.2.1"
 hkdf = "0.12"
+# Sealing the two DA artifacts that carry ownership. Same version the custody
+# crate already uses, so the workspace has one AEAD rather than two.
+chacha20poly1305 = "0.10"
 
 [lib]
 name = "zynzapd"

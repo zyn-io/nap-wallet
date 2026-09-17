@@ -89,8 +89,22 @@ pub struct Config {
     pub stall_secs: u64,
     /// Where anchored bundles are written before they are mirrored.
     pub da_dir: PathBuf,
+    /// Signers that verify deposit backing, and how many must endorse.
+    ///
+    /// `ZYN_BACKING_SIGNERS` (hex pubkeys) and `ZYN_BACKING_THRESHOLD`. Set
+    /// these when the vault's viewing key is held by only some signers — which
+    /// is how the Zcash-payment-to-Zyn-account link is narrowed (§97). Unset
+    /// means every signer is assumed to check, the historical arrangement.
+    pub backing_signers: Option<Vec<[u8; 32]>>,
+    pub backing_threshold: usize,
     /// `url[|token],…` — where bundles are pushed. Empty means local only.
     pub da_mirrors: String,
+    /// 32-byte hex. When set, the ownership-bearing files in a bundle — the
+    /// journal and the base state — are encrypted under keys derived from it,
+    /// and the public commitments are not. Shared out of band with the
+    /// verifier set; a mirror never needs it and should never be given it
+    /// (§92, `dacrypt`). Unset publishes in the clear, as before.
+    pub da_key: Option<[u8; 32]>,
     /// Re-read forced intents from this height at boot and queue the unhandled.
     pub forced_rescan_from: Option<u64>,
     /// Signer public keys (ed25519, hex, comma-separated) and the threshold —
@@ -299,7 +313,7 @@ impl Config {
                 .map_err(|_| ConfigError::Bad("ZYN_LISTEN", "expected host:port".into()))?,
             data_dir: var("ZYN_DATA_DIR", "./zyn-data".to_string())?.into(),
             seal_every: var("ZYN_SEAL_EVERY", 256u64)?,
-            seal_after_secs: var("ZYN_SEAL_AFTER_SECS", 60u64)?,
+            seal_after_secs: var("ZYN_SEAL_AFTER_SECS", 5u64)?,
             anchor_every: var("ZYN_ANCHOR_EVERY", 30u64)?,
             anchor_after_secs: var("ZYN_ANCHOR_AFTER_SECS", 1800u64)?,
             save_every_secs: var("ZYN_SAVE_EVERY_SECS", 30u64)?,
@@ -311,7 +325,28 @@ impl Config {
                 Ok(d) => d.into(),
                 Err(_) => PathBuf::from(var("ZYN_DATA_DIR", "./zyn-data".to_string())?).join("da"),
             },
+            backing_signers: match env::var("ZYN_BACKING_SIGNERS").ok().filter(|s| !s.is_empty()) {
+                Some(v) => Some(
+                    v.split(',')
+                        .map(|k| {
+                            parse_hex(k.trim(), 32, "ZYN_BACKING_SIGNERS")
+                                .map(|b| <[u8; 32]>::try_from(b.as_slice()).unwrap())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                None => None,
+            },
+            backing_threshold: var("ZYN_BACKING_THRESHOLD", 0usize)?,
             da_mirrors: env::var("ZYN_DA_MIRRORS").unwrap_or_default(),
+            // A malformed key stops the node rather than quietly publishing
+            // ownership in the clear: an operator who set this meant it.
+            da_key: match env::var("ZYN_DA_KEY").ok().filter(|s| !s.trim().is_empty()) {
+                Some(v) => Some(
+                    crate::dacrypt::key_from_hex(&v)
+                        .map_err(|_| ConfigError::Bad("ZYN_DA_KEY", v.clone()))?,
+                ),
+                None => None,
+            },
             forced_rescan_from: env::var("ZYN_FORCED_RESCAN_FROM")
                 .ok()
                 .and_then(|v| v.parse().ok()),

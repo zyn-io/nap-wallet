@@ -22,6 +22,7 @@
 
 use crate::verify::{encode_authorized, Authorized};
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use zyn_vm::spec::MicrochainVm;
@@ -136,6 +137,16 @@ pub struct Node<V: MicrochainVm> {
     signers: Option<SignerSet>,
     /// Certificates gathered for anchors not yet accepted, by anchor id.
     pending_certificates: Vec<(crate::anchor::AnchorId, Certificate)>,
+    /// The last epoch at which each configured signer's endorsement was
+    /// counted.
+    ///
+    /// A certificate that clears says nothing about who is missing from it, so
+    /// a set of three with one silently gone is a set of two with no margin and
+    /// no announcement. Recording who was last heard from is what lets an
+    /// operator be told, rather than finding out during the next incident
+    /// (DECISIONS §89.2). In memory only: it is a liveness observation, not
+    /// state the chain commits to, and a restart legitimately knows nothing.
+    endorsed_at: BTreeMap<[u8; 32], u64>,
     /// The journal, if this node keeps one.
     recorder: Option<Box<dyn Recorder + Send>>,
     /// When set, sealing never anchors by itself: an operator proposes an
@@ -172,6 +183,7 @@ impl<V: MicrochainVm> Node<V> {
             published: None,
             signers: None,
             pending_certificates: Vec::new(),
+            endorsed_at: BTreeMap::new(),
             recorder: None,
             manual_anchoring: false,
             proposed: None,
@@ -243,7 +255,17 @@ impl<V: MicrochainVm> Node<V> {
             }
             None => self.pending_certificates.push((anchor_id, probe)),
         }
+        // Recorded even for a repeat: re-offering is how a signer heals a
+        // restart (§63), and a signer that can still re-offer is alive.
+        self.endorsed_at.insert(signer, self.ledger.len() as u64);
         true
+    }
+
+    /// The last anchor count at which each signer was heard from, alongside
+    /// the configured set. A signer in the set with no entry has not been
+    /// heard from since this node started.
+    pub fn signer_liveness(&self) -> Option<(&SignerSet, &BTreeMap<[u8; 32], u64>)> {
+        self.signers.as_ref().map(|s| (s, &self.endorsed_at))
     }
 
     /// The certificate gathered for an anchor so far.
@@ -258,7 +280,13 @@ impl<V: MicrochainVm> Node<V> {
     /// false with no set — there is nothing to clear.
     pub fn certificate_clears(&self, anchor_id: AnchorId) -> bool {
         match (&self.signers, self.certificate_for(anchor_id)) {
-            (Some(set), Some(cert)) => cert.weight(set) >= set.threshold(),
+            // Both thresholds, or the sequencer would report an anchor as
+            // ready that `Certificate::verify` will then refuse — and an
+            // operator would carry it to Zcash before finding out.
+            (Some(set), Some(cert)) => {
+                cert.weight(set) >= set.threshold()
+                    && cert.backing_weight(set) >= set.backing().1
+            }
             _ => false,
         }
     }
@@ -303,6 +331,7 @@ impl<V: MicrochainVm> Node<V> {
             published: None,
             signers: None,
             pending_certificates: Vec::new(),
+            endorsed_at: BTreeMap::new(),
             recorder: None,
             manual_anchoring: false,
             proposed: None,
@@ -1398,5 +1427,73 @@ mod tests {
             ),
             2
         );
+    }
+
+    use crate::anchor::SignerSet;
+    use ed25519_dalek::{Signer as _, SigningKey};
+
+    /// A certificate that clears says nothing about who is missing from it.
+    /// This is the observation that was absent on 15-16 Sep, when one of three
+    /// signers was dead for 36 hours and every anchor still settled (§89.2).
+    #[test]
+    fn a_quiet_signer_is_visible_even_while_the_threshold_clears() {
+        let keys: Vec<SigningKey> = (1..=3u8)
+            .map(|i| SigningKey::from_bytes(&[i; 32]))
+            .collect();
+        let ids: Vec<[u8; 32]> = keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let set = SignerSet::new(ids.clone(), 2).unwrap();
+        let mut n = node().with_manual_anchoring().with_signers(set);
+
+        // Before anyone speaks, every signer is unheard-of rather than absent
+        // from the set — a restart legitimately knows nothing.
+        let (set, seen) = n.signer_liveness().unwrap();
+        assert_eq!(set.signers().len(), 3);
+        assert!(seen.is_empty());
+
+        for _ in 0..30 {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 0);
+        }
+        let a = n.propose_anchor(0).unwrap();
+
+        // Two of three endorse. The certificate clears — and that is exactly
+        // the state in which nothing else would report the third.
+        for k in &keys[..2] {
+            assert!(n.add_endorsement(a.id(), k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes()));
+        }
+        assert!(n.certificate_clears(a.id()));
+
+        let (_, seen) = n.signer_liveness().unwrap();
+        assert!(seen.contains_key(&ids[0]) || seen.contains_key(&ids[1]));
+        let heard = ids.iter().filter(|k| seen.contains_key(*k)).count();
+        assert_eq!(heard, 2, "two spoke");
+        let quiet: Vec<_> = ids.iter().filter(|k| !seen.contains_key(*k)).collect();
+        assert_eq!(quiet.len(), 1, "and the third is nameable");
+
+        // An outsider's endorsement is not counted, so it must not make them
+        // look alive either — liveness follows the set, not the socket.
+        let outsider = SigningKey::from_bytes(&[9u8; 32]);
+        let out_id = outsider.verifying_key().to_bytes();
+        assert!(!n.add_endorsement(a.id(), out_id, outsider.sign(&a.id()).to_bytes()));
+        let (_, seen) = n.signer_liveness().unwrap();
+        assert!(!seen.contains_key(&out_id));
+    }
+
+    /// Re-offering is how a signer heals a restart (§63), so a repeat has to
+    /// count as a sign of life even though it adds no weight.
+    #[test]
+    fn re_offering_keeps_a_signer_looking_alive() {
+        let k = SigningKey::from_bytes(&[1u8; 32]);
+        let id = k.verifying_key().to_bytes();
+        let set = SignerSet::new(vec![id], 1).unwrap();
+        let mut n = node().with_manual_anchoring().with_signers(set);
+        for _ in 0..30 {
+            let d = deposit(&n, 1);
+            n.submit_operator(d, 0);
+        }
+        let a = n.propose_anchor(0).unwrap();
+        assert!(n.add_endorsement(a.id(), id, k.sign(&a.id()).to_bytes()));
+        assert!(n.add_endorsement(a.id(), id, k.sign(&a.id()).to_bytes()));
+        assert!(n.signer_liveness().unwrap().1.contains_key(&id));
     }
 }

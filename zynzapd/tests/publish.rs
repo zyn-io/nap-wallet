@@ -31,6 +31,7 @@ fn a_confirmed_anchor_yields_a_bundle_that_checks_out_end_to_end() {
         0,
         true,
         &dir.join("da"),
+        None,
     )
     .unwrap();
     let shared = Arc::new(Mutex::new(b.node));
@@ -132,6 +133,7 @@ fn an_epoch_not_yet_sealed_on_disk_is_refused_rather_than_published() {
         0,
         true,
         &dir.join("da"),
+        None,
     )
     .unwrap();
     let shared = Arc::new(Mutex::new(b.node));

@@ -1403,6 +1403,67 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 None => Ok(json!({ "address": app.vault, "memo": true })),
             }
         }
+        // A fresh account to receive one item at, so the journal names
+        // something that has never been used and never will be again (§95).
+        //
+        // The index is the caller's to track and must be issued **in order** —
+        // `receive::GAP` is what a restore can cross, and a skipped range is an
+        // item no recovery will find. `/api/receiving/next` is the honest way
+        // to get one; passing an index by hand is for a retry of a checkout
+        // that already claimed it.
+        // The account to receive a whole collection at. One derivation, no
+        // counter to keep and nothing to orphan — prefer this over an index
+        // unless per-item unlinkability is worth a read per item (§97.5).
+        ("GET", "/api/receiving/collection") => {
+            zyn_only(app)?;
+            let collection = id_of(input, "collection")?;
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            Ok(json!({
+                "collection": hex(&collection),
+                "account": hex(&w.collection_account(&collection)?),
+            }))
+        }
+        ("GET", "/api/receiving") => {
+            zyn_only(app)?;
+            let index = input
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or("which receiving index?")? as u32;
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            Ok(json!({
+                "index": index,
+                "account": hex(&w.receiving_account(index)?),
+            }))
+        }
+        // The next unused index, found by walking the branch until the gap.
+        // One signed read per index, which is why the gap is small — and the
+        // read is signed with the *derived* key, so the node never learns which
+        // accounts belong together from the question itself.
+        ("GET", "/api/receiving/next") => {
+            zyn_only(app)?;
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            let found = crate::receive::discover(
+                &|index| w.receiving_account(index),
+                &|index, _| {
+                    let key = w.receiving_key(index)?;
+                    Ok(app
+                        .node
+                        .account(&key)
+                        .map_err(|e| e.to_string())?
+                        .map(|r| !r.spendable.is_empty())
+                        .unwrap_or(false))
+                },
+                crate::receive::GAP,
+            );
+            let found = found?;
+            let index = found.next_index();
+            Ok(json!({
+                "index": index,
+                "account": hex(&w.receiving_account(index)?),
+                "occupied": found.occupied.len(),
+                "gap": crate::receive::GAP,
+            }))
+        }
         ("GET", "/api/zyn-key") => {
             zyn_only(app)?;
             let current_key = app.key();
@@ -1444,6 +1505,30 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             App::start_job(app, "deposit", move |a| {
                 let txid = send(a, &to, zat, memo.as_deref(), "deposit")?;
                 Ok(format!("deposited {:.8} to the Zyn vault: {}", zec(zat), txid))
+            })
+        }
+        // Fund the vault's own fee reserve without crediting anyone.
+        //
+        // An anchor is a vault self-send and costs a ZIP-317 fee, so a chain
+        // that has never taken a deposit cannot anchor at all — it holds no
+        // note to spend. A plain send would not do: shielded funds arriving
+        // with no Zyn memo are *fatal to the deposit pass*, because crediting
+        // the rest "would attest backing that includes money nobody can claim".
+        //
+        // The all-zero account is the operator top-up: held for fees, never
+        // credited, so supply and backing stay equal and nobody is diluted.
+        ("POST", "/api/topup") => {
+            zyn_only(app)?;
+            let zat = zatoshi_of(input, "amount")?;
+            let to = app.vault.clone();
+            let memo = zyn_custody::memo::encode_text(&[0u8; 32]);
+            App::start_job(app, "topup", move |a| {
+                let txid = send(a, &to, zat, Some(&memo), "topup")?;
+                Ok(format!(
+                    "topped up the vault fee reserve with {:.8} ZEC (credited to nobody): {}",
+                    zec(zat),
+                    txid
+                ))
             })
         }
         ("POST", "/api/import") => {
@@ -1617,6 +1702,15 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
                 "expires_at_epoch": o.expires_at_epoch,
             })).collect::<Vec<_>>() }))
         }
+        // Which key signs an item operation.
+        //
+        // Once items are received into a per-collection account (§97.5), the
+        // identity does not hold them and cannot escrow them — so signing with
+        // it would simply fail. Naming the collection makes the offer come from
+        // the account that actually holds the item, and the unlinkability is a
+        // consequence rather than a feature bolted on: a listing discloses that
+        // *this collection account* holds the item, which is what a public
+        // order book must disclose, and not who that is.
         ("POST", "/api/offer") => {
             zyn_only(app)?;
             let offer_asset = id_of(input, "asset")?;
@@ -1632,8 +1726,9 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
             // honest default for a listing: a silent lapse would look like a
             // theft to whoever was about to take it.
             let expires = input.get("expires_at_epoch").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            let signer = item_signer(app, input)?;
             let acc = app.node
-                .place_offer(&app.key(), offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
+                .place_offer(&signer, offer_asset, offer_amount, swapvm::types::XZEC, want_amount, expires)
                 .map_err(|e| e.to_string())?;
             app.note(format!("offered asset {} at {} ZEC.zy (seq {})", hex(&offer_asset), want_amount, acc.seq));
             Ok(json!({ "placed": true, "seq": acc.seq, "epoch": acc.epoch }))
@@ -1641,14 +1736,24 @@ pub fn api(app: &Arc<App>, method: &str, path: &str, input: &Value) -> Result<Va
         ("POST", "/api/take") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.take_offer(&app.key(), offer).map_err(|e| e.to_string())?;
+            // Taking pays and receives, so the taker is whoever will hold the
+            // item — name the collection to receive it into that account
+            // directly rather than into the identity and then moving it, which
+            // would write the link into the journal anyway.
+            let acc = app.node
+                .take_offer(&item_signer(app, input)?, offer)
+                .map_err(|e| e.to_string())?;
             app.note(format!("took offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "taken": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
         ("POST", "/api/cancel-offer") => {
             zyn_only(app)?;
             let offer = input.get("offer").and_then(Value::as_u64).ok_or("which offer?")?;
-            let acc = app.node.cancel_offer(&app.key(), offer).map_err(|e| e.to_string())?;
+            // Only the maker may cancel, so this must be the same key that
+            // placed it.
+            let acc = app.node
+                .cancel_offer(&item_signer(app, input)?, offer)
+                .map_err(|e| e.to_string())?;
             app.note(format!("cancelled offer {} (seq {})", offer, acc.seq));
             Ok(json!({ "cancelled": true, "seq": acc.seq, "epoch": acc.epoch }))
         }
@@ -2093,6 +2198,26 @@ fn qr_svg(text: &str) -> String {
     }
 }
 
+/// The key that signs an item operation: the collection's receiving account
+/// when one is named, otherwise the wallet's identity.
+///
+/// Optional rather than required, because a collection held on the identity —
+/// everything minted before §97.5 — must keep working. Naming a collection the
+/// wallet cannot derive an account for is an error rather than a silent
+/// fallback to the identity: falling back would place the offer from an
+/// account that does not hold the item, and the refusal would come from the VM
+/// with none of this context attached.
+fn item_signer(app: &App, input: &Value) -> Result<ed25519_dalek::SigningKey, String> {
+    match input.get("collection") {
+        None | Some(Value::Null) => Ok(app.key()),
+        Some(_) => {
+            let collection = id_of(input, "collection")?;
+            let w = app.wallet.lock().map_err(|_| "wallet busy")?;
+            w.receiving_key_for_collection(&collection)
+        }
+    }
+}
+
 pub fn overview(app: &App) -> Result<Value, String> {
     let fresh = match app.wallet.try_lock() {
         Ok(w) => {
@@ -2283,6 +2408,7 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
 
     // Collections, so an item can show what backs it.
     let collections = app.node.collections().unwrap_or_default();
+    let pots = app.node.pots().ok();
     let offers = app.node.offers().unwrap_or_default();
     let anchors = app.node.anchors(0).unwrap_or_default();
     let floor_of = |asset: [u8; 32]| -> Option<([u8; 32], Fixed)> {
@@ -2419,6 +2545,16 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
             "content": a.content.map(|c| c.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
             "collection": a.collection,
             "price_zec": price_zec(a.id).map(|p| p.to_string()),
+            // Whether more can ever be issued. Named rather than coded, so a
+            // reader of the JSON needs no table to understand it.
+            "supply_policy": match a.supply_policy {
+                swapvm::state::SupplyPolicy::Fixed => "fixed",
+                swapvm::state::SupplyPolicy::Capped { .. } => "capped",
+                swapvm::state::SupplyPolicy::Open { .. } => "open",
+            },
+            "mint_authority": a.supply_policy.authority()
+                .map(|k| k.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+            "supply_cap": a.supply_policy.cap().map(|c| c.to_string()),
         })).collect::<Vec<_>>(),
         // Every collection the chain knows, with the floor it publishes.
         "collections": collections.iter().map(|c| json!({
@@ -2427,6 +2563,57 @@ fn zyn_overview(app: &App, network: Network, address: &str) -> Result<Value, Str
             "fee_bps": c.fee_bps, "phase": c.phase, "phase_name": c.phase_name(),
             "remaining": c.remaining(), "redeem_price": c.redeem_price.to_string(),
         })).collect::<Vec<_>>(),
+        // The ZYN market's schedule. Before the pot fills there is no date,
+        // only progress toward one — which is the honest thing to show, since
+        // the pot filling is what says real backing exists. After it fills the
+        // date is fixed and public, so the page can count down to it rather
+        // than wait to be told.
+        "market": match &pots {
+            None => serde_json::Value::Null,
+            Some(v) => {
+                let held = |pot: &str, asset: [u8; 32]| -> Fixed {
+                    v.pots
+                        .iter()
+                        .find(|(n, _, _)| n == pot)
+                        .map(|(_, _, hs)| {
+                            hs.iter()
+                                .filter(|(a, _)| *a == asset)
+                                .fold(Fixed::ZERO, |acc, (_, amt)| {
+                                    acc.add(*amt).unwrap_or(acc)
+                                })
+                        })
+                        .unwrap_or(Fixed::ZERO)
+                };
+                let zyn_in_pot = held("zyn-pol-zyn", swapvm::types::ZYN_MAINNET);
+                let zec_in_pot = held("zyn-pol", swapvm::types::XZEC);
+                let target = swapvm::launch::POL_ZYN_CAP;
+                json!({
+                    "zcash_height": v.zcash_height,
+                    // The open drains the pot into the pool, so the pot's own
+                    // balance distinguishes "due" from "already happened"
+                    // without a second lookup.
+                    "state": match &v.schedule {
+                        None => "filling",
+                        Some(_) if zyn_in_pot >= target => "scheduled",
+                        Some(_) => "open",
+                    },
+                    "armed_height": v.schedule.map(|s| s.armed),
+                    "open_height": v.schedule.map(|s| s.opens),
+                    "blocks_remaining": v.schedule.map(|s| s.blocks_remaining(v.zcash_height)),
+                    // ~75 seconds a Zcash block, so a countdown in blocks can
+                    // be shown as a duration without the page guessing.
+                    "seconds_remaining": v.schedule
+                        .map(|s| s.blocks_remaining(v.zcash_height).saturating_mul(75)),
+                    "grace_blocks": swapvm::launch::POL_OPEN_GRACE_BLOCKS,
+                    "zyn_in_pot": zyn_in_pot.to_string(),
+                    "zyn_target": target.to_string(),
+                    "zec_in_pot": zec_in_pot.to_string(),
+                    "zec_target": "420",
+                    "open_price_zec": swapvm::launch::POL_ZEC_PER_ZYN.to_string(),
+                })
+            }
+        },
+
         // What the batching actually bought, as two numbers and a receipt:
         // how many epochs have been carried to Zcash, in how many
         // transactions, and the most recent one to link to.
@@ -2524,5 +2711,28 @@ mod uri_tests {
         assert!(deposit_uri(addr, None, Some(1)).ends_with("&amount=0.00000001"));
         // Zero is not an amount; leaving it out lets the payer choose.
         assert!(!deposit_uri(addr, None, Some(0)).contains("amount="));
+    }
+}
+
+#[cfg(test)]
+mod deposit_uri_tests {
+    /// The cave's deposit page builds this same URI in JavaScript, because it
+    /// talks to the wallet provider rather than to this process. Two encoders
+    /// for one format drift silently — a memo that decodes to nothing looks
+    /// exactly like a memo that was never set — so the shape is pinned here
+    /// and mirrored by `apps/cave-collection-z/deposit.html`.
+    #[test]
+    fn the_zip321_request_is_the_shape_the_web_page_also_builds() {
+        let memo = format!("ZYN1:{}", "ab".repeat(32));
+        assert_eq!(
+            super::deposit_uri("utest1abc", Some(&memo), None),
+            "zcash:utest1abc?message=Zyn%20deposit&memo=WllOMTphYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFi"
+        );
+        // Without a memo the request is the address and nothing more, which is
+        // what a per-account address wants: no field for a wallet to drop.
+        assert_eq!(
+            super::deposit_uri("utest1abc", None, None),
+            "zcash:utest1abc?message=Zyn%20deposit"
+        );
     }
 }

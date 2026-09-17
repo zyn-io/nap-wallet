@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use ed25519_dalek::{Signer, SigningKey};
+use swapvm::state::SupplyPolicy;
 use swapvm::state::SwapState;
 use swapvm::tx::{Hop, Intent};
 use swapvm::types::{AssetId, CollectionId, PoolId};
@@ -91,6 +92,9 @@ pub fn reject_name(code: u8) -> &'static str {
         12 => "invalid path",
         13 => "insufficient reserves",
         14 => "invalid fee",
+        15 => "the parameters do not make sense",
+        16 => "the id space is exhausted",
+        17 => "the arithmetic overflowed",
         18 => "indivisible",
         19 => "below the launch bond",
         20 => "degenerate offer",
@@ -105,9 +109,23 @@ pub fn reject_name(code: u8) -> &'static str {
         29 => "invalid finality",
         30 => "above what the vault holds",
         31 => "vault attested short",
+        32 => "the observation is stale",
         33 => "not the bound destination",
         34 => "rebinding too soon (a redirect must wait out its delay)",
         35 => "symbol already taken",
+        36 => "no such collection",
+        37 => "the collection is full",
+        38 => "not a collection item",
+        39 => "not the whole item",
+        40 => "the collection is in the wrong phase",
+        41 => "not the creator",
+        42 => "the item needs a price",
+        43 => "no such offer",
+        44 => "the offer has expired",
+        45 => "cannot take your own offer",
+        46 => "not the maker",
+        53 => "not the issuer",
+        54 => "above the supply cap",
         47 => "invalid metadata",
         48 => "invalid developer buy",
         49 => "launch rate limited",
@@ -117,6 +135,7 @@ pub fn reject_name(code: u8) -> &'static str {
         _ => "rejected",
     }
 }
+
 
 #[derive(Clone, Debug, Default)]
 pub struct Health {
@@ -285,6 +304,12 @@ pub struct Asset {
     pub content: Option<[u8; 32]>,
     /// The collection whose pool backs it, if it is a collection item.
     pub collection: Option<CollectionId>,
+    /// Whether more of this asset can ever be issued, and by whom.
+    ///
+    /// Read this before quoting a price. A token whose issuer can mint freely
+    /// is a different instrument from one that cannot, and the chain is the
+    /// only place that answer cannot be faked.
+    pub supply_policy: SupplyPolicy,
 }
 
 /// A Cave launch as committed by the chain.
@@ -596,6 +621,35 @@ pub struct LaunchMe {
     pub markets: Vec<(AssetId, Fixed, Fixed, Fixed, u64)>,
 }
 
+/// When the ZYN market opens, in Zcash block height.
+///
+/// Both numbers are public the moment the POL pot fills, which is the whole
+/// mechanism: the date is arithmetic from chain state rather than something
+/// anyone has to announce.
+#[derive(Clone, Copy, Debug)]
+pub struct MarketSchedule {
+    /// Height at which the pot filled and the countdown started.
+    pub armed: u64,
+    /// Height at which the market opens.
+    pub opens: u64,
+}
+
+impl MarketSchedule {
+    /// Blocks remaining, or `0` once the market is due.
+    pub fn blocks_remaining(&self, now: u64) -> u64 {
+        self.opens.saturating_sub(now)
+    }
+}
+
+/// The pots, and the market schedule that depends on them.
+#[derive(Clone, Debug)]
+pub struct PotsView {
+    pub zcash_height: u64,
+    /// `None` until the POL pot fills.
+    pub schedule: Option<MarketSchedule>,
+    pub pots: Vec<(String, [u8; 32], Vec<(AssetId, Fixed)>)>,
+}
+
 impl Node {
     pub fn new(addr: &str, chain: u32) -> Node {
         Node {
@@ -633,6 +687,25 @@ impl Node {
         e.u8(crate::rpc::OP_DEPOSIT_ADDRESS)
             .u32(self.chain)
             .bytes(&account);
+        let body = self.call(e.finish())?;
+        let mut d = Decoder::new(&body);
+        let n = d
+            .u32()
+            .map_err(|_| "malformed deposit address reply".to_string())? as usize;
+        let raw = d
+            .take_bytes(n)
+            .map_err(|_| "truncated deposit address".to_string())?;
+        String::from_utf8(raw.to_vec()).map_err(|_| "deposit address is not text".to_string())
+    }
+
+    /// The same address, asked for with a signed read rather than a bare
+    /// account id. The payload is `OP_ACCOUNT`'s byte for byte, so a client
+    /// that can read its own balance can already ask this.
+    pub fn deposit_address_signed(&self, payload: &[u8]) -> Result<String, String> {
+        let mut e = Encoder::new();
+        e.u8(crate::rpc::OP_DEPOSIT_ADDRESS_SIGNED)
+            .u32(self.chain)
+            .bytes(payload);
         let body = self.call(e.finish())?;
         let mut d = Decoder::new(&body);
         let n = d
@@ -1151,6 +1224,17 @@ impl Node {
             let has_collection = d.u8().unwrap_or(0) != 0;
             let collection_id = d.array::<32>().unwrap_or([0; 32]);
             let collection = has_collection.then_some(collection_id);
+            let supply_policy = match d.u8().unwrap_or(0) {
+                1 => {
+                    let authority = d.array::<32>().unwrap_or([0; 32]);
+                    let cap = d.fixed().unwrap_or(Fixed::ZERO);
+                    SupplyPolicy::Capped { authority, cap }
+                }
+                2 => SupplyPolicy::Open {
+                    authority: d.array::<32>().unwrap_or([0; 32]),
+                },
+                _ => SupplyPolicy::Fixed,
+            };
             out.push(Asset {
                 id,
                 symbol,
@@ -1158,9 +1242,50 @@ impl Node {
                 lp_of: lp,
                 content: has_content.then_some(content),
                 collection,
+                supply_policy,
             });
         }
         Ok(out)
+    }
+
+    /// Balances of the protocol's pinned keyless pots.
+    ///
+    /// Public on purpose: nobody holds a key to these, and §71.3 requires the
+    /// supply numbers to be derivable from chain state rather than asserted.
+    pub fn pots(&self) -> Result<PotsView, String> {
+        let mut e = Encoder::new();
+        e.u8(crate::rpc::OP_POTS).u32(self.chain);
+        let body = self.call(e.finish())?;
+        let mut d = Decoder::new(&body);
+        let zcash_height = d.u64().unwrap_or(0);
+        let schedule = match d.u8().unwrap_or(0) {
+            1 => {
+                let armed = d.u64().unwrap_or(0);
+                let opens = d.u64().unwrap_or(0);
+                Some(MarketSchedule { armed, opens })
+            }
+            _ => None,
+        };
+        let n = d.u32().unwrap_or(0);
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let name_len = d.u8().unwrap_or(0) as usize;
+            let name = String::from_utf8_lossy(d.take_bytes(name_len).unwrap_or(&[])).to_string();
+            let id = d.array::<32>().unwrap_or([0; 32]);
+            let k = d.u32().unwrap_or(0);
+            let mut held = Vec::new();
+            for _ in 0..k {
+                let asset = d.array::<32>().unwrap_or([0; 32]);
+                let amount = d.fixed().unwrap_or(Fixed::ZERO);
+                held.push((asset, amount));
+            }
+            out.push((name, id, held));
+        }
+        Ok(PotsView {
+            zcash_height,
+            schedule,
+            pots: out,
+        })
     }
 
     /// Every Cave curve, including graduated launches and their ZynZap pool.
@@ -1618,5 +1743,26 @@ mod forced_frame_tests {
             amount: Fixed::ONE,
         };
         assert_eq!(hex(&frame_submission(&k, 11, 42, &intent)), "5cf4557b297390b6c6d08f752fc04a0ac8496349d6fbd0f68657328812d4e5ee000000000000008e01308ab8b209813f5912287682b50950d62782abc61507f0a80abafd0f7a33a7a653e89fba1119f7490c8b9c0e58f89db87d4b1e1402b1e9335d05a72b5440f4f4b492289fab01e5a1b05dd80879d1b80ecef529c4c3ff3d7e433a6a7b4305360602b85db260ec3a7c0a22c19c1f3380bfc75599c0ea4eeeeda69177ab12f9da56ea1111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000000700000000000000000de0b6b3a7640000");
+    }
+}
+
+#[cfg(test)]
+mod reject_name_tests {
+    /// Every code the VM can emit must have a sentence. A missing one reaches
+    /// the user as the bare word "rejected", which is what a wallet shows when
+    /// it cannot say why — and the collection codes were all missing once.
+    #[test]
+    fn every_wire_reject_code_has_a_name() {
+        let wire = include_str!("../../swapvm/src/wire.rs");
+        let mut missing = Vec::new();
+        for line in wire.lines() {
+            let Some(rest) = line.trim().strip_prefix("Reject::") else { continue };
+            let Some((variant, code)) = rest.split_once(" => ") else { continue };
+            let Ok(code) = code.trim_end_matches(',').trim().parse::<u8>() else { continue };
+            if super::reject_name(code) == super::reject_name(255) {
+                missing.push(format!("{} ({})", variant, code));
+            }
+        }
+        assert!(missing.is_empty(), "reject codes with no message: {:?}", missing);
     }
 }

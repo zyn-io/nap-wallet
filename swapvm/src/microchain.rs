@@ -132,6 +132,22 @@ impl MicrochainVm for SwapState {
             | Intent::BindWithdrawal { account, .. }
             | Intent::Reblind { account, .. } => vec![*account],
 
+            // Issuing speaks for the creator; minting and renouncing speak
+            // for whoever the token's policy names as its authority.
+            // A native issuance is a chain-level act with no account behind
+            // it, so it falls through to the operator rule below.
+            Intent::IssueToken {
+                creator, native, ..
+            } => {
+                if *native {
+                    Vec::new()
+                } else {
+                    vec![*creator]
+                }
+            }
+            Intent::MintToken { authority, .. }
+            | Intent::RenounceMintAuthority { authority, .. } => vec![*authority],
+
             Intent::LaunchCurve { creator, .. } => vec![*creator],
             Intent::BuyCurve { buyer, .. } => vec![*buyer],
             Intent::SellCurve { seller, .. } => vec![*seller],
@@ -415,6 +431,7 @@ mod tests {
                 xzec_liquidity: Fixed::whole(1_000),
                 token_liquidity: Fixed::whole(500_000),
                 fee_bps: 30,
+                            policy: crate::state::SupplyPolicy::Fixed,
             },
         );
         let cat = zyn_vm::asset_address(crate::types::ADDRESS_SCOPE_V1, &acct(1), b"CAT");
@@ -754,6 +771,7 @@ mod authority_tests {
             xzec_liquidity: crate::Fixed::whole(10),
             token_liquidity: crate::Fixed::whole(500_000),
             fee_bps: 100,
+                    policy: crate::state::SupplyPolicy::Fixed,
         };
         assert!(<SwapState as MicrochainVm>::intent_authorities(&i).is_empty());
         assert_eq!(

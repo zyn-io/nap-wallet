@@ -71,6 +71,7 @@ fn market() -> (Node<SwapState>, swapvm::types::PoolId) {
             xzec_liquidity: Fixed::whole(10_000),
             token_liquidity: Fixed::whole(5_000_000),
             fee_bps: 30,
+                    policy: swapvm::state::SupplyPolicy::Fixed,
         },
         0,
     );

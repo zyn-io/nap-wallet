@@ -207,24 +207,40 @@ impl<C: Ciphersuite> DkgParticipant<C> {
 
 /// A distributed DKG for Zcash, driven in memory over the same steps a network
 /// coordinator relays — the test harness, and the reference for the tool.
+///
+/// Kept as the Zcash-shaped name every existing caller uses; the work is in
+/// [`run_in_memory_for`], which is the same ceremony over any ciphersuite.
 pub fn run_in_memory(
     threshold: u16,
     participants: u16,
 ) -> Result<BTreeMap<IdentifierFor<Zcash>, ThresholdKeys<Zcash>>, CeremonyError> {
+    run_in_memory_for::<Zcash>(threshold, participants)
+}
+
+/// The same ceremony, over any ciphersuite.
+///
+/// Every part of the DKG was already generic — `DkgParticipant<C>`,
+/// `Round1Broadcast<C>`, `ThresholdKeys<C>` — and only this driver named Zcash,
+/// which is why provisioning a threshold account for anything else looked like
+/// new work when it was a type parameter away.
+pub fn run_in_memory_for<C: Ciphersuite>(
+    threshold: u16,
+    participants: u16,
+) -> Result<BTreeMap<IdentifierFor<C>, ThresholdKeys<C>>, CeremonyError> {
     let mut rng = rand::rngs::OsRng;
-    let ids: Vec<IdentifierFor<Zcash>> = (1..=participants)
-        .map(|i| IdentifierFor::<Zcash>::try_from(i).map_err(|_| CeremonyError::Crypto))
+    let ids: Vec<IdentifierFor<C>> = (1..=participants)
+        .map(|i| IdentifierFor::<C>::try_from(i).map_err(|_| CeremonyError::Crypto))
         .collect::<Result<_, _>>()?;
     let mut parts = BTreeMap::new();
     let mut broadcasts = Vec::new();
     for id in &ids {
-        let (p, b) = DkgParticipant::<Zcash>::part1(*id, threshold, participants, &mut rng)?;
+        let (p, b) = DkgParticipant::<C>::part1(*id, threshold, participants, &mut rng)?;
         parts.insert(*id, p);
         broadcasts.push(b);
     }
     // Round two: each seals a package to every other; the relay collects them
     // by (from -> to -> ciphertext).
-    let mut relayed: BTreeMap<IdentifierFor<Zcash>, BTreeMap<IdentifierFor<Zcash>, Vec<u8>>> =
+    let mut relayed: BTreeMap<IdentifierFor<C>, BTreeMap<IdentifierFor<C>, Vec<u8>>> =
         BTreeMap::new();
     for id in &ids {
         let others: Vec<_> = broadcasts.iter().filter(|b| b.id != *id).cloned().collect();
@@ -360,11 +376,11 @@ pub mod net {
         }
     }
 
-    fn id_bytes(id: &IdentifierFor<Zcash>) -> Vec<u8> {
+    fn id_bytes<C: Ciphersuite>(id: &IdentifierFor<C>) -> Vec<u8> {
         AsRef::<[u8]>::as_ref(&id.serialize()).to_vec()
     }
-    fn id_from(b: &[u8]) -> Option<IdentifierFor<Zcash>> {
-        IdentifierFor::<Zcash>::deserialize(b).ok()
+    fn id_from<C: Ciphersuite>(b: &[u8]) -> Option<IdentifierFor<C>> {
+        IdentifierFor::<C>::deserialize(b).ok()
     }
 
     /// The relay's collected state for one ceremony.
@@ -376,7 +392,7 @@ pub mod net {
     }
 
     /// Encode a round-one broadcast for the wire.
-    pub fn encode_broadcast(b: &Round1Broadcast<Zcash>) -> Result<Vec<u8>, CeremonyError> {
+    pub fn encode_broadcast<C: Ciphersuite>(b: &Round1Broadcast<C>) -> Result<Vec<u8>, CeremonyError> {
         let mut o = Vec::new();
         pb(&mut o, &id_bytes(&b.id));
         pb(
@@ -386,10 +402,10 @@ pub mod net {
         pb(&mut o, &b.seal_public);
         Ok(o)
     }
-    pub fn decode_broadcast(b: &[u8]) -> Option<Round1Broadcast<Zcash>> {
+    pub fn decode_broadcast<C: Ciphersuite>(b: &[u8]) -> Option<Round1Broadcast<C>> {
         let mut r = R::new(b);
         let id = id_from(r.bytes()?)?;
-        let package = dkg::round1::Package::<Zcash>::deserialize(r.bytes()?).ok()?;
+        let package = dkg::round1::Package::<C>::deserialize(r.bytes()?).ok()?;
         let seal_public: [u8; 32] = r.bytes()?.try_into().ok()?;
         Some(Round1Broadcast {
             id,
@@ -413,10 +429,15 @@ pub mod net {
                     let Some(b) = r.bytes() else {
                         return (S_ERR, b"malformed".to_vec());
                     };
-                    let Some(bc) = decode_broadcast(b) else {
+                    // The relay keys by identifier and forwards the rest
+                    // untouched. It reads the id straight off the frame rather
+                    // than decoding the package, so it needs no ciphersuite —
+                    // which is what lets one relay serve a Zcash ceremony and
+                    // an Ed25519 one without knowing which it is looking at.
+                    let Some(id) = R::new(b).bytes() else {
                         return (S_ERR, b"bad broadcast".to_vec());
                     };
-                    self.r1.insert(id_bytes(&bc.id), b.to_vec());
+                    self.r1.insert(id.to_vec(), b.to_vec());
                     (S_OK, Vec::new())
                 }
                 Some(OP_GET_R1) => {
@@ -544,15 +565,26 @@ pub mod net {
     /// return this participant's share. The share is produced locally in
     /// round three and never leaves; the relay only ever saw a public
     /// broadcast and ciphertext.
+    /// The Zcash-shaped name every existing caller uses.
     pub fn participate(
         addr: &str,
         id_index: u16,
         threshold: u16,
         participants: u16,
     ) -> Result<ThresholdKeys<Zcash>, String> {
-        let id = IdentifierFor::<Zcash>::try_from(id_index).map_err(|_| "bad id".to_string())?;
+        participate_for::<Zcash>(addr, id_index, threshold, participants)
+    }
+
+
+    pub fn participate_for<C: Ciphersuite>(
+        addr: &str,
+        id_index: u16,
+        threshold: u16,
+        participants: u16,
+    ) -> Result<ThresholdKeys<C>, String> {
+        let id = IdentifierFor::<C>::try_from(id_index).map_err(|_| "bad id".to_string())?;
         let (mut me, broadcast) =
-            DkgParticipant::<Zcash>::part1(id, threshold, participants, &mut rand::rngs::OsRng)
+            DkgParticipant::<C>::part1(id, threshold, participants, &mut rand::rngs::OsRng)
                 .map_err(|e| format!("part1: {:?}", e))?;
 
         let mut req = vec![OP_POST_R1];
@@ -601,6 +633,50 @@ pub mod net {
 mod net_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    /// The same relay, the same rounds, a different curve — and every
+    /// participant must land on one Zyn account. A relay that could only carry
+    /// RedPallas would make a threshold treasury a second piece of
+    /// infrastructure instead of a second argument.
+    #[test]
+    fn the_same_relay_carries_a_treasury_ceremony_over_ed25519() {
+        type T = crate::treasury::ZynAccount;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let relay = Arc::new(Mutex::new(net::Relay::new(3)));
+        {
+            let relay = Arc::clone(&relay);
+            std::thread::spawn(move || net::serve(relay, listener));
+        }
+        let handles: Vec<_> = (1..=3u16)
+            .map(|i| {
+                let addr = addr.clone();
+                std::thread::spawn(move || net::participate_for::<T>(&addr, i, 2, 3).unwrap())
+            })
+            .collect();
+        let keys: Vec<ThresholdKeys<T>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        let account = crate::treasury::account_of_group(&keys[0].public_package).unwrap();
+        for k in &keys {
+            assert_eq!(
+                crate::treasury::account_of_group(&k.public_package).unwrap(),
+                account,
+                "every participant must derive the same treasury account, or the ceremony did not agree"
+            );
+        }
+        assert_ne!(account, [0u8; 32]);
+
+        // Two of the three suffice, and the result is an ordinary signature.
+        let shares: std::collections::BTreeMap<_, _> = keys
+            .iter()
+            .map(|k| (*k.key_package.identifier(), k.clone()))
+            .collect();
+        let two: Vec<_> = shares.keys().copied().take(2).collect();
+        let (group_key, sig) = crate::treasury::sign(&shares, &two, b"an intent payload").unwrap();
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&group_key).unwrap();
+        vk.verify_strict(b"an intent payload", &ed25519_dalek::Signature::from_bytes(&sig))
+            .expect("the group's signature must verify as an ordinary one");
+    }
 
     #[test]
     fn a_ceremony_completes_over_real_sockets_with_the_relay_blind_to_round_two() {

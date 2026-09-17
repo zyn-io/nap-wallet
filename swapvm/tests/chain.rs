@@ -139,6 +139,7 @@ fn seeded() -> (Chain, AssetId, AssetId, PoolId, PoolId) {
             xzec_liquidity: Fixed::whole(10_000),
             token_liquidity: Fixed::whole(5_000_000),
             fee_bps: 30,
+                    policy: SupplyPolicy::Fixed,
         });
         let asset = match r[0] {
             Receipt::TokenCreated { asset, .. } => asset,
@@ -973,6 +974,7 @@ fn an_lp_position_exits_through_the_same_hatch_as_a_balance() {
 // Bridges: one shape, many custodying chains
 // ---------------------------------------------------------------------------
 
+use swapvm::state::SupplyPolicy;
 use swapvm::state::TokenInfo;
 use swapvm::types::{ORIGIN_BITCOIN, ORIGIN_ETHEREUM, ORIGIN_SOLANA, ORIGIN_ZCASH};
 
@@ -2341,6 +2343,7 @@ fn a_supply_of_one_does_not_prevent_fractional_ownership() {
         xzec_liquidity: Fixed::whole(10),
         token_liquidity: Fixed::whole(1),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
     let pool = match r[1] {
         Receipt::PoolCreated { pool, .. } => pool,
@@ -2857,6 +2860,7 @@ fn a_pool_position_can_be_sold_off_curve() {
         xzec_liquidity: Fixed::whole(10),
         token_liquidity: Fixed::whole(1),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
     let pool = match r[1] {
         Receipt::PoolCreated { pool, .. } => pool,
@@ -2981,6 +2985,7 @@ fn a_launched_pool_can_never_be_fully_unwrapped() {
         xzec_liquidity: Fixed::whole(10),
         token_liquidity: Fixed::whole(1),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
     let (asset, pool) = match (&r[0], &r[1]) {
         (Receipt::TokenCreated { asset, .. }, Receipt::PoolCreated { pool, .. }) => (*asset, *pool),
@@ -3064,6 +3069,7 @@ fn a_launch_below_the_bond_is_refused() {
                 xzec_liquidity: short,
                 token_liquidity: Fixed::whole(1_000),
                 fee_bps: 30,
+                            policy: SupplyPolicy::Fixed,
             },
             Reject::BelowLaunchBond,
         );
@@ -3078,6 +3084,7 @@ fn a_launch_below_the_bond_is_refused() {
         xzec_liquidity: bond.add(Fixed::raw(1)).unwrap(),
         token_liquidity: Fixed::whole(1_000),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
 }
 
@@ -3102,6 +3109,7 @@ fn a_creator_cannot_withdraw_the_bond() {
         xzec_liquidity: Fixed::whole(50),
         token_liquidity: Fixed::whole(500_000),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
     let pool = match r[1] {
         Receipt::PoolCreated { pool, .. } => pool,
@@ -3166,6 +3174,7 @@ fn the_bond_is_a_fixed_amount_not_a_fixed_fraction() {
             xzec_liquidity: seed,
             token_liquidity: Fixed::whole(1_000_000),
             fee_bps: 30,
+                    policy: SupplyPolicy::Fixed,
         });
         let pool = match r[1] {
             Receipt::PoolCreated { pool, .. } => pool,
@@ -3238,6 +3247,7 @@ fn inject_indivisible(c: &mut Chain, sym: &[u8], supply: Fixed) -> AssetId {
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         },
     );
     c.state.account_mut(&acct(1)).credit(id, supply).unwrap();
@@ -3308,6 +3318,7 @@ fn an_indivisible_asset_cannot_be_launched() {
             xzec_liquidity: Fixed::whole(100),
             token_liquidity: Fixed::whole(1_000),
             fee_bps: 30,
+                    policy: SupplyPolicy::Fixed,
         },
         Reject::Indivisible,
     );

@@ -79,6 +79,7 @@ fn market(policy: EpochPolicy) -> Node<SwapState> {
             xzec_liquidity: Fixed::whole(100_000),
             token_liquidity: Fixed::whole(50_000_000),
             fee_bps: 30,
+                    policy: swapvm::state::SupplyPolicy::Fixed,
         },
         0,
     );

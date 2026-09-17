@@ -71,6 +71,10 @@ pub fn open_at(
     now: u64,
     manual: bool,
     da_dir: &Path,
+    // Seals the base state when set. The journal is sealed by the publisher
+    // under the same key; both or neither, or a replica gets half a bundle it
+    // can read (§92).
+    da_key: Option<&[u8; 32]>,
 ) -> Result<Booted, String> {
     let store = FileStore::new(data_dir).map_err(|e| format!("{:?}", e))?;
     let journal =
@@ -124,7 +128,16 @@ pub fn open_at(
         if !base_path.exists() {
             let saved = Saved::of(node.state());
             std::fs::create_dir_all(base_path.parent().unwrap()).map_err(|e| e.to_string())?;
-            std::fs::write(&base_path, saved.encode())
+            // The base state is every account's holdings in the clear — the
+            // other half of the ownership leak, and the half that gets worse
+            // as the chain grows (§92.1). Sealed under the same key as the
+            // journal when one is configured.
+            let rel = format!("chain-{}/base.state", chain_id);
+            let bytes = match da_key {
+                Some(k) => crate::dacrypt::seal(k, chain_id, &crate::dacrypt::label_for(&rel), &saved.encode())?,
+                None => saved.encode(),
+            };
+            std::fs::write(&base_path, bytes)
                 .map_err(|e| format!("cannot write the DA base state: {}", e))?;
             eprintln!(
                 "zynzapd: DA base state written at epoch {} seq {} — BASE ROOT {} (announce this; replicas start from it)",

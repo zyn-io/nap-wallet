@@ -58,6 +58,7 @@ impl Bot {
                 [{"text": "anchors", "callback_data": "/anchors"},
                  {"text": "offers", "callback_data": "/offers"}],
                 [{"text": "zcash nodes", "callback_data": "/nodes"}],
+                [{"text": "whitelist", "callback_data": "/list"}],
             ]
         })
     }
@@ -223,6 +224,58 @@ impl Bot {
         }
     }
 
+    /// The whitelist register.
+    ///
+    /// Read from the site rather than from a database of its own: the register
+    /// lives where the form writes it, and a second copy would only be a second
+    /// thing to keep true. The bot holds a read-only token for it — unrelated
+    /// to anything that can spend or sign, so this command widens what a
+    /// compromised bot discloses and not what it can do.
+    fn whitelist(&self) -> String {
+        let (Some(url), Some(token)) = (env("ZYN_WHITELIST_URL"), env("ZYN_WHITELIST_TOKEN"))
+        else {
+            return "whitelist is not wired up: set ZYN_WHITELIST_URL and ZYN_WHITELIST_TOKEN".into();
+        };
+        let res = self
+            .agent
+            .get(&url)
+            .set("authorization", &format!("Bearer {}", token))
+            .call();
+        let v: serde_json::Value = match res {
+            Ok(r) => match r.into_json() {
+                Ok(v) => v,
+                Err(e) => return format!("whitelist: unreadable reply: {}", e),
+            },
+            Err(e) => return format!("whitelist: {}", e),
+        };
+        let apps = v.get("applications").and_then(|a| a.as_array());
+        let Some(apps) = apps else {
+            return format!(
+                "whitelist: {}",
+                v.get("error").and_then(|e| e.as_str()).unwrap_or("no applications field")
+            );
+        };
+        if apps.is_empty() {
+            return "no applications yet".into();
+        }
+        let mut out = format!("{} application(s)\n", apps.len());
+        // Newest last, so the most recent is nearest the reply — a phone shows
+        // the bottom of a long message first.
+        for a in apps.iter().rev().take(30).collect::<Vec<_>>().iter().rev() {
+            let handle = a.get("handle").and_then(|h| h.as_str()).unwrap_or("?");
+            let at = a.get("at").and_then(|t| t.as_str()).unwrap_or("");
+            let post = a.get("post").and_then(|p| p.as_str()).unwrap_or("");
+            out.push_str(&format!("\n@{}  {}\n{}\n", handle, &at[..at.len().min(10)], post));
+        }
+        if apps.len() > 30 {
+            out.push_str(&format!("\n… and {} more, see the site", apps.len() - 30));
+        }
+        if v.get("truncated").and_then(|t| t.as_bool()) == Some(true) {
+            out.push_str("\n(the listing was truncated)");
+        }
+        out
+    }
+
     fn answer(&self, cmd: &str) -> String {
         match cmd.split_whitespace().next().unwrap_or("").trim_start_matches('/') {
             "status" | "start" => self.status(),
@@ -230,7 +283,8 @@ impl Bot {
             "anchors" => self.anchors(),
             "offers" => self.offers(),
             "nodes" | "zebra" => self.nodes(),
-            "help" => "/status  chain height, last anchor, lag\n/signers  per-source health\n/anchors  recent roots on Zcash\n/offers  the order book\n/nodes  zcash mainnet + testnet sync".into(),
+            "list" | "waitlist" | "whitelist" => self.whitelist(),
+            "help" => "/status  chain height, last anchor, lag\n/signers  per-source health\n/list  whitelist applications\n/anchors  recent roots on Zcash\n/offers  the order book\n/nodes  zcash mainnet + testnet sync".into(),
             other => format!("unknown command: {}\ntry /help", other),
         }
     }

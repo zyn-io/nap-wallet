@@ -216,6 +216,58 @@ pub fn symbol(s: &[u8]) -> Symbol {
 /// other VM could not be swapped here — but it does not own the rules for them.
 pub use zyn_bridge::{Binding, PendingCredit, PendingExit, Vault};
 
+
+/// How a token's supply may change after creation.
+///
+/// Chosen once, at creation, and recorded on the token itself rather than in
+/// metadata a frontend could misreport. That placement is the point: a holder
+/// can see whether more units can appear before they buy, and no website is
+/// between them and the answer.
+///
+/// Mintability is not the risk. *Undisclosed* mintability is, which is why the
+/// only irreversible move is toward `Fixed` ([`Intent::RenounceMintAuthority`]):
+/// a token may always give up the power to issue, and may never acquire it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SupplyPolicy {
+    /// No unit can ever be issued again. There is no authority to renounce
+    /// because none exists.
+    Fixed,
+    /// `authority` may issue up to `cap` in total, and never past it.
+    Capped { authority: AccountId, cap: Fixed },
+    /// `authority` may issue without limit. The honest name for it, so an
+    /// explorer can say so plainly.
+    Open { authority: AccountId },
+}
+
+impl SupplyPolicy {
+    /// Who, if anyone, may issue more.
+    pub fn authority(&self) -> Option<AccountId> {
+        match self {
+            SupplyPolicy::Fixed => None,
+            SupplyPolicy::Capped { authority, .. } | SupplyPolicy::Open { authority } => {
+                Some(*authority)
+            }
+        }
+    }
+
+    /// The ceiling on total supply, if the policy names one.
+    pub fn cap(&self) -> Option<Fixed> {
+        match self {
+            SupplyPolicy::Capped { cap, .. } => Some(*cap),
+            _ => None,
+        }
+    }
+
+    /// Wire tag. Stable: these are consensus values.
+    pub fn code(&self) -> u8 {
+        match self {
+            SupplyPolicy::Fixed => 0,
+            SupplyPolicy::Capped { .. } => 1,
+            SupplyPolicy::Open { .. } => 2,
+        }
+    }
+}
+
 /// An asset the VM knows about.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TokenInfo {
@@ -284,6 +336,14 @@ pub struct TokenInfo {
     /// yet; the rail exists so that supporting Zcash Shielded Assets later is a
     /// parameter, not a change to what a balance *is*.
     pub unit: Fixed,
+    /// Whether more of this asset can ever be issued, and by whom.
+    ///
+    /// Every asset the VM creates for its own purposes — xZEC, LP shares,
+    /// bridged assets, collection items — is `Fixed` here. Their supply moves
+    /// through paths the VM controls (a deposit, an exit, adding liquidity),
+    /// never through [`Intent::MintToken`], so an issuer's authority and the
+    /// VM's own bookkeeping never share a mechanism.
+    pub supply_policy: SupplyPolicy,
 }
 
 impl TokenInfo {
@@ -299,6 +359,7 @@ impl TokenInfo {
             vault: None,
             content: None,
             collection: None,
+            supply_policy: SupplyPolicy::Fixed,
         }
     }
 
@@ -660,6 +721,24 @@ pub struct SwapState {
     /// not restart it.
     pub seq: u64,
     pub params: Params,
+    /// Last Zcash block height the chain has been told about.
+    ///
+    /// Zyn's own clocks are poor for anything a person has to plan around:
+    /// epochs seal faster under load, so a countdown measured in them speeds up
+    /// exactly when the chain is busy. Zcash height is external, roughly 75
+    /// seconds a block, and nobody trading on Zyn can accelerate it — which is
+    /// what a published date has to rest on. It is also the chain Zyn anchors
+    /// to, so it is not a new dependency.
+    ///
+    /// Monotonic: an observation below the current height is refused.
+    pub zcash_height: u64,
+    /// Zcash height at which the ZYN market became *due* to open (§71.29).
+    ///
+    /// Set once, when the POL pot first reaches its 2,100,000 (§71.24), and
+    /// never cleared — nothing can leave a keyless pot, so the condition cannot
+    /// stop being true. The market opens `POL_OPEN_GRACE_BLOCKS` after this, so
+    /// the opening is announced by the chain itself well before it happens.
+    pub pol_open_armed_height: Option<u64>,
     pub accounts: BTreeMap<AccountId, Account>,
     pub tokens: BTreeMap<AssetId, TokenInfo>,
     pub pools: BTreeMap<PoolId, Pool>,
@@ -711,6 +790,8 @@ impl SwapState {
         tokens.insert(XZEC, TokenInfo::bridged(symbol(b"ZEC.zy"), ORIGIN_ZCASH));
         SwapState {
             chain_id,
+            zcash_height: 0,
+            pol_open_armed_height: None,
             epoch: 0,
             seq: 0,
             params,

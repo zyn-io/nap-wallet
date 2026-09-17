@@ -136,11 +136,12 @@ fn discovery(cfg: &Cfg) -> Value {
         "methods": [
             "zyn_status", "zyn_pools", "zyn_assets", "zyn_curves", "zyn_curve", "zyn_curveQuote", "zyn_quote", "zyn_anchors",
             "zyn_offers", "zyn_offer", "zyn_collections", "zyn_collection",
-            "zyn_account", "zyn_sendRawIntent"
+            "zyn_account", "zyn_depositAddress", "zyn_sendRawIntent"
         ],
         "notes": {
             "zyn_sendRawIntent": "hex submission frame, relayed byte for byte; the signature commits to it",
-            "zyn_account": "hex pre-signed read payload — the account is derived from the signature, never from a parameter"
+            "zyn_account": "hex pre-signed read payload — the account is derived from the signature, never from a parameter",
+            "zyn_depositAddress": "the same pre-signed read payload. Signed rather than public because a first ask writes the account into the node's scan register, and a stranger must not be able to grow it"
         }
     })
 }
@@ -436,6 +437,15 @@ fn call(cfg: &Cfg, method: &str, p: &Value) -> Result<Value, (i64, String)> {
                 .as_ref()
                 .map(collection_json)
                 .unwrap_or(Value::Null))
+        }
+        "zyn_depositAddress" => {
+            let payload = unhex(&want_str(p, 0, "signedRead")?, "signedRead")?;
+            let address = node_err(n.deposit_address_signed(&payload))?;
+            // `memo: false` always, here: this op only ever answers with an
+            // address issued to one account. The agent's endpoint reports the
+            // shared-vault fallback because it has one; a node that cannot
+            // issue returns an error rather than something payable.
+            Ok(json!({ "address": address, "memo": false }))
         }
         // Signed, and stays signed: the account is derived from the signature
         // inside this payload, never from a parameter.

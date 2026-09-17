@@ -27,6 +27,7 @@ use zyn_vm::eip712::{TypedData, Value};
 use zyn_vm::fixed::Fixed;
 use zyn_vm::spec::AccountId;
 
+use crate::state::SupplyPolicy;
 use crate::state::Symbol;
 use crate::tx::Intent;
 use crate::types::PoolId;
@@ -153,14 +154,70 @@ pub fn typed_intent(intent: &Intent) -> TypedData {
             xzec_liquidity,
             token_liquidity,
             fee_bps,
-        } => t("CreateToken")
-            .field("creator", account(creator))
-            .field("symbol", symbol(sym))
-            .field("supply", amount(*supply))
-            .field("unit", amount(*unit))
-            .field("xzecLiquidity", amount(*xzec_liquidity))
-            .field("tokenLiquidity", amount(*token_liquidity))
-            .field("feeBps", Value::uint(*fee_bps as u64)),
+            policy,
+        } => {
+            // The policy is the one field here a holder is entitled to read
+            // before they ever touch the token, so it is spelled out rather
+            // than given as a code.
+            let b = t("CreateToken")
+                .field("creator", account(creator))
+                .field("symbol", symbol(sym))
+                .field("supply", amount(*supply))
+                .field("unit", amount(*unit))
+                .field("xzecLiquidity", amount(*xzec_liquidity))
+                .field("tokenLiquidity", amount(*token_liquidity))
+                .field("feeBps", Value::uint(*fee_bps as u64));
+            match policy {
+                SupplyPolicy::Fixed => b.field("supply_policy", Value::String("fixed".into())),
+                SupplyPolicy::Capped { authority, cap } => b
+                    .field("supply_policy", Value::String("capped".into()))
+                    .field("mintAuthority", account(authority))
+                    .field("supplyCap", amount(*cap)),
+                SupplyPolicy::Open { authority } => b
+                    .field("supply_policy", Value::String("open".into()))
+                    .field("mintAuthority", account(authority)),
+            }
+        }
+        Intent::IssueToken {
+            creator,
+            symbol: sym,
+            supply,
+            unit,
+            allocations,
+            policy,
+            native,
+        } => {
+            let b = t("IssueToken")
+                .field("native", Value::Bool(*native))
+                .field("creator", account(creator))
+                .field("symbol", symbol(sym))
+                .field("supply", amount(*supply))
+                .field("unit", amount(*unit))
+                .field("allocationCount", Value::uint(allocations.len() as u64));
+            match policy {
+                SupplyPolicy::Fixed => b.field("supply_policy", Value::String("fixed".into())),
+                SupplyPolicy::Capped { authority, cap } => b
+                    .field("supply_policy", Value::String("capped".into()))
+                    .field("mintAuthority", account(authority))
+                    .field("supplyCap", amount(*cap)),
+                SupplyPolicy::Open { authority } => b
+                    .field("supply_policy", Value::String("open".into()))
+                    .field("mintAuthority", account(authority)),
+            }
+        }
+        Intent::MintToken {
+            authority,
+            asset,
+            to,
+            amount: amt,
+        } => t("MintToken")
+            .field("authority", account(authority))
+            .field("asset", account(asset))
+            .field("to", account(to))
+            .field("amount", amount(*amt)),
+        Intent::RenounceMintAuthority { authority, asset } => t("RenounceMintAuthority")
+            .field("authority", account(authority))
+            .field("asset", account(asset)),
         Intent::MintItem {
             creator,
             symbol: sym,

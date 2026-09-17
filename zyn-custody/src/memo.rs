@@ -49,6 +49,21 @@ pub const ANCHOR_TAG: &[u8; 3] = b"ZYA";
 /// tag + version + chain id + epoch + anchor id.
 pub const ANCHOR_LEN: usize = 3 + 1 + 4 + 8 + 32;
 
+/// A **publication**: the vault stamping a 32-byte digest onto Zcash so that
+/// what it commits to can be shown to have existed by a block height.
+///
+/// It exists because a commitment the operator could backdate is not a
+/// commitment. A sale's close announcement names a height in the future; that
+/// only means anything if the announcement itself provably predates it, and
+/// nothing inside the announcement can establish its own age. A Zcash block
+/// can (§100.6).
+///
+/// Deliberately the same shape as an anchor — tag, version, digest, zero
+/// padding — so the scanner already treats it the way it treats an anchor:
+/// recorded, never credited. It is money only in the sense that a postmark is.
+pub const PUBLISH_TAG: &[u8; 3] = b"ZYP";
+pub const PUBLISH_LEN: usize = 3 + 1 + 32;
+
 /// The tag of a **forced intent**: a signed submission the sequencer must
 /// apply, carried to the vault on a small note because the sequencer's own
 /// door was shut. Distinct in its first bytes from both other tags.
@@ -222,6 +237,40 @@ pub fn is_anchor(memo: &[u8]) -> bool {
         && memo[ANCHOR_LEN..].iter().all(|b| *b == 0)
 }
 
+/// The 512-byte memo field publishing `digest`.
+pub fn encode_publication(digest: &[u8; 32]) -> [u8; MEMO_FIELD] {
+    let mut out = [0u8; MEMO_FIELD];
+    out[..3].copy_from_slice(PUBLISH_TAG);
+    out[3] = MEMO_VERSION;
+    out[4..PUBLISH_LEN].copy_from_slice(digest);
+    out
+}
+
+/// The digest a publication memo carries, if it is one.
+///
+/// Strict about the padding for the same reason `is_anchor` is: a memo that
+/// carries a digest *and* something else is not a publication, and reading one
+/// out of it would let a single transaction be claimed as publishing several
+/// different things.
+pub fn publication(memo: &[u8]) -> Option<[u8; 32]> {
+    if memo.len() < PUBLISH_LEN
+        || &memo[..3] != PUBLISH_TAG
+        || memo[3] != MEMO_VERSION
+        || !memo[PUBLISH_LEN..].iter().all(|b| *b == 0)
+    {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&memo[4..PUBLISH_LEN]);
+    Some(out)
+}
+
+/// Whether a memo is a publication. Used by the scanner to keep it out of the
+/// deposit path without knowing what it commits to.
+pub fn is_publication(memo: &[u8]) -> bool {
+    publication(memo).is_some()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MemoError {
     /// Not a Zyn deposit instruction at all — no tag. The overwhelmingly common
@@ -332,8 +381,37 @@ pub fn decode_text(memo: &str) -> Result<AccountId, MemoError> {
     Ok(out)
 }
 
+/// The operator top-up memo: a `ZYN` memo naming the all-zero account.
+///
+/// Classified as "a top-up of the vault by the operator (to cover fees), held,
+/// never credited" — the only way to put ZEC behind anchor fees without
+/// minting ZEC.zy against it. Named rather than left as `encode(&[0u8; 32])`
+/// so the intent is legible at the call site and cannot be mistaken for a
+/// deposit to a real account.
+pub const TOPUP_ACCOUNT: AccountId = [0u8; 32];
+
+/// Whether this memo is an operator top-up rather than a deposit.
+pub fn is_topup(memo: &[u8]) -> bool {
+    decode(memo).map(|a| a == TOPUP_ACCOUNT).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
+    /// The top-up memo must be recognisable and must not look like a deposit to
+    /// a real account — the difference decides whether ZEC.zy is minted.
+    #[test]
+    fn a_topup_memo_names_nobody_and_is_told_apart_from_a_deposit() {
+        let topup = encode(&TOPUP_ACCOUNT);
+        assert!(is_topup(&topup));
+        assert_eq!(decode(&topup).unwrap(), [0u8; 32]);
+
+        let real = encode(&[9u8; 32]);
+        assert!(!is_topup(&real), "a deposit to a real account is not a top-up");
+
+        // The text form the wallet sends must round-trip to the same thing.
+        assert!(is_topup(encode_text(&TOPUP_ACCOUNT).as_bytes()));
+    }
+
     use super::*;
 
     fn acct(n: u8) -> AccountId {
@@ -551,5 +629,64 @@ mod tests {
             decode_cave_payment(&memo),
             Err(CavePaymentError::UnknownPurpose(9))
         );
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    const D: [u8; 32] = [0x5c; 32];
+
+    #[test]
+    fn a_publication_round_trips_and_is_zero_padded() {
+        let m = encode_publication(&D);
+        assert_eq!(m.len(), MEMO_FIELD);
+        assert_eq!(publication(&m), Some(D));
+        assert!(is_publication(&m));
+        assert!(m[PUBLISH_LEN..].iter().all(|b| *b == 0));
+    }
+
+    /// Strict padding, for the reason `is_anchor` is strict: a memo carrying a
+    /// digest *and* something else is not a publication, and reading one out of
+    /// it would let a single transaction be claimed as publishing several
+    /// different things.
+    #[test]
+    fn trailing_bytes_disqualify_it() {
+        let mut m = encode_publication(&D);
+        m[PUBLISH_LEN] = 1;
+        assert_eq!(publication(&m), None);
+        assert!(!is_publication(&m));
+    }
+
+    /// The three vault-stamped namespaces must not be mistaken for each other,
+    /// or a deposit could be read as a publication and never credited — or
+    /// worse, the reverse.
+    #[test]
+    fn a_publication_is_not_an_anchor_and_not_a_deposit() {
+        let m = encode_publication(&D);
+        assert!(!is_anchor(&m));
+        assert!(!has_cave_payment_tag(&m));
+        assert!(decode(&m).is_err(), "not an account memo either");
+
+        // And nothing else is a publication.
+        assert!(!is_publication(&encode(&[7u8; 32])));
+        assert!(!is_publication(&[0u8; MEMO_FIELD]));
+        assert!(!is_publication(b"ZYP"), "the tag alone is not a digest");
+    }
+
+    #[test]
+    fn a_wrong_version_is_refused_rather_than_guessed() {
+        let mut m = encode_publication(&D);
+        m[3] = MEMO_VERSION + 1;
+        assert_eq!(publication(&m), None);
+    }
+
+    #[test]
+    fn every_digest_gives_a_different_memo() {
+        let mut other = D;
+        other[31] ^= 1;
+        assert_ne!(encode_publication(&D), encode_publication(&other));
+        assert_eq!(publication(&encode_publication(&other)), Some(other));
     }
 }

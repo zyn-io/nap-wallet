@@ -9,6 +9,7 @@
 //! meaningless here; the release profile also turns on `overflow-checks`, so
 //! these numbers include the checked arithmetic the VM is required to do.
 
+use swapvm::state::SupplyPolicy;
 use std::time::Instant;
 
 use swapvm::state::{symbol, SwapState};
@@ -76,6 +77,7 @@ fn market(traders: u64) -> (Chain, AssetId, PoolId) {
         xzec_liquidity: Fixed::whole(1_000_000),
         token_liquidity: Fixed::whole(500_000_000),
         fee_bps: 30,
+            policy: SupplyPolicy::Fixed,
     });
     let cat = zyn_vm::asset_address(ADDRESS_SCOPE_V1, &acct(0), b"CAT");
     let pool = zyn_vm::pool_address(ADDRESS_SCOPE_V1, &XZEC, &cat);

@@ -50,11 +50,7 @@ pub use commit::{
     fold_intent, hash_leaf, hash_node, merkle_proof, merkle_root, verify_proof, Encoder, Hash,
     ProofIndex, ProofStep,
 };
-pub use derive::{
-    asset_address, bridged_address, collection_address, derive, derive_for, item_address,
-    lp_address, native_address, pool_address, program_scope, program_scope_of, vault_address,
-    Address,
-};
+pub use derive::{Address, asset_address, bridged_address, collection_address, derive, derive_for, item_address, lp_address, native_address, pool_address, pot_address, program_scope, program_scope_of, vault_address};
 pub use fixed::{Fixed, WAD};
 pub use manifest::{verify_manifest, verify_media, Attribute, Manifest, Media, MediaRole};
 pub use read::{decode_capped, Decoder, WireError};

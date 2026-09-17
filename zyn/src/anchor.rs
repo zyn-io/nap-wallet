@@ -182,6 +182,12 @@ pub enum LineageError {
     /// histories claiming the same height is the fork case, and it is the one
     /// thing settlement must never quietly accept.
     Fork,
+    /// Enough signers endorsed, but too few of them verify deposit backing —
+    /// so no one who could check whether the credits were real did. Distinct
+    /// from `InsufficientSignatures`, because the fix is different: this is not
+    /// "wait for more endorsements", it is "a verifier with the vault's
+    /// viewing key must look".
+    InsufficientBacking,
     /// The certificate does not carry enough distinct authorised signers.
     InsufficientSignatures,
     /// A stored certificate is for a different anchor than the one beside it.
@@ -206,6 +212,21 @@ pub struct SignerSet {
     /// construction so the threshold cannot be met by one signer twice.
     signers: Vec<[u8; 32]>,
     threshold: usize,
+    /// The signers that verify **deposit backing** — that each credit is money
+    /// they can see on Zcash for themselves — and how many of them a
+    /// certificate must contain.
+    ///
+    /// This exists because narrowing who holds the vault's viewing key is the
+    /// right way to shrink who can link a Zcash payment to a Zyn account
+    /// (§97), and doing it naively silently destroys the guarantee backing
+    /// exists for: a replica without the key skips the check and endorses
+    /// anyway, so a threshold could be met entirely by signers who never
+    /// looked. Recording the subset makes that impossible to do by accident.
+    ///
+    /// Empty means every signer is assumed to verify backing — the historical
+    /// arrangement, where the key was in every replica's environment.
+    backing: Vec<[u8; 32]>,
+    backing_threshold: usize,
 }
 
 impl SignerSet {
@@ -228,7 +249,48 @@ impl SignerSet {
         if threshold * 2 <= signers.len() {
             return Err("threshold must exceed half the signer set");
         }
-        Ok(SignerSet { signers, threshold })
+        Ok(SignerSet {
+            signers,
+            threshold,
+            backing: Vec::new(),
+            backing_threshold: 0,
+        })
+    }
+
+    /// Require that `threshold` of the endorsers are signers who verify
+    /// backing. Every named signer must already be in the set: a backing
+    /// verifier who cannot endorse is a contradiction, not a configuration.
+    pub fn requiring_backing(
+        mut self,
+        mut who: Vec<[u8; 32]>,
+        threshold: usize,
+    ) -> Result<Self, &'static str> {
+        who.sort_unstable();
+        let before = who.len();
+        who.dedup();
+        if who.len() != before {
+            return Err("backing set contains duplicates");
+        }
+        if !who.iter().all(|k| self.signers.contains(k)) {
+            return Err("a backing verifier must be in the signer set");
+        }
+        if threshold > who.len() {
+            return Err("backing threshold exceeds the backing set");
+        }
+        // A requirement of zero is how the historical arrangement is spelled,
+        // so it is allowed — but naming verifiers and then requiring none of
+        // them is a configuration that means nothing, and is refused.
+        if threshold == 0 && !who.is_empty() {
+            return Err("naming backing verifiers but requiring none of them");
+        }
+        self.backing = who;
+        self.backing_threshold = threshold;
+        Ok(self)
+    }
+
+    /// The signers that verify backing, and how many are required.
+    pub fn backing(&self) -> (&[[u8; 32]], usize) {
+        (&self.backing, self.backing_threshold)
     }
 
     /// The plan's candidate: 7 of 10.
@@ -244,6 +306,12 @@ impl SignerSet {
     }
     pub fn threshold(&self) -> usize {
         self.threshold
+    }
+    /// The identities in the set, canonically ordered. Exposed so a monitor
+    /// can name a signer that has gone quiet — a set can only be watched
+    /// member by member (§89.2).
+    pub fn signers(&self) -> &[[u8; 32]] {
+        &self.signers
     }
     pub fn contains(&self, signer: &[u8; 32]) -> bool {
         self.signers.binary_search(signer).is_ok()
@@ -341,6 +409,20 @@ impl Certificate {
             .count()
     }
 
+    /// Distinct endorsers who verify deposit backing.
+    ///
+    /// Counted separately from `weight` because they answer a different
+    /// question: `weight` asks whether enough authorised parties reproduced
+    /// the root, and this asks whether enough of them checked that the money
+    /// behind its credits exists.
+    pub fn backing_weight(&self, set: &SignerSet) -> usize {
+        let (who, _) = set.backing();
+        self.signatures
+            .iter()
+            .filter(|(s, sig)| who.contains(s) && Self::endorses(s, sig, self.anchor))
+            .count()
+    }
+
     /// Whether the certificate is over `anchor` and clears the threshold.
     pub fn verify(&self, anchor: &Anchor, set: &SignerSet) -> Result<(), LineageError> {
         if self.anchor != anchor.id() {
@@ -350,6 +432,14 @@ impl Certificate {
         }
         if self.weight(set) < set.threshold() {
             return Err(LineageError::InsufficientSignatures);
+        }
+        // Reproducing the root is not the same as checking the inputs were
+        // true. Where the vault's viewing key is held by only some signers, a
+        // threshold met entirely by the others would settle a fabricated
+        // credit with nobody having looked (§97.2).
+        let (_, needed) = set.backing();
+        if self.backing_weight(set) < needed {
+            return Err(LineageError::InsufficientBacking);
         }
         Ok(())
     }
@@ -1010,5 +1100,108 @@ mod tests {
             Ledger::restore(1, mismatched).unwrap_err(),
             LineageError::CertificateMismatch
         );
+    }
+}
+
+#[cfg(test)]
+mod backing_requirement_tests {
+    use super::*;
+    use ed25519_dalek::{Signer as _, SigningKey};
+
+    fn keys(n: u8) -> Vec<SigningKey> {
+        (1..=n).map(|i| SigningKey::from_bytes(&[i; 32])).collect()
+    }
+
+    fn set_of(ks: &[SigningKey], threshold: usize) -> SignerSet {
+        SignerSet::new(ks.iter().map(|k| k.verifying_key().to_bytes()).collect(), threshold).unwrap()
+    }
+
+    fn anchor() -> Anchor {
+        Anchor {
+            checkpoint: zyn_vm::Checkpoint {
+                chain_id: 11,
+                epoch: 1,
+                seq: 1,
+                state_root: [3u8; 32],
+                ..Default::default()
+            },
+            previous_root: [0u8; 32],
+            epochs: 1,
+            actions: 1,
+        }
+    }
+
+    fn cert_from(a: &Anchor, signers: &[&SigningKey]) -> Certificate {
+        let mut c = Certificate::new(a.id());
+        for k in signers {
+            c.add(k.verifying_key().to_bytes(), k.sign(&a.id()).to_bytes())
+                .unwrap();
+        }
+        c
+    }
+
+    /// The failure this exists to prevent: the viewing key is narrowed to one
+    /// signer, and the other two — who cannot check a credit at all — meet the
+    /// threshold between them. Without the backing requirement that settles a
+    /// fabricated deposit with nobody having looked.
+    #[test]
+    fn a_threshold_met_only_by_signers_who_cannot_check_is_refused() {
+        let ks = keys(3);
+        let a = anchor();
+        let set = set_of(&ks, 2)
+            .requiring_backing(vec![ks[0].verifying_key().to_bytes()], 1)
+            .unwrap();
+
+        let unbacked = cert_from(&a, &[&ks[1], &ks[2]]);
+        assert_eq!(unbacked.weight(&set), 2, "the ordinary threshold is met");
+        assert_eq!(
+            unbacked.verify(&a, &set),
+            Err(LineageError::InsufficientBacking),
+            "and it still must not settle"
+        );
+
+        let backed = cert_from(&a, &[&ks[0], &ks[1]]);
+        assert_eq!(backed.verify(&a, &set), Ok(()));
+    }
+
+    /// A backing verifier alone is not enough either: the ordinary threshold
+    /// still has to be met, so this narrows nothing about who reproduces roots.
+    #[test]
+    fn the_backing_requirement_does_not_replace_the_ordinary_threshold() {
+        let ks = keys(3);
+        let a = anchor();
+        let set = set_of(&ks, 2)
+            .requiring_backing(vec![ks[0].verifying_key().to_bytes()], 1)
+            .unwrap();
+        let alone = cert_from(&a, &[&ks[0]]);
+        assert_eq!(
+            alone.verify(&a, &set),
+            Err(LineageError::InsufficientSignatures)
+        );
+    }
+
+    /// No backing set is the historical arrangement — every replica held the
+    /// key — and must behave exactly as before.
+    #[test]
+    fn an_unset_backing_requirement_changes_nothing() {
+        let ks = keys(3);
+        let a = anchor();
+        let set = set_of(&ks, 2);
+        assert_eq!(set.backing(), (&[][..], 0));
+        assert_eq!(cert_from(&a, &[&ks[1], &ks[2]]).verify(&a, &set), Ok(()));
+    }
+
+    #[test]
+    fn a_backing_verifier_must_be_a_signer_and_a_named_set_must_be_required() {
+        let ks = keys(3);
+        let outsider = SigningKey::from_bytes(&[9u8; 32]).verifying_key().to_bytes();
+        assert!(set_of(&ks, 2).requiring_backing(vec![outsider], 1).is_err());
+        assert!(set_of(&ks, 2)
+            .requiring_backing(vec![ks[0].verifying_key().to_bytes()], 2)
+            .is_err());
+        // Naming verifiers then requiring none of them means nothing.
+        assert!(set_of(&ks, 2)
+            .requiring_backing(vec![ks[0].verifying_key().to_bytes()], 0)
+            .is_err());
     }
 }

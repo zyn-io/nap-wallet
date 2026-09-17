@@ -47,6 +47,40 @@ pub fn index_rel(chain_id: u32) -> String {
 
 /// The files of a bundle, as `(relative path, bytes)`.
 pub fn files(chain_id: u32, b: &Bundle) -> Vec<(String, Vec<u8>)> {
+    files_sealed(chain_id, b, None)
+}
+
+/// The same, with the ownership-bearing files encrypted under `key`.
+///
+/// The public commitments — anchor, certificate, published leaves, index —
+/// stay in the clear, because they carry nothing about who holds what and a
+/// stranger must still be able to check the root chain. The journal is sealed,
+/// and so is anything added here later that is not on that short public list
+/// (`dacrypt::is_confidential` is an inverted allowlist for exactly that
+/// reason). With no key this is byte-for-byte what it always published.
+pub fn files_sealed(
+    chain_id: u32,
+    b: &Bundle,
+    key: Option<&[u8; 32]>,
+) -> Vec<(String, Vec<u8>)> {
+    let mut out = files_plain(chain_id, b);
+    if let Some(k) = key {
+        for (rel, bytes) in out.iter_mut() {
+            if crate::dacrypt::is_confidential(rel) {
+                // A file that cannot be sealed must not be published in the
+                // clear instead: that is the one failure mode this whole change
+                // exists to prevent. Sealing only fails on an absurd input, so
+                // an empty body here is a loud, unusable artifact rather than a
+                // quiet leak.
+                *bytes = crate::dacrypt::seal(k, chain_id, &crate::dacrypt::label_for(rel), bytes)
+                    .unwrap_or_default();
+            }
+        }
+    }
+    out
+}
+
+fn files_plain(chain_id: u32, b: &Bundle) -> Vec<(String, Vec<u8>)> {
     let d = rel_dir(chain_id, b.anchor.checkpoint.epoch);
     let mut out = vec![
         (format!("{}/anchor.bin", d), b.anchor.encode()),
@@ -116,7 +150,17 @@ pub fn write_local(
     chain_id: u32,
     b: &Bundle,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let fs_ = files(chain_id, b);
+    write_local_sealed(root, chain_id, b, None)
+}
+
+/// The same, sealing the ownership-bearing files under `key`.
+pub fn write_local_sealed(
+    root: &Path,
+    chain_id: u32,
+    b: &Bundle,
+    key: Option<&[u8; 32]>,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let fs_ = files_sealed(chain_id, b, key);
     for (rel, bytes) in &fs_ {
         write_atomic(&root.join(rel), bytes)?;
     }
@@ -819,5 +863,89 @@ mod tests {
         assert!(down.poll_once().is_err());
         assert_eq!(down.pending_len(), 5);
         assert_eq!(down.failures, 1);
+    }
+
+
+    const KEY: [u8; 32] = [0x5a; 32];
+
+    /// The point of the whole change: a mirror holds the bundle and cannot
+    /// read who owns what, while the public commitments stay in the clear so a
+    /// stranger can still check the root chain (§92).
+    #[test]
+    fn a_sealed_bundle_hides_the_journal_and_publishes_the_commitments() {
+        let b = bundle();
+        let plain = files(4, &b);
+        let sealed = files_sealed(4, &b, Some(&KEY));
+        assert_eq!(plain.len(), sealed.len(), "the same files, differently readable");
+
+        for ((rel, p), (rel2, s)) in plain.iter().zip(sealed.iter()) {
+            assert_eq!(rel, rel2);
+            if crate::dacrypt::is_confidential(rel) {
+                assert!(crate::dacrypt::is_sealed(s), "{rel} must be sealed");
+                assert_ne!(p, s);
+                // The marker a journal carries must not survive in the clear.
+                assert!(
+                    !s.windows(7).any(|w| w == b"ZYNJRNL"),
+                    "{rel} leaks its plaintext"
+                );
+                let opened =
+                    crate::dacrypt::open(&KEY, 4, &crate::dacrypt::label_for(rel), s).unwrap();
+                assert_eq!(&opened, p, "{rel} must open to exactly what it was");
+            } else {
+                assert_eq!(p, s, "{rel} is a public commitment and stays readable");
+                assert!(!crate::dacrypt::is_sealed(s));
+            }
+        }
+
+        // And the fixture really does contain a journal — a test that passed
+        // because nothing was confidential would prove nothing.
+        assert!(sealed
+            .iter()
+            .any(|(rel, s)| rel.contains("/intents/") && crate::dacrypt::is_sealed(s)));
+    }
+
+    /// With no key this publishes exactly what it always published, so the
+    /// change can be deployed before any verifier has a key.
+    #[test]
+    fn no_key_is_byte_for_byte_the_old_behaviour() {
+        let b = bundle();
+        assert_eq!(files(4, &b), files_sealed(4, &b, None));
+    }
+
+    /// A sealed bundle written to disk reads back through the opening fetch as
+    /// the bundle it was, so verification downstream is unchanged.
+    #[test]
+    fn a_sealed_bundle_round_trips_through_the_opening_reader() {
+        use crate::replica::Fetch;
+        let dir = std::env::temp_dir().join(format!("zyn-sealed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let b = bundle();
+        write_local_sealed(&dir, 4, &b, Some(&KEY)).unwrap();
+
+        let rel = format!("{}/intents/epoch-0.intents", rel_dir(4, b.anchor.checkpoint.epoch));
+        let on_disk = std::fs::read(dir.join(&rel)).unwrap();
+        assert!(crate::dacrypt::is_sealed(&on_disk), "sealed at rest");
+
+        let open = crate::dacrypt::Opening {
+            inner: crate::replica::Local(dir.clone()),
+            key: Some(KEY),
+            chain: 4,
+        };
+        assert_eq!(open.get(&rel).unwrap(), b"ZYNJRNL1-fake");
+
+        // A mirror without the key gets bytes it cannot read, and is told why
+        // rather than handed something that fails to decode later.
+        let blind = crate::dacrypt::Opening {
+            inner: crate::replica::Local(dir.clone()),
+            key: None,
+            chain: 4,
+        };
+        assert!(blind.get(&rel).unwrap_err().contains("ZYN_DA_KEY"));
+
+        // The anchor is readable by anyone, with or without a key.
+        let anchor_rel = format!("{}/anchor.bin", rel_dir(4, b.anchor.checkpoint.epoch));
+        assert_eq!(blind.get(&anchor_rel).unwrap(), b.anchor.encode());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

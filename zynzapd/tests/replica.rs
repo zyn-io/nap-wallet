@@ -53,6 +53,7 @@ impl Seq {
             0,
             true,
             &dir.join("da"),
+            None,
         )
         .unwrap();
         let shared = Arc::new(Mutex::new(b.node));
@@ -357,6 +358,7 @@ fn a_replica_starts_from_an_attested_base_when_the_journal_is_younger_than_the_c
         0,
         true,
         &s.da,
+        None,
     )
     .unwrap();
     let base_root = b.base_root.expect("manual boot writes the base");
