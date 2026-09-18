@@ -34,6 +34,20 @@ share of backing ZEC, so Nap presents a separate two-step confirmation.
 
 ## Implementation boundary
 
+### Ownership privacy is a separate boundary
+
+Signed account reads and hash-only snapshots do not by themselves hide NFT
+ownership: current availability bundles also include replayable intent journals
+containing transfer endpoints, mint recipients and account blinds. The selected
+next tier is privacy from public readers while trusting authorized operators
+and replay verifiers; it is not implemented or deployment-verified yet. Zcash
+anchoring does not make this execution operator-private.
+
+See [the privacy decision and backlog](NFT-PUBLIC-PRIVACY.md) and issues
+[#21–#25](https://github.com/zyn-io/nap-wallet/issues/21). Aliases and
+operator-private zero-knowledge NFT transfers are deferred. Do not promise
+private ownership at the event until the integrated release gate passes.
+
 `zynzapd::app::zyn_overview` returns the account ID and its QR SVG. The shared
 wallet page posts `/api/transfer` with `{to, asset, amount: "1", force}`. The VM
 remains authoritative and rejects fractional quantities for indivisible items.
