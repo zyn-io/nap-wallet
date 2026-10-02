@@ -37,6 +37,11 @@ pub const OP_SOL_ROUND2: u8 = 4;
 /// rather than borrowing the vault's.
 pub const OP_TREASURY_ROUND1: u8 = 5;
 pub const OP_TREASURY_ROUND2: u8 = 6;
+/// The Bitcoin (Taproot) vault's two rounds (§154). Round one also carries the
+/// input's tweak root — which address is being spent — so the share signs as
+/// that output key and no other.
+pub const OP_BTC_ROUND1: u8 = 7;
+pub const OP_BTC_ROUND2: u8 = 8;
 pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 const MAX_FRAME: usize = 4 << 20;
@@ -273,6 +278,8 @@ pub struct Custodian {
     /// spending the vault and acting as the treasury are different authorities
     /// and must never be one slot.
     pub treasury: Option<SolParticipant>,
+    /// A share of the Bitcoin (Taproot) vault, if this box holds one.
+    pub bitcoin: Option<crate::bitcoin::participant::Participant>,
 }
 
 impl Custodian {
@@ -287,6 +294,10 @@ impl Custodian {
             OP_SOL_ROUND1 | OP_SOL_ROUND2 => {
                 let p = self.solana.as_mut().ok_or("no solana share here")?;
                 solana_op(p, op, &mut r, now)
+            }
+            OP_BTC_ROUND1 | OP_BTC_ROUND2 => {
+                let p = self.bitcoin.as_mut().ok_or("no bitcoin share here")?;
+                bitcoin_op(p, op, &mut r, now)
             }
             OP_TREASURY_ROUND1 | OP_TREASURY_ROUND2 => {
                 let p = self.treasury.as_mut().ok_or("no treasury share here")?;
@@ -309,6 +320,105 @@ impl Custodian {
         if let Some(p) = self.treasury.as_mut() {
             p.drop_expired(now);
         }
+        if let Some(p) = self.bitcoin.as_mut() {
+            p.drop_expired(now);
+        }
+    }
+}
+
+fn bitcoin_op(participant: &mut crate::bitcoin::participant::Participant, op: u8, r: &mut Reader, now: u64) -> Result<Vec<u8>, String> {
+    use crate::bitcoin::Package as BtcPackage;
+    let id_bytes = |id: crate::bitcoin::Id| AsRef::<[u8]>::as_ref(&id.serialize()).to_vec();
+    match op {
+        OP_BTC_ROUND1 => {
+            let request_id = r.u64().ok_or("request id")?;
+            let message = r.bytes().ok_or("message")?.to_vec();
+            let root = match r.bytes().ok_or("root")? {
+                [] => None,
+                b => Some(<[u8; 32]>::try_from(b).map_err(|_| "root is 32 bytes or empty".to_string())?),
+            };
+            let c = participant.round1(request_id, message, root, now, &mut rand::rngs::OsRng).map_err(|e| format!("{:?}", e))?;
+            let mut out = Vec::new();
+            put_bytes(&mut out, &id_bytes(participant.id()));
+            put_bytes(&mut out, &c.serialize().map_err(|_| "commitments".to_string())?);
+            Ok(out)
+        }
+        OP_BTC_ROUND2 => {
+            let request_id = r.u64().ok_or("request id")?;
+            let package = BtcPackage::deserialize(r.bytes().ok_or("package")?).map_err(|_| "package".to_string())?;
+            let share = participant.round2(request_id, &package).map_err(|e| format!("{:?}", e))?;
+            let mut out = Vec::new();
+            put_bytes(&mut out, &id_bytes(participant.id()));
+            put_bytes(&mut out, &share.serialize());
+            Ok(out)
+        }
+        _ => Err("unknown op".into()),
+    }
+}
+
+/// `OP_BTC_ROUND1 ‖ request_id ‖ message ‖ root (32 bytes, or empty)`
+pub fn encode_btc_round1(request_id: u64, message: &[u8], root: Option<[u8; 32]>) -> Vec<u8> {
+    let mut out = vec![OP_BTC_ROUND1];
+    out.extend_from_slice(&request_id.to_be_bytes());
+    put_bytes(&mut out, message);
+    put_bytes(&mut out, root.as_ref().map(|r| r.as_slice()).unwrap_or(&[]));
+    out
+}
+
+/// `OP_BTC_ROUND2 ‖ request_id ‖ package`
+pub fn encode_btc_round2(request_id: u64, package: &crate::bitcoin::Package) -> Result<Vec<u8>, String> {
+    let mut out = vec![OP_BTC_ROUND2];
+    out.extend_from_slice(&request_id.to_be_bytes());
+    put_bytes(&mut out, &package.serialize().map_err(|_| "package".to_string())?);
+    Ok(out)
+}
+
+fn read_btc_pair<T>(b: &[u8], parse: impl Fn(&[u8]) -> Option<T>) -> Option<(crate::bitcoin::Id, T)> {
+    let mut r = Reader::new(b);
+    let id = crate::bitcoin::Id::deserialize(r.bytes()?).ok()?;
+    Some((id, parse(r.bytes()?)?))
+}
+
+/// The Bitcoin share-holders across a network: addresses only, no share.
+pub struct RemoteBitcoinQuorum {
+    custodians: Vec<String>,
+    inner: RemoteQuorum,
+}
+
+impl RemoteBitcoinQuorum {
+    pub fn new(custodians: Vec<String>) -> RemoteBitcoinQuorum {
+        RemoteBitcoinQuorum { custodians: custodians.clone(), inner: RemoteQuorum::new(custodians) }
+    }
+}
+
+impl crate::bitcoin::BitcoinQuorum for RemoteBitcoinQuorum {
+    fn round1(&mut self, request_id: u64, message: &[u8], root: Option<[u8; 32]>) -> BTreeMap<crate::bitcoin::Id, crate::bitcoin::Commitments> {
+        let frame = encode_btc_round1(request_id, message, root);
+        let mut out = BTreeMap::new();
+        for addr in self.custodians.clone() {
+            match self.inner.call(&addr, &frame).ok().and_then(|b| read_btc_pair(&b, |x| crate::bitcoin::Commitments::deserialize(x).ok())) {
+                Some((id, c)) => {
+                    out.insert(id, c);
+                }
+                None => eprintln!("zyn-custody: {} did not answer bitcoin round one", addr),
+            }
+        }
+        out
+    }
+
+    fn round2(&mut self, request_id: u64, chosen: &[crate::bitcoin::Id], package: &crate::bitcoin::Package) -> BTreeMap<crate::bitcoin::Id, crate::bitcoin::Share> {
+        let Ok(frame) = encode_btc_round2(request_id, package) else {
+            return BTreeMap::new();
+        };
+        let mut out = BTreeMap::new();
+        for addr in self.custodians.clone() {
+            if let Some((id, share)) = self.inner.call(&addr, &frame).ok().and_then(|b| read_btc_pair(&b, |x| crate::bitcoin::Share::deserialize(x).ok())) {
+                if chosen.contains(&id) {
+                    out.insert(id, share);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -671,6 +781,7 @@ mod tests {
                 zcash: None,
                 solana: Some(SolParticipant::new(k)),
                 treasury: None,
+                bitcoin: None,
             })
             .collect();
         let message = b"a solana settlement message".to_vec();
@@ -712,6 +823,7 @@ mod tests {
             zcash: None,
             solana: Some(SolParticipant::new(keys[0].clone())),
                 treasury: None,
+                bitcoin: None,
         };
         let mut other = SolParticipant::new(keys[1].clone());
 
@@ -746,6 +858,7 @@ mod tests {
             zcash: Some(Participant::new(keys)),
             solana: None,
                 treasury: None,
+                bitcoin: None,
         };
         let err = d.handle(&encode_sol_round1(1, b"anything"), 0).unwrap_err();
         assert_eq!(err, "no solana share here");
@@ -776,6 +889,7 @@ mod tests {
                 zcash: None,
                 solana: Some(SolParticipant::new(k)),
                 treasury: None,
+                bitcoin: None,
             }));
             std::thread::spawn(move || serve(c, listener, || 0));
         }
@@ -784,6 +898,29 @@ mod tests {
         let mut q = RemoteSolanaQuorum::new(addrs);
         let sig = custody::sign_with(&mut q, 2, &public, message, 0).unwrap();
         custody::verify(&custody::vault_address_of(&public), message, &sig).unwrap();
+    }
+
+    /// The Taproot vault over loopback (§154): three custodians, a remote
+    /// quorum with no share, a deposit address's tweak, and a signature the
+    /// chain would accept for that address.
+    #[test]
+    fn a_remote_quorum_signs_a_taproot_deposit_spend_over_loopback() {
+        use crate::bitcoin as btc;
+        use std::sync::{Arc, Mutex};
+
+        let keys: Vec<_> = btc::ceremony(2, 3, &mut rand::rngs::OsRng).unwrap().into_values().collect();
+        let public = keys[0].public_package.clone();
+        let mut addrs = Vec::new();
+        for k in keys {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            addrs.push(listener.local_addr().unwrap().to_string());
+            let c = Arc::new(Mutex::new(Custodian { zcash: None, solana: None, treasury: None, bitcoin: Some(btc::participant::Participant::new(k)) }));
+            std::thread::spawn(move || serve(c, listener, || 0));
+        }
+        let mut q = RemoteBitcoinQuorum::new(addrs);
+        // sign_digest checks the aggregate against the tweaked output key.
+        btc::sign_digest(&mut q, &public, 2, [5; 32], Some(btc::deposit_root(&[8; 32]))).unwrap();
+        btc::sign_digest(&mut q, &public, 2, [6; 32], None).unwrap();
     }
 
     #[test]

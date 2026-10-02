@@ -131,6 +131,11 @@ pub struct ChainInfo {
     /// authority on which chain this actually is — everything else is what we
     /// were configured to believe.
     pub chain: String,
+    /// The consensus branch the node will validate the next block under
+    /// (`consensus.nextblock`). The one authority on which network upgrade a
+    /// transaction built now must be signed for; `None` if the node did not
+    /// say.
+    pub next_branch: Option<u32>,
 }
 
 pub struct Zebra {
@@ -312,11 +317,34 @@ impl Zebra {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        let next_branch = v
+            .get("consensus")
+            .and_then(|c| c.get("nextblock"))
+            .and_then(Value::as_str)
+            .and_then(|h| u32::from_str_radix(h, 16).ok());
         Ok(ChainInfo {
             blocks,
             estimated,
             chain,
+            next_branch,
         })
+    }
+
+    /// The tip, and the envelope for a transaction built on it — checked
+    /// against the branch the node says the next block is under, from the
+    /// same reply, so the two cannot straddle an upgrade. Refuses when the
+    /// node does not say, or says a branch this build would not sign for
+    /// (see [`crate::payout::Envelope::next`]).
+    pub fn envelope(
+        &self,
+        network: zcash_protocol::consensus::Network,
+    ) -> Result<(u64, crate::payout::Envelope), String> {
+        let ci = self.chain_info().map_err(|e| e.to_string())?;
+        let branch = ci.next_branch.ok_or(
+            "the node did not say which consensus branch its next block is under; nothing is signed without it",
+        )?;
+        let env = crate::payout::Envelope::next(network, ci.blocks, branch).map_err(|e| e.to_string())?;
+        Ok((ci.blocks, env))
     }
 
     fn address_txids(
@@ -348,6 +376,24 @@ impl Zebra {
         unhex(hex).ok_or(RpcError::Malformed("raw block is not hex"))
     }
 
+    /// The hash of the block at `height`, as Zcash reports it.
+    ///
+    /// Asked of the node rather than computed from the header: a Zcash header
+    /// is not a Bitcoin header, and re-deriving the hash here would be a second
+    /// implementation of consensus that could disagree with the first. The
+    /// reveal binds this value (§100.3), so a wrong one assigns the wrong
+    /// items.
+    pub fn block_hash(&self, height: u64) -> Result<[u8; 32], RpcError> {
+        let v = self.call("getblockhash", serde_json::json!([height]))?;
+        let hex = v.as_str().ok_or(RpcError::Malformed("block hash"))?;
+        let raw = unhex(hex).ok_or(RpcError::Malformed("block hash is not hex"))?;
+        // Zcash prints block hashes big-endian, the reverse of the internal
+        // byte order. Kept exactly as printed, because that is what a person
+        // comparing against a block explorer will have.
+        raw.try_into()
+            .map_err(|_| RpcError::Malformed("block hash is not 32 bytes"))
+    }
+
     /// Like [`Zebra::connect`], but for reading a chain rather than
     /// custodying on it: mainnet is allowed. A wallet or a block server holds
     /// no vault key, so the guard that protects custody has nothing to
@@ -376,6 +422,54 @@ impl Zebra {
             .iter()
             .filter_map(|t| t.as_str().map(str::to_string))
             .collect())
+    }
+
+    /// A txid as the scanner needs it: the display form is reversed.
+    fn txid_from_hex(hex: &str) -> Option<[u8; 32]> {
+        if hex.len() != 64 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        out.reverse();
+        Some(out)
+    }
+
+    /// Every transaction in a block, with its raw bytes, in one call.
+    ///
+    /// The scan used to ask for the txid list and then fetch each transaction
+    /// separately: a 55-transaction block cost 56 round-trips, 56 JSON
+    /// documents to parse, and the same hex decoded one piece at a time. At
+    /// `verbosity = 2` Zebra returns the transactions already, `hex` and all,
+    /// so the same work is one request.
+    ///
+    /// This is what made a restart cost hours rather than minutes (A115).
+    pub fn block_transactions(&self, height: u64) -> Result<Vec<([u8; 32], Vec<u8>)>, RpcError> {
+        let v = self.call("getblock", serde_json::json!([height.to_string(), 2]))?;
+        let Some(txs) = v.get("tx").and_then(Value::as_array) else {
+            return Err(RpcError::Malformed("block has no tx list"));
+        };
+        let mut out = Vec::with_capacity(txs.len());
+        for t in txs {
+            // A node that answered verbosity 2 with bare txids is not one we
+            // can scan from; say so rather than silently scanning nothing.
+            let Some(obj) = t.as_object() else {
+                return Err(RpcError::Malformed("verbosity 2 returned txids"));
+            };
+            let Some(hex) = obj.get("hex").and_then(Value::as_str) else {
+                return Err(RpcError::Malformed("transaction has no hex"));
+            };
+            let Some(txid_hex) = obj.get("txid").and_then(Value::as_str) else {
+                return Err(RpcError::Malformed("transaction has no txid"));
+            };
+            let (Some(raw), Some(txid)) = (unhex(hex), Self::txid_from_hex(txid_hex)) else {
+                return Err(RpcError::Malformed("transaction is not hex"));
+            };
+            out.push((txid, raw));
+        }
+        Ok(out)
     }
 
     /// One transaction's raw bytes, for shielded scanning.
@@ -669,6 +763,47 @@ pub(crate) fn base64(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A node that answers every request with `result`, once per connection.
+    fn node_answering(result: Value, replies: usize) -> Zebra {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..replies {
+                let (mut s, _) = l.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let body = serde_json::json!({"result": result, "error": null, "id": "zyn"}).to_string();
+                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}", body.len(), body);
+            }
+        });
+        Zebra::connect("127.0.0.1", port, None, Network::Mainnet).unwrap()
+    }
+
+    fn info(next: Option<&str>) -> Value {
+        let mut v = serde_json::json!({"chain": "main", "blocks": 3_498_276u64, "estimatedheight": 3_498_276u64});
+        if let Some(n) = next {
+            v["consensus"] = serde_json::json!({"chaintip": "37a5165b", "nextblock": n});
+        }
+        v
+    }
+
+    /// What `getblockchaininfo` said on mainnet, 27 Sep 2026.
+    #[test]
+    fn the_envelope_follows_the_branch_the_node_names_for_the_next_block() {
+        let main = zcash_protocol::consensus::Network::MainNetwork;
+        let z = node_answering(info(Some("37a5165b")), 2);
+        assert_eq!(z.chain_info().unwrap().next_branch, Some(0x37a5_165b));
+        let (tip, env) = z.envelope(main).unwrap();
+        assert_eq!(tip, 3_498_276);
+        assert_eq!(u32::from(env.branch), 0x37a5_165b);
+
+        let e = node_answering(info(Some("77190ad9")), 1).envelope(main).unwrap_err();
+        assert!(e.contains("NU7"), "{}", e);
+
+        let e = node_answering(info(None), 1).envelope(main).unwrap_err();
+        assert!(e.contains("did not say"), "{}", e);
+    }
 
     fn dep(h: u64, n: u8, zat: i64) -> ObservedDeposit {
         ObservedDeposit {

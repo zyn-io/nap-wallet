@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Nap's own pages (nothing remote loads in the wallet's view) may use biometric unlock and the Nap browser.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "napvault:default",
+    "napbrowser:default"
+  ]
+}

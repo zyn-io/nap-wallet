@@ -1,0 +1,101 @@
+{
+  "network": "Zyn mainnet",
+  "zcash": "ZEC mainnet",
+  "zcashPrefix": "u1",
+  "chain": 26460,
+  "rpcUrl": "/rpc",
+  "claimUrl": "/claim",
+  "mediaGateway": "/media",
+  "networks": [
+    {
+      "id": "mainnet",
+      "network": "Zyn mainnet",
+      "zcash": "ZEC mainnet",
+      "zcashPrefix": "u1",
+      "chain": 26460,
+      "rpcUrl": "/rpc",
+      "claimUrl": "/claim",
+      "mediaGateway": "/media",
+      "collections": [
+        {
+          "name": "Cave Collection Z",
+          "id": "024277b607ce4edbf78fe2855aba562096d00264729168bd0ddea71bdf5b5f1e"
+        }
+      ],
+      "kind": "object",
+      "zecAsset": "0e212262cb35bf6e88bc7d0a52b60a5cc70c2859b65966a2557229d2ea469201",
+      "lightdUrl": "/zec/mainnet",
+      "zecBirthday": 3440000,
+      "launchpadUrl": "https://jade.zyn-network.com/",
+      "attendUrl": "/attend",
+      "bridges": {
+        "eth": {
+          "chainId": 1,
+          "vault": "0x235730d7738CC16d3b94d0e3D7097F9ddE22A459",
+          "assetId": 1,
+          "explorer": "https://etherscan.io/tx/{tx}",
+          "capWei": "10000000000000000",
+          "custody": "2-of-3 Safe",
+          "safe": "0xEE741530abB9eaD1C7d6E9C58E5Df0D43F39b983"
+        }
+      }
+    },
+    {
+      "id": "testnet",
+      "network": "Zyn testnet",
+      "zcash": "ZEC testnet",
+      "zcashPrefix": "utest1",
+      "chain": 212,
+      "kind": "object",
+      "zecAsset": "0e212262cb35bf6e88bc7d0a52b60a5cc70c2859b65966a2557229d2ea469201",
+      "rpcUrl": "/rpc/testnet",
+      "claimUrl": "/claim",
+      "mediaGateway": "/media",
+      "collections": [],
+      "lightdUrl": "/zec/testnet",
+      "zecBirthday": 4320000,
+      "launchpadUrl": "https://jade.zyn-network.com/?network=testnet",
+      "bridges": {
+        "sol": {
+          "network": "solana-devnet",
+          "cluster": "devnet",
+          "vault": "7KacSYXuVhKSf8dpXcLY3qFZQYiZg2m6vKh4m1HxKZmA",
+          "rpc": "https://api.devnet.solana.com",
+          "explorer": "https://explorer.solana.com/tx/{tx}?cluster=devnet",
+          "tokens": [
+            {
+              "mint": "FvCnGJ1BGghAbQoMJ4tLwKudpcTVdo45ws7GFxNxRrU9",
+              "symbol": "TESTZ",
+              "decimals": 6
+            }
+          ]
+        },
+        "eth": {
+          "chainId": 11155111,
+          "vault": "0xe17bb5943b34133f6a8a5D221BE4eD9493B3ef27",
+          "assetId": 1,
+          "explorer": "https://sepolia.etherscan.io/tx/{tx}"
+        },
+        "btc": {
+          "network": "signet",
+          "internal": "0050d350a8b966fb662c2ca9ed1439a480971da30ed65944f9b71da0de1d67db",
+          "confirmations": 2,
+          "explorer": "https://mempool.space/signet/tx/{tx}"
+        }
+      },
+      "attendUrl": "/attend/testnet"
+    }
+  ],
+  "collections": [
+    {
+      "name": "Cave Collection Z",
+      "id": "024277b607ce4edbf78fe2855aba562096d00264729168bd0ddea71bdf5b5f1e"
+    }
+  ],
+  "kind": "object",
+  "zecAsset": "0e212262cb35bf6e88bc7d0a52b60a5cc70c2859b65966a2557229d2ea469201",
+  "lightdUrl": "/zec/mainnet",
+  "zecBirthday": 3440000,
+  "launchpadUrl": "https://jade.zyn-network.com/",
+  "attendUrl": "/attend"
+}

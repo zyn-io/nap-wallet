@@ -320,10 +320,60 @@ pub fn unwrap_reply(reply: &[u8]) -> Result<Vec<u8>, LightError> {
     }
 }
 
-impl Client {
-    pub fn info(&self) -> Result<Info, LightError> {
-        let r = self.call(&[OP_INFO])?;
-        let mut d = Rd(&r, 0);
+/// Request frames, built once for every transport: the TCP [`Client`] here,
+/// and a browser posting the same bytes over HTTP.
+pub mod request {
+    use super::*;
+
+    pub fn info() -> Vec<u8> {
+        vec![OP_INFO]
+    }
+
+    pub fn blocks(from: u64, count: u32) -> Vec<u8> {
+        let mut b = vec![OP_BLOCKS];
+        b.extend_from_slice(&from.to_le_bytes());
+        b.extend_from_slice(&count.min(MAX_BLOCKS).to_le_bytes());
+        b
+    }
+
+    pub fn transaction(txid: &[u8; 32]) -> Vec<u8> {
+        let mut b = vec![OP_TX];
+        b.extend_from_slice(txid);
+        b
+    }
+
+    pub fn send(raw: &[u8]) -> Vec<u8> {
+        let mut b = vec![OP_SEND];
+        b.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+        b.extend_from_slice(raw);
+        b
+    }
+
+    pub fn utxos(address: &str) -> Vec<u8> {
+        let mut b = vec![OP_UTXOS];
+        b.extend_from_slice(&(address.len() as u16).to_le_bytes());
+        b.extend_from_slice(address.as_bytes());
+        b
+    }
+
+    pub fn tree_state(height: u64, pool: orchard::ValuePool) -> Vec<u8> {
+        let mut b = vec![OP_TREESTATE];
+        b.extend_from_slice(&height.to_le_bytes());
+        b.push(match pool {
+            orchard::ValuePool::Orchard => 0,
+            orchard::ValuePool::Ironwood => 1,
+        });
+        b
+    }
+}
+
+/// Reply bodies, already past [`unwrap_reply`], decoded. The counterpart of
+/// [`request`]: whichever transport carried the frame, it is read here.
+pub mod decode {
+    use super::*;
+
+    pub fn info(r: &[u8]) -> Result<Info, LightError> {
+        let mut d = Rd(r, 0);
         let network = d.u8().ok_or(LightError::Malformed("info"))?;
         let tip = d.u64().ok_or(LightError::Malformed("info"))?;
         let branch = d.u32().ok_or(LightError::Malformed("info"))?;
@@ -336,14 +386,10 @@ impl Client {
         })
     }
 
-    pub fn blocks(&self, from: u64, count: u32) -> Result<Vec<CompactBlock>, LightError> {
-        let mut b = vec![OP_BLOCKS];
-        b.extend_from_slice(&from.to_le_bytes());
-        b.extend_from_slice(&count.min(MAX_BLOCKS).to_le_bytes());
-        let r = self.call(&b)?;
-        let mut d = Rd(&r, 0);
+    pub fn blocks(r: &[u8]) -> Result<Vec<CompactBlock>, LightError> {
+        let mut d = Rd(r, 0);
         let n = d.u32().ok_or(LightError::Malformed("blocks"))?;
-        let mut out = Vec::with_capacity(n as usize);
+        let mut out = Vec::with_capacity((n as usize).min(MAX_BLOCKS as usize));
         for _ in 0..n {
             let len = d.u32().ok_or(LightError::Malformed("block len"))? as usize;
             let bytes = d.take(len).ok_or(LightError::Malformed("block"))?;
@@ -352,36 +398,20 @@ impl Client {
         Ok(out)
     }
 
-    pub fn transaction(&self, txid: &[u8; 32]) -> Result<Vec<u8>, LightError> {
-        let mut b = vec![OP_TX];
-        b.extend_from_slice(txid);
-        let r = self.call(&b)?;
-        let mut d = Rd(&r, 0);
+    pub fn transaction(r: &[u8]) -> Result<Vec<u8>, LightError> {
+        let mut d = Rd(r, 0);
         let len = d.u32().ok_or(LightError::Malformed("tx"))? as usize;
         Ok(d.take(len).ok_or(LightError::Malformed("tx"))?.to_vec())
     }
 
-    pub fn send(&self, raw: &[u8]) -> Result<String, LightError> {
-        let mut b = vec![OP_SEND];
-        b.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-        b.extend_from_slice(raw);
-        let r = self.call(&b)?;
-        let mut d = Rd(&r, 0);
+    pub fn sent(r: &[u8]) -> Result<String, LightError> {
+        let mut d = Rd(r, 0);
         let n = d.u16().ok_or(LightError::Malformed("txid"))? as usize;
         Ok(String::from_utf8_lossy(d.take(n).ok_or(LightError::Malformed("txid"))?).to_string())
     }
 
-    /// Unspent transparent outputs paying `address`.
-    ///
-    /// This tells the server an address, which nothing else here does — see
-    /// the module docs for why that trade is worth making for transparent
-    /// funds and would not be for shielded ones.
-    pub fn utxos(&self, address: &str) -> Result<Vec<Utxo>, LightError> {
-        let mut b = vec![OP_UTXOS];
-        b.extend_from_slice(&(address.len() as u16).to_le_bytes());
-        b.extend_from_slice(address.as_bytes());
-        let r = self.call(&b)?;
-        let mut d = Rd(&r, 0);
+    pub fn utxos(r: &[u8]) -> Result<Vec<Utxo>, LightError> {
+        let mut d = Rd(r, 0);
         let n = d.u32().ok_or(LightError::Malformed("utxo count"))? as usize;
         let mut out = Vec::with_capacity(n.min(1024));
         for _ in 0..n {
@@ -409,19 +439,8 @@ impl Client {
         Ok(out)
     }
 
-    pub fn tree_state(
-        &self,
-        height: u64,
-        pool: orchard::ValuePool,
-    ) -> Result<([u8; 32], Vec<u8>), LightError> {
-        let mut b = vec![OP_TREESTATE];
-        b.extend_from_slice(&height.to_le_bytes());
-        b.push(match pool {
-            orchard::ValuePool::Orchard => 0,
-            orchard::ValuePool::Ironwood => 1,
-        });
-        let r = self.call(&b)?;
-        let mut d = Rd(&r, 0);
+    pub fn tree_state(r: &[u8]) -> Result<([u8; 32], Vec<u8>), LightError> {
+        let mut d = Rd(r, 0);
         let root: [u8; 32] = d
             .take(32)
             .ok_or(LightError::Malformed("root"))?
@@ -434,6 +453,41 @@ impl Client {
                 .ok_or(LightError::Malformed("frontier"))?
                 .to_vec(),
         ))
+    }
+}
+
+impl Client {
+    pub fn info(&self) -> Result<Info, LightError> {
+        decode::info(&self.call(&request::info())?)
+    }
+
+    pub fn blocks(&self, from: u64, count: u32) -> Result<Vec<CompactBlock>, LightError> {
+        decode::blocks(&self.call(&request::blocks(from, count))?)
+    }
+
+    pub fn transaction(&self, txid: &[u8; 32]) -> Result<Vec<u8>, LightError> {
+        decode::transaction(&self.call(&request::transaction(txid))?)
+    }
+
+    pub fn send(&self, raw: &[u8]) -> Result<String, LightError> {
+        decode::sent(&self.call(&request::send(raw))?)
+    }
+
+    /// Unspent transparent outputs paying `address`.
+    ///
+    /// This tells the server an address, which nothing else here does — see
+    /// the module docs for why that trade is worth making for transparent
+    /// funds and would not be for shielded ones.
+    pub fn utxos(&self, address: &str) -> Result<Vec<Utxo>, LightError> {
+        decode::utxos(&self.call(&request::utxos(address))?)
+    }
+
+    pub fn tree_state(
+        &self,
+        height: u64,
+        pool: orchard::ValuePool,
+    ) -> Result<([u8; 32], Vec<u8>), LightError> {
+        decode::tree_state(&self.call(&request::tree_state(height, pool))?)
     }
 }
 

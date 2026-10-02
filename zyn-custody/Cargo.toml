@@ -24,8 +24,11 @@ rand_core = "0.6"
 # The node speaks JSON-RPC. Parsing money by hand is exactly the kind of
 # silent-failure surface this workspace avoids elsewhere.
 serde_json = "1"
-orchard = "0.15.5"
-zcash_primitives = "0.30.1"
+# Defaults off so the wallet core also builds for the browser, where there
+# are no threads for halo2 to prove on; `multicore` (on by default) puts the
+# parallel prover back everywhere else.
+orchard = { version = "0.15.5", default-features = false, features = ["circuit", "std"] }
+zcash_primitives = { version = "0.30.1", default-features = false, features = ["std", "circuits"] }
 zcash_note_encryption = "0.4.2"
 zcash_protocol = "0.10.5"
 zcash_address = "0.13.0"
@@ -45,6 +48,10 @@ frost-rerandomized = "3"
 # Solana custody: plain FROST over ed25519. Same major as the Zcash pair above,
 # so one `frost-core` underlies all three ciphersuites.
 frost-ed25519 = "3"
+# Bitcoin custody (§154): FROST over secp256k1 with BIP-341 tweaks, and the
+# bitcoin crate for addresses, sighashes and transactions. Same secp256k1 0.29.
+frost-secp256k1-tr = "3"
+bitcoin = "0.32"
 frost-core = "3"
 # Checks an aggregated ed25519 signature the way Solana will, before it is
 # broadcast. Pinned to 2.x with the rest of the Zcash-era digest stack.
@@ -57,6 +64,10 @@ rand = "0.8"
 # reason as everything else here: the request is one call in a poll loop, and
 # an async runtime would buy nothing.
 ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+
+[features]
+default = ["multicore"]
+multicore = ["orchard/multicore", "zcash_primitives/multicore"]
 
 [dev-dependencies]
 rand = "0.8"

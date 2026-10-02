@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Nap Wallet privacy</title>
+  <link rel="icon" href="/nap-mark.png">
+  <style>
+    :root { --ink: #1f2428; --muted: #5a5f5c; --ground: #f8f2e4; --line: #ddd3bd; --amber: #9a6c00; }
+    @media (prefers-color-scheme: dark) { :root { --ink: #f3eee2; --muted: #b9b3a6; --ground: #1f2428; --line: #3a4045; --amber: #e8a916; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--ground); color: var(--ink); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 680px; margin: 0 auto; padding: 56px 20px 80px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
+    header img { width: 40px; height: 40px; }
+    header b { font-size: 22px; }
+    .kicker { font: 600 13px/1 ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); margin: 0 0 10px; }
+    h1 { font-size: 40px; line-height: 1.1; margin: 0 0 18px; text-wrap: balance; }
+    h2 { font-size: 21px; margin: 40px 0 8px; }
+    p, li { color: var(--ink); }
+    .muted { color: var(--muted); }
+    ul { padding-left: 22px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 15px; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 8px; border-top: 1px solid var(--line); }
+    th { width: 34%; font-weight: 600; }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+<main>
+  <header><img src="/nap-mark.png" alt=""><b>Nap Wallet</b></header>
+  <p class="kicker">Privacy · 2 October 2026</p>
+  <h1>Your keys stay on your device.</h1>
+  <p>This page covers Nap Wallet in the browser (nap.zyn-network.com, and its old address nap.cavebro.win), the Nap Wallet browser extension and the Nap Wallet phone app, including its Nap browser. All are the same wallet: it creates and keeps your keys on your device and talks to the Zcash and Zyn networks to show and move what you hold.</p>
+
+  <h2>What stays on your device</h2>
+  <ul>
+    <li><b>Your recovery phrase</b> is never stored and never sent anywhere. It is used once to derive your keys.</li>
+    <li><b>Your keys</b> are kept only if you choose "Keep on this device", sealed under a password you set, in the browser's storage for Nap. Without that, closing Nap forgets them.</li>
+    <li><b>Your settings</b>: the network you chose, and which sites you connected.</li>
+  </ul>
+
+  <h2>What goes to the network</h2>
+  <p>A wallet has to talk to the network. Nap sends requests to Nap's server at nap.zyn-network.com (older builds use its old address, nap.cavebro.win), which relays them to the Zyn and Zcash networks:</p>
+  <table>
+    <tr><th>Transactions you approve</th><td>Signed and sent to the Zyn network (or the Zcash network for ZEC). Zyn transactions are private from the public: it sees that something happened, not your account, amounts or what you own. The Zyn operator, which runs the network, and verifiers it authorises can see them, including your Zyn account ID; we are working toward a version where nobody can. Recorded transactions stay in the network's ledger.</td></tr>
+    <tr><th>Balance reads</th><td>Signed requests for your own notes, and blocks for your Zcash wallet to scan on your device.</td></tr>
+    <tr><th>Pictures of items</th><td>Fetched from Nap's media gateway, only if you turn pictures on.</td></tr>
+  </table>
+  <p class="muted">The server sees your IP address and the requests above, as any server you connect to does. It may keep ordinary operational logs; they are used only to run the service, never to build profiles.</p>
+
+  <h2>What Nap does not do</h2>
+  <ul>
+    <li>No accounts, no email, no sign-up.</li>
+    <li>No analytics, advertising or tracking, and no selling or sharing of data.</li>
+    <li>The extension and the app's browser do not read the pages you visit. It offers sites a way to ask Nap for things; a site learns nothing about you until you connect it, and nothing moves unless you approve it in Nap's own window.</li>
+  </ul>
+
+  <h2>Sites you connect</h2>
+  <p>A connected site sees your Zyn account ID and your Zcash address, and when it asks, what you hold on Zyn: your ZEC.zy and token balances, your items, what you are owed, your sale tickets and the coins you made. Connect only sites you are happy to show that to. It never sees your keys or your recovery phrase, and nothing moves without your approval. You can disconnect a site at any time from Nap's window.</p>
+
+  <h2>Contact</h2>
+  <p>Questions: <a href="https://x.com/cavebrowin">@cavebrowin</a>.</p>
+</main>
+</body>
+</html>

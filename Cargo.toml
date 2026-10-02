@@ -1,21 +1,10 @@
 [workspace]
-members = [
-    "apps/nap/src-tauri","cave-randomness",
-    "zyn-vm", "zyn-bridge", "zyn-custody", "swapvm", "zyn", "zynzapd"]
+members = ["zyn-vm", "zyn-bridge", "zyn-custody", "zyn-pool"]
+# The WebAssembly cores (apps/nap-web/zec-core, pool-core) are workspaces of
+# their own: they build for wasm32 only.
+exclude = ["apps/nap-web/zec-core", "apps/nap-web/pool-core"]
 resolver = "2"
 
-# Three layers, bottom up:
-#
-#   zyn-vm   the microchain VM specification — what any Zyn VM must be
-#   swapvm   ZynZap's VM — application #1, one implementation of the spec
-#   zyn      the microchain: sequencing, anchoring to Zcash, exits, recovery
-#   zynzapd  the node as a process: a port, a clock, a directory, a signal
-#
-# `zyn` is generic over the spec and knows nothing about swaps, so a second
-# application does not touch it and ZynZap does not move when one arrives.
-#
-# Applies to every member. Profiles declared in member manifests are silently
-# ignored by Cargo, so this must live here or a swap engine ships wrapping.
-# Borrowed from elastic-perps: silent wrapping in a value engine mints money.
+# Silent wrapping in value arithmetic mints money.
 [profile.release]
 overflow-checks = true

@@ -677,6 +677,9 @@ mod catches_violations {
             head[8..16].copy_from_slice(&self.total.to_be_bytes());
             vec![head, crate::commit::hash_leaf(&self.total.to_be_bytes())]
         }
+        fn is_seal(intent: &i64) -> bool {
+            *intent == 0
+        }
         fn seal_intent() -> i64 {
             0
         }

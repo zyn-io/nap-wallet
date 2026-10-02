@@ -66,32 +66,35 @@ pub const ATA_PROGRAM: Pubkey = [
     255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
 ];
 
-/// The associated token account of `owner` for `mint`.
-///
-/// A program-derived address: SHA-256 over `owner ‖ token program ‖ mint ‖
-/// bump ‖ ATA program ‖ "ProgramDerivedAddress"`, with the bump counted down
-/// from 255 until the hash is **not** a valid ed25519 point — so no key can
-/// ever sign for it. This is where a wallet sends an SPL token to `owner`,
-/// and where the vault's tokens live.
-pub fn associated_token_address(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+/// A program-derived address and its bump: SHA-256 over `seeds ‖ bump ‖
+/// program ‖ "ProgramDerivedAddress"`, with the bump counted down from 255
+/// until the hash is **not** a valid ed25519 point — so no key can ever sign
+/// for it; only the program can.
+pub fn find_program_address(seeds: &[&[u8]], program: &Pubkey) -> (Pubkey, u8) {
     use sha2::Digest;
     for bump in (0u8..=255).rev() {
         let mut h = sha2::Sha256::new();
-        h.update(owner);
-        h.update(TOKEN_PROGRAM);
-        h.update(mint);
+        for s in seeds {
+            h.update(s);
+        }
         h.update([bump]);
-        h.update(ATA_PROGRAM);
+        h.update(program);
         h.update(b"ProgramDerivedAddress");
         let out: [u8; 32] = h.finalize().into();
         let on_curve = curve25519_dalek::edwards::CompressedEdwardsY(out)
             .decompress()
             .is_some();
         if !on_curve {
-            return out;
+            return (out, bump);
         }
     }
     unreachable!("some bump is always off the curve")
+}
+
+/// The associated token account of `owner` for `mint`: where a wallet sends
+/// an SPL token to `owner`, and where the vault's tokens live.
+pub fn associated_token_address(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+    find_program_address(&[owner, &TOKEN_PROGRAM, mint], &ATA_PROGRAM).0
 }
 /// `Fixed` is scaled by 1e18 and a lamport is 1e-9 SOL.
 pub const WAD_PER_LAMPORT: i128 = 1_000_000_000;

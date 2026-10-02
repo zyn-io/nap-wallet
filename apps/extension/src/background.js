@@ -1,69 +1,54 @@
-// The extension's brain. Reads go straight to the local app; writes wait
-// for the person to approve them in a window the site cannot touch.
-const APP = 'http://127.0.0.1:8977';
+// The extension's background: it opens Nap's connect window, and nothing else.
+//
+// The wallet lives in the extension's own pages (the popup, and connect.html
+// for sites), which hold the keys; sites talk to connect.html directly over a
+// runtime port from the content script. This worker keeps no state a site
+// depends on, so the browser may stop it between events without dropping a
+// request — only the window's id is kept, in session storage, to focus the
+// window rather than open a second one.
 
-async function app(path, body) {
-  const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Zyn': '1' }, body: JSON.stringify(body) } : {};
-  let r;
-  try { r = await fetch(APP + path, opts); } catch { throw new Error('the Nap Wallet app is not running on this machine'); }
-  const j = await r.json().catch(() => ({ error: 'bad reply' }));
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
+const CONNECT = 'connect.html';
+
+/// One window, however many tabs ask at once: a second call waits for the
+/// first rather than opening another (two windows would both answer).
+let opening = null;
+function openConnect() {
+  if (!opening) opening = openConnectNow().finally(() => { opening = null; });
+  return opening;
 }
 
-// What a site may ask for, and what each costs.
-const METHODS = {
-  zyn_account:  { read: true,  run: async () => { const o = await app('/api/overview'); return { account: o.zyn.account, address: o.address, network: o.network, chain: o.zyn.chain }; } },
-  zyn_balances: { read: true,  run: async () => (await app('/api/overview')).zyn.record },
-  zyn_assets:   { read: true,  run: async () => (await app('/api/overview')).zyn.assets },
-  zyn_pools:    { read: true,  run: async () => (await app('/api/overview')).zyn.pools },
-  zyn_quote:    { read: true,  run: (p) => app('/api/quote', p) },
-  zyn_zyn:      { read: true,  run: async () => (await app('/api/overview')).zyn },
-  zyn_transfer: { read: false, run: (p) => app('/api/transfer', p), describe: (p) => `Transfer ${p.amount} of asset ${p.asset} to ${String(p.to).slice(0, 12)}…` },
-  zyn_swap:     { read: false, run: (p) => app('/api/swap', p),     describe: (p) => `Swap ${p.amount} of asset ${p.asset_in} for asset ${p.asset_out} (1% below quote at worst)` },
-  zyn_deposit:  { read: false, run: (p) => app('/api/deposit', p),  describe: (p) => `Deposit ${p.amount} from the Zcash wallet to the vault` },
-  zyn_withdraw: { read: false, run: (p) => app('/api/withdraw', p), describe: (p) => `Withdraw ${p.amount} ZEC.zy to the bound wallet` },
-  zyn_bind:     { read: false, run: () => app('/api/bind', {}),      describe: () => 'Bind Zyn exits to your Nap Wallet address' },
-  zyn_bind_sol: { read: false, run: (p) => app('/api/bind-sol', p), describe: (p) => `Bind Zyn exits to the Solana address ${p.address}` },
-  zyn_withdraw_sol: { read: false, run: (p) => app('/api/withdraw-sol', p), describe: (p) => `Withdraw ${p.amount} of asset ${p.asset} to the bound Solana address` },
-  zyn_add_liquidity: { read: false, run: (p) => app('/api/liquidity/add', p), describe: (p) => `Add up to ${p.amount0} + ${p.amount1} to pool ${p.pool}` },
-  zyn_remove_liquidity: { read: false, run: (p) => app('/api/liquidity/remove', p), describe: (p) => `Remove ${p.shares} shares from pool ${p.pool}` },
-};
-
-const approvals = new Map(); // id -> {resolve, reject, req}
-let nextId = 1;
-
-function ask(origin, method, params, description) {
-  return new Promise((resolve, reject) => {
-    const id = nextId++;
-    approvals.set(id, { resolve, reject, req: { id, origin, method, params, description } });
-    chrome.windows.create({ url: chrome.runtime.getURL(`confirm.html?id=${id}`), type: 'popup', width: 440, height: 560 });
-  });
+async function openConnectNow() {
+  // One already open (say the worker restarted and lost its note): focus it.
+  // getContexts lists this extension's own pages with no extra permission
+  // (Chrome 116+); Firefox goes by the note alone.
+  const url = chrome.runtime.getURL(CONNECT);
+  const found = chrome.runtime.getContexts
+    ? (await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [url] }).catch(() => []))[0]
+    : null;
+  if (found && found.windowId >= 0) {
+    await chrome.windows.update(found.windowId, { focused: true });
+    await chrome.storage.session.set({ connectWindow: found.windowId });
+    return;
+  }
+  const { connectWindow } = await chrome.storage.session.get('connectWindow');
+  if (connectWindow != null) {
+    try {
+      await chrome.windows.update(connectWindow, { focused: true });
+      return;
+    } catch { /* closed since; open another */ }
+  }
+  const win = await chrome.windows.create({ url: chrome.runtime.getURL(CONNECT), type: 'popup', width: 440, height: 680, focused: true });
+  await chrome.storage.session.set({ connectWindow: win.id });
 }
+
+chrome.windows.onRemoved.addListener(async (id) => {
+  const { connectWindow } = await chrome.storage.session.get('connectWindow');
+  if (connectWindow === id) await chrome.storage.session.remove('connectWindow');
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  (async () => {
-    if (msg.kind === 'provider') {
-      const m = METHODS[msg.method];
-      if (!m) throw new Error(`unknown method ${msg.method}`);
-      if (!m.read) {
-        const ok = await ask(msg.origin, msg.method, msg.params, m.describe(msg.params || {}));
-        if (!ok) throw new Error('rejected by the user');
-      }
-      return await m.run(msg.params || {});
-    }
-    if (msg.kind === 'confirm:get') {
-      const a = approvals.get(msg.id);
-      return a ? a.req : { error: 'no such request' };
-    }
-    if (msg.kind === 'confirm:answer') {
-      const a = approvals.get(msg.id);
-      if (!a) return { error: 'no such request' };
-      approvals.delete(msg.id);
-      a.resolve(!!msg.approved);
-      return { ok: true };
-    }
-    throw new Error('unknown message');
-  })().then(reply, (e) => reply({ error: e.message }));
+  // Only a site's content script asks, and only to have the window opened.
+  if (!msg || msg.kind !== 'nap:open' || !sender.tab) return false;
+  openConnect().then(() => reply({ ok: true }), (e) => reply({ error: e.message }));
   return true;
 });

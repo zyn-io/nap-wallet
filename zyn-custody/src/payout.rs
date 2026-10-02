@@ -406,17 +406,81 @@ pub struct Envelope {
     pub expiry: BlockHeight,
 }
 
-/// Blocks a payout stays valid after it is built. zcashd's default.
+/// Blocks a payout stays valid after it is built. zcashd's default, at
+/// 75-second blocks: about fifty minutes.
 pub const EXPIRY_DELTA: u32 = 40;
 
+/// The same fifty minutes once NU7 brings blocks every 25 seconds (ZIP 218).
+pub const EXPIRY_DELTA_NU7: u32 = 120;
+
+/// NU7's consensus branch id, from ZIP 259 (which replaced the withdrawn
+/// ZIP 254 and its `0x77190AD8`). Known here by number because the libraries
+/// do not know it yet; when they do, [`BranchId::for_height`] starts returning
+/// it and everything keyed on it below takes effect.
+pub const NU7_BRANCH_ID: u32 = 0x7719_0AD9;
+
+/// How many blocks now make the time one block made before NU7: 1, or 3 once
+/// the next block is under NU7's 25-second spacing. For the waits counted in
+/// blocks — confirmations, expiry — that mean a length of time.
+pub fn blocks_per_old_block(branch: u32) -> u64 {
+    if branch == NU7_BRANCH_ID {
+        3
+    } else {
+        1
+    }
+}
+
 impl Envelope {
-    /// For a transaction built at `height` on `network`.
+    /// For a transaction built at `height` on `network`, from this build's
+    /// own schedule of upgrades and nothing else. Tests use it; anything that
+    /// signs uses [`Self::next`], which asks the chain.
     pub fn at(network: Network, height: u32) -> Envelope {
         let h = BlockHeight::from_u32(height);
+        let branch = BranchId::for_height(&network, h);
         Envelope {
-            branch: BranchId::for_height(&network, h),
-            expiry: h + EXPIRY_DELTA,
+            branch,
+            expiry: h + expiry_delta(branch),
         }
+    }
+
+    /// For a transaction built on a chain whose tip is `tip`, where the node
+    /// says the next block is under consensus branch `chain_branch`
+    /// (`getblockchaininfo` → `consensus.nextblock`).
+    ///
+    /// Refuses when this build would sign for another branch. That is what a
+    /// network upgrade looks like from a build that predates it — NU7, or a
+    /// node that has not upgraded when this build has — and a transaction
+    /// signed under the wrong branch never lands: the payout sits in flight
+    /// until it expires, and signers are asked again and again for nothing.
+    /// Better to stop, and say what to update.
+    pub fn next(network: Network, tip: u64, chain_branch: u32) -> Result<Envelope, PayoutError> {
+        let height = u32::try_from(tip + 1)
+            .map_err(|_| PayoutError::Envelope(format!("height {} out of range", tip + 1)))?;
+        let h = BlockHeight::from_u32(height);
+        let branch = BranchId::for_height(&network, h);
+        if chain_branch == 0 {
+            return Err(PayoutError::Envelope(
+                "the chain server did not say which consensus branch its next block is under; nothing is signed without it".into(),
+            ));
+        }
+        if u32::from(branch) != chain_branch {
+            return Err(PayoutError::Envelope(format!(
+                "the chain's next block (height {}) is under consensus branch {:08x}, and this build would sign for {:08x} ({:?}). {} Nothing was signed.",
+                height,
+                chain_branch,
+                u32::from(branch),
+                branch,
+                if chain_branch == NU7_BRANCH_ID {
+                    "That is NU7: this build predates it and needs the NU7 update."
+                } else {
+                    "Either this build or the node is on the other side of a network upgrade; update whichever is behind."
+                }
+            )));
+        }
+        Ok(Envelope {
+            branch,
+            expiry: h + expiry_delta(branch),
+        })
     }
 
     /// The Orchard bundle version the chain expects under this branch.
@@ -442,6 +506,16 @@ impl Envelope {
             .activation_height(NetworkUpgrade::Nu5)
             .map(|a| BlockHeight::from_u32(height) >= a)
             .unwrap_or(false)
+    }
+}
+
+/// Blocks a transaction stays valid: the same length of time before and
+/// after NU7 shortens the blocks.
+fn expiry_delta(branch: BranchId) -> u32 {
+    if u32::from(branch) == NU7_BRANCH_ID {
+        EXPIRY_DELTA_NU7
+    } else {
+        EXPIRY_DELTA
     }
 }
 
@@ -598,6 +672,29 @@ impl Payout {
             spent: self.spent,
         })
     }
+}
+
+/// A transparent address or a unified address with an Orchard/Ironwood
+/// receiver, for `network`.
+pub fn parse_destination(s: &str, network: Network) -> Option<Destination> {
+    if let Some(t) = transparent_address(s, network) {
+        return Some(Destination::Transparent(t));
+    }
+    use zcash_address::unified::{Container, Encoding, Receiver};
+    let (net, ua) = zcash_address::unified::Address::decode(s).ok()?;
+    let want = match network {
+        Network::MainNetwork => zcash_protocol::consensus::NetworkType::Main,
+        Network::TestNetwork => zcash_protocol::consensus::NetworkType::Test,
+    };
+    if net != want {
+        return None;
+    }
+    let raw = ua.items().into_iter().find_map(|r| match r {
+        Receiver::Orchard(raw) => Some(raw),
+        _ => None,
+    })?;
+    let addr: Option<orchard::Address> = orchard::Address::from_raw_address_bytes(&raw).into();
+    addr.map(Destination::Shielded)
 }
 
 /// Parse a transparent address (`t1…`/`t3…` on mainnet, `tm…`/`t2…` on
@@ -762,6 +859,65 @@ pub fn proving_key(version: BundleVersion) -> ProvingKey {
 /// that constructs fine and fails to verify — which is how this was found.
 pub fn verifying_key(version: BundleVersion) -> orchard::circuit::VerifyingKey {
     orchard::circuit::VerifyingKey::build(version.circuit_version())
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    //! The envelope is signed for the branch the chain says, or not at all.
+    use super::*;
+
+    const NU6_3: u32 = 0x37a5_165b;
+
+    #[test]
+    fn built_for_the_next_block_under_the_branch_the_chain_names() {
+        let env = Envelope::next(Network::TestNetwork, 4_380_100, NU6_3).unwrap();
+        assert_eq!(u32::from(env.branch), NU6_3);
+        assert_eq!(u32::from(env.expiry), 4_380_101 + EXPIRY_DELTA);
+        // Mainnet, today.
+        let env = Envelope::next(Network::MainNetwork, 3_498_276, NU6_3).unwrap();
+        assert_eq!(u32::from(env.expiry), 3_498_277 + 40);
+    }
+
+    #[test]
+    fn the_block_that_activates_an_upgrade_is_signed_under_it() {
+        // The tip is the last block before the upgrade; the transaction can
+        // only land in the first one after, so it is signed for the new
+        // branch. Signing for the tip's branch used to miss by one here.
+        let at = Network::TestNetwork.activation_height(NetworkUpgrade::Nu6_3).unwrap();
+        let before = u32::from(BranchId::for_height(&Network::TestNetwork, at - 1));
+        let tip = u64::from(u32::from(at) - 1);
+        assert!(Envelope::next(Network::TestNetwork, tip, NU6_3).is_ok());
+        assert!(Envelope::next(Network::TestNetwork, tip, before).is_err());
+    }
+
+    #[test]
+    fn nu7_is_refused_by_a_build_that_predates_it() {
+        let e = Envelope::next(Network::MainNetwork, 3_600_000, NU7_BRANCH_ID)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("7719") && e.contains("NU7") && e.contains("Nothing was signed"), "{}", e);
+    }
+
+    #[test]
+    fn a_node_ahead_or_behind_is_refused_too() {
+        // This build knows an upgrade the node has not reached, or the other
+        // way round: the two disagree, and nothing is signed.
+        let e = Envelope::next(Network::MainNetwork, 3_498_276, 0xc8e7_1055).unwrap_err().to_string();
+        assert!(e.contains("update whichever is behind"), "{}", e);
+    }
+
+    #[test]
+    fn a_server_that_does_not_say_is_refused() {
+        let e = Envelope::next(Network::TestNetwork, 4_380_100, 0).unwrap_err().to_string();
+        assert!(e.contains("did not say"), "{}", e);
+    }
+
+    #[test]
+    fn waits_keep_their_length_in_time_across_nu7() {
+        assert_eq!(blocks_per_old_block(NU6_3), 1);
+        assert_eq!(blocks_per_old_block(NU7_BRANCH_ID), 3);
+        assert_eq!(EXPIRY_DELTA_NU7, EXPIRY_DELTA * 3);
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,3 @@
+[default]
+description = "Nap's own pages may open the Nap browser, answer its sites' requests and show approvals."
+permissions = ["allow-open", "allow-close", "allow-respond", "allow-approve", "allow-registerListener", "allow-removeListener"]

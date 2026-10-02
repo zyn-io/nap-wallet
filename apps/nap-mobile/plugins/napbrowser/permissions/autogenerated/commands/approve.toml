@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-approve"
+description = "Enables the approve command without any pre-configured scope."
+commands.allow = ["approve"]
+
+[[permission]]
+identifier = "deny-approve"
+description = "Denies the approve command without any pre-configured scope."
+commands.deny = ["approve"]

@@ -1,0 +1,3 @@
+[default]
+description = "Nap's pages may ask for Face ID / fingerprint unlock of the kept wallet."
+permissions = ["allow-status", "allow-store", "allow-unlock", "allow-forget"]

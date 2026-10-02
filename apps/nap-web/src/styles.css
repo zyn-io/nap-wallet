@@ -1,0 +1,205 @@
+@font-face{font-family:Bricolage;src:url('/fonts/BricolageGrotesque.ttf')}@font-face{font-family:Plex;src:url('/fonts/IBMPlexSans.ttf')}@font-face{font-family:Mono;src:url('/fonts/IBMPlexMono-Regular.ttf')}*{box-sizing:border-box}html{background:#f7f0df;color:#1f2428;font-family:Plex,system-ui,sans-serif}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,#fff9e9 0,transparent 35%),#f7f0df}button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}.grain{position:fixed;inset:0;pointer-events:none;opacity:.18;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.12'/%3E%3C/svg%3E")}header{height:88px;padding:0 5vw;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1f242826}.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;font:700 25px Bricolage}.brand img{width:44px;height:44px;object-fit:contain}.network{font:12px Mono;letter-spacing:.03em;border:1px solid #1f242833;border-radius:999px;padding:9px 13px;display:flex;align-items:center;gap:8px}.network i{width:7px;height:7px;border-radius:50%;background:#16a085;box-shadow:0 0 0 4px #16a08520}footer{min-height:64px;padding:20px 5vw;border-top:1px solid #1f242826;display:flex;justify-content:space-between;font:11px Mono;text-transform:uppercase;letter-spacing:.1em}.onboard{min-height:calc(100vh - 152px);display:grid;grid-template-columns:1.1fr .9fr}.intro{padding:8vw 8vw 7vw 9vw;border-right:1px solid #1f242826}.eyebrow,.kicker{font:11px Mono;letter-spacing:.14em;color:#a56b00}.intro h1,.content h1{font:700 clamp(52px,7vw,104px)/.88 Bricolage;margin:25px 0}.intro h1 em,.content h1 em{font-style:normal;color:#e8a916}.lede{max-width:540px;font:20px/1.55 Plex;color:#4d5255;margin-bottom:64px}.promise{display:flex;gap:18px;max-width:470px;border-top:1px solid #1f242833;padding:18px 0}.promise>span{font:12px Mono;color:#a56b00}.promise p{margin:0;line-height:1.5}.entry{padding:8vw 6vw;background:#202529;color:#f8f2e4}.tabs{display:flex;border-bottom:1px solid #ffffff2b;margin-bottom:50px}.tabs button{background:none;border:0;padding:14px 24px 14px 0;margin-right:30px;color:#ffffff70}.tabs button.active{color:#f8f2e4;border-bottom:2px solid #e8a916}.entry h2,dialog h2,.claim h2{font:700 42px/1 Bricolage;margin:12px 0 24px}.entry label,dialog label{display:block;font-size:13px;margin:20px 0 8px}.entry textarea,.entry input,dialog input{width:100%;margin-top:9px;border:1px solid #ffffff2d;background:#121618;color:#fff;padding:14px;border-radius:8px;font:14px/1.5 Mono;outline:none}.entry textarea:focus,.entry input:focus,dialog input:focus{border-color:#e8a916}.split{display:grid;grid-template-columns:1fr 110px;gap:16px}.primary{width:100%;border:0;border-radius:9px;background:#e8a916;color:#1f2428;padding:17px 18px;font-weight:700;display:flex;justify-content:space-between;margin-top:25px}.primary:disabled{opacity:.45;cursor:not-allowed}.muted{color:#ffffff9c;line-height:1.55}.scope{border:1px solid #ffffff20;border-radius:9px;padding:14px;margin-top:32px;display:grid;grid-template-columns:72px 1fr;gap:10px;font-size:12px;color:#ffffff9c}.scope b{color:#16c1a3}.phrase{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#ffffff1b;border:1px solid #ffffff1b;border-radius:9px;overflow:hidden}.phrase span{padding:11px 8px;background:#171b1e;font:13px Mono}.phrase i{color:#e8a916;font-style:normal;font-size:9px;margin-right:7px}.check{display:flex!important;gap:11px;align-items:flex-start;line-height:1.45}.check input{width:auto!important;margin:3px 0!important;accent-color:#e8a916}.error{color:#ff8f83;min-height:20px;font-size:13px}.wallet{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 152px)}.rail{border-right:1px solid #1f242826;padding:45px 32px;display:flex;flex-direction:column;justify-content:space-between}.account-copy{border:0;background:none;text-align:left;padding:0}.account-copy b{display:block;font:18px Mono;margin:10px 0}.account-copy span{font-size:12px;color:#747776}.rail nav{display:grid;gap:7px}.rail nav button,.quiet{border:0;background:none;text-align:left;padding:11px 0;color:#6d716f}.rail nav button.active{color:#1f2428;font-weight:700}.rail nav button.active:before{content:'—';color:#e8a916;margin-right:8px}.quiet{font-size:12px}.content{padding:6vw;max-width:1300px;width:100%;margin:auto}.topline{display:flex;justify-content:space-between;align-items:flex-start}.content h1{font-size:clamp(48px,6vw,88px);margin:18px 0 60px}.refresh{border:1px solid #1f242833;background:transparent;border-radius:999px;padding:10px 15px}.notice{display:none;padding:13px 16px;border-left:3px solid #16a085;background:#16a08512;margin-bottom:28px;font-size:13px}.notice.show{display:block}.notice.bad{border-color:#c95545;background:#c9554510}.claim{background:#e8a916;border-radius:18px;padding:28px 32px;margin-bottom:55px;display:flex;align-items:center;justify-content:space-between;box-shadow:8px 8px 0 #1f2428}.claim h2{margin:8px 0 5px}.claim p{margin:0}.claim .kicker{color:#594000}.claim button{border:1px solid #1f2428;background:#1f2428;color:#fff;border-radius:9px;padding:15px 18px;font-weight:700}.section-title{display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #1f242833}.section-title h2{font:700 28px Bricolage}.section-title span{font:12px Mono}.items{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px;margin:24px 0 60px}.item{border:1px solid #1f24282d;border-radius:14px;overflow:hidden;background:#fffaf0}.art{aspect-ratio:1;background:#202529;display:grid;place-items:center}.art img{width:100%;height:100%;object-fit:cover}.art:not(.verified) img{width:54%;height:54%;object-fit:contain;filter:drop-shadow(0 10px 22px #0006)}.item>div:last-child{padding:18px}.item h3{font:700 25px Bricolage;margin:7px 0 20px}.item button{background:none;border:0;padding:0;font-weight:700}.skeleton{height:360px;border-radius:14px;background:linear-gradient(90deg,#e9dfca,#fff8e9,#e9dfca);background-size:200%;animation:pulse 1.5s infinite}@keyframes pulse{to{background-position:-200%}}.empty{grid-column:1/-1;text-align:center;border:1px dashed #1f242833;border-radius:14px;padding:55px}.empty img{width:100px}.empty h3{font:700 27px Bricolage;margin:10px}.account-card{margin-top:24px;border-radius:14px;background:#202529;color:#f8f2e4;padding:28px;display:grid;grid-template-columns:1fr 164px;gap:30px;align-items:center}.account-card span{display:block;font:11px Mono;color:#e8a916;margin-bottom:12px}.account-card code{font:12px/1.7 Mono;overflow-wrap:anywhere}.account-card canvas{border-radius:8px}dialog{width:min(560px,calc(100% - 32px));border:0;border-radius:18px;padding:35px;background:#202529;color:#f8f2e4;box-shadow:0 30px 100px #0007}dialog::backdrop{background:#111a}dialog .x{position:absolute;right:17px;top:14px;border:0;background:none;color:#fff;font-size:28px}.review,.descriptor{display:grid;grid-template-columns:1fr auto;gap:12px;border-top:1px solid #ffffff25;border-bottom:1px solid #ffffff25;padding:18px 0;margin:24px 0;font-size:13px}.review span,.descriptor span{color:#ffffff8c}.fatal{min-height:100vh;display:grid;place-content:center;text-align:center}.fatal img{width:140px;margin:auto}.fatal h1{font:700 48px Bricolage}@media(max-width:800px){header{height:72px;padding:0 20px}.network{font-size:9px}.onboard{display:block}.intro{padding:55px 24px;border-right:0}.intro h1{font-size:57px}.lede{font-size:17px}.promise{display:none}.entry{padding:45px 24px}.phrase{grid-template-columns:repeat(2,1fr)}.wallet{display:block}.rail{border-right:0;border-bottom:1px solid #1f242826;padding:22px 24px;display:grid;grid-template-columns:1fr auto}.rail nav{display:none}.content{padding:48px 20px}.content h1{font-size:54px}.refresh{font-size:11px}.claim{align-items:flex-start;gap:20px;padding:24px;box-shadow:5px 5px 0 #1f2428}.claim h2{font-size:30px}.claim p{font-size:13px}.claim button{white-space:nowrap}.account-card{grid-template-columns:1fr}.account-card canvas{margin:auto}footer{padding:20px;font-size:9px}}
+
+/* The art consent sits with the items it governs, not in a settings page: the
+   disclosure only means anything where the holder can see what it costs. */
+.art-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted, #6b6f66);
+  cursor: pointer;
+}
+.art-consent input { margin-top: 3px; flex: none; }
+.art-consent span { max-width: 62ch; }
+
+/* The select carries its own visible text; the label is for screen readers. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.network-pick select { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.network-pick select option { color: #111; }
+
+/* Coins sit above items: what the account can spend, before what it owns.
+   Same card as an item — light, not the dark cave palette the other sites use. */
+.coins { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; margin: 24px 0 60px; }
+.coin {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 20px 22px;
+  border: 1px solid #1f24282d;
+  border-radius: 14px;
+  background: #fffaf0;
+}
+.coin b { display: block; margin-top: 8px; font: 700 30px Bricolage; font-variant-numeric: tabular-nums; }
+.coin > span { font: 11px Mono; color: #747776; white-space: nowrap; }
+
+/* The withdraw card reuses the account card; its inputs sit on the dark ground. */
+.withdraw-input { display: block; width: 100%; margin: 10px 0 0; padding: 12px 13px; border: 1px solid #ffffff2d; border-radius: 8px; background: #121618; color: #fff; font: 14px Mono; }
+.withdraw-input:focus { outline: none; border-color: #e8a916; }
+#withdraw-form .primary { margin-top: 0; }
+.coin-send { padding: 4px 0; font: 700 13px Plex; color: #1f2428; }
+
+/* Zcash: the balance is the one big number on the pocket; everything else
+   reuses the account card. */
+.zec { margin-bottom: 60px; }
+.zec .section-title span.bad { color: #c95545; }
+.zec-balance { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 26px 0 4px; }
+.zec-balance b { font: 700 clamp(44px, 6vw, 72px)/1 Bricolage; font-variant-numeric: tabular-nums; }
+.zec-balance span { font: 13px Mono; margin-left: 10px; color: #a56b00; }
+.zec-detail { margin: 0; font: 12px Mono; color: #6d716f; }
+.zec-notes { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 1px; }
+.zec-notes li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 16px; align-items: baseline; padding: 12px 2px; border-bottom: 1px solid #1f24281f; font-size: 13px; }
+.zec-notes li b { font-variant-numeric: tabular-nums; }
+.zec-notes li span { color: #6d716f; }
+.zec-notes li code { font: 11px Mono; color: #6d716f; }
+.zec-notes li.zec-empty { display: block; color: #6d716f; }
+#zec-send .primary, #zec-add .primary { margin-top: 0; }
+.zec-add textarea { resize: vertical; font: 13px/1.5 Mono; }
+@media (max-width: 800px) { .zec-notes li { grid-template-columns: 1fr; gap: 4px; } }
+
+/* ---------------------------------------------------------------------------
+   Shared layout fixes (wallet, market, bridge, connect).
+   ------------------------------------------------------------------------- */
+
+/* The header network control reads as a control, and says which chain. */
+.network { white-space: nowrap; }
+.network-pick { cursor: pointer; transition: border-color .15s; }
+.network-pick:hover { border-color: #1f242870; }
+.network-pick:focus-within { outline: 2px solid #e8a916; outline-offset: 2px; }
+.network-pick select:focus { outline: none; }
+/* The whole pill opens the list, not just the words in it. */
+.network-pick { padding-top: 0; padding-bottom: 0; }
+.network-pick select { min-height: 34px; }
+.net-chain { white-space: nowrap; }
+
+/* Refresh stays on one line, beside the heading it belongs to. */
+.topline { gap: 16px; }
+.refresh { flex: none; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; line-height: 1; }
+
+/* Section titles with a status beside them keep apart. */
+.section-title { gap: 16px; }
+.section-title span { text-align: right; }
+
+/* A coin card never outgrows its column, however long the amount. */
+.coin, .coin > div { min-width: 0; }
+.coin b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: clamp(22px, 2.3vw, 30px); line-height: 1.1; }
+.coin-send { flex: none; white-space: nowrap; }
+
+/* Quiet actions on the dark cards look like something to press. */
+.account-card .quiet { color: #e8a916; text-decoration: underline; text-underline-offset: 3px; }
+
+/* On a wide screen the rail stays in view: the nav and the lock are the
+   things reached for, and on a long pocket they drifted off screen. */
+@media (min-width: 801px) {
+  .wallet { background: linear-gradient(90deg, transparent 259px, #1f242826 259px, #1f242826 260px, transparent 260px); }
+  .wallet > .rail { position: sticky; top: 0; align-self: start; min-height: calc(100vh - 152px); border-right: 0; justify-content: flex-start; gap: 36px; }
+  .wallet > .rail > .quiet { margin-top: auto; }
+}
+
+/* Phones: every control a finger can hit, the network always visible, the
+   footer stacked rather than ragged. */
+@media (max-width: 800px) {
+  header { gap: 10px; }
+  .brand { flex: none; gap: 8px; font-size: 22px; }
+  .brand img { width: 36px; height: 36px; }
+  .network { font-size: 11px; min-width: 0; }
+  .net-chain { display: none; }
+  .brand { min-height: 40px; }
+  .network-pick { padding: 0 10px; min-height: 40px; }
+  .network-pick select { min-height: 40px; max-width: 100%; }
+  .network-pick { border-width: 0; box-shadow: inset 0 0 0 1px #1f242833; }
+  footer { flex-direction: column; gap: 6px; line-height: 1.7; }
+  .refresh { min-height: 40px; padding: 0 14px; }
+  .quiet, .coin-send, .rail nav button { min-height: 40px; }
+  .rail { gap: 12px 16px; }
+  .rail nav { display: flex; grid-column: 1 / -1; overflow-x: auto; gap: 14px; scrollbar-width: none; }
+  .rail nav button { white-space: nowrap; flex: none; }
+  .rail > .quiet { grid-column: 2; grid-row: 1; align-self: start; }
+}
+
+/* Review rows in the send dialog: a long exact amount wraps, it does not
+   push the dialog wider than the phone. */
+.review, .descriptor { grid-template-columns: auto minmax(0, 1fr); }
+.review b, .descriptor b { overflow-wrap: anywhere; text-align: right; }
+
+/* The extension's toolbar popup (index.html?popup=1) is at most 800x600 and
+   has no viewport to speak of: give it a phone's width, and the phone layout
+   follows. */
+html.in-popup, html.in-popup body { width: 400px; min-height: 580px; }
+
+/* The phone app (apps/nap-mobile) runs edge to edge: keep content clear of the
+   notch, the status bar and the home indicator. */
+html.in-app body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+/* What scrolls up passes under a solid strip, not under the clock. */
+html.in-app body::after { content: ''; position: fixed; inset: 0 0 auto 0; height: env(safe-area-inset-top); background: #f8f2e4; z-index: 2147483000; pointer-events: none; }
+
+/* An event tag was tapped before the wallet was open (§150). */
+.tap-note { margin: 18px 0 4px; padding: 14px 16px; border-left: 3px solid #e8a916; background: rgba(232, 169, 22, .12); border-radius: 0 10px 10px 0; font-size: 15px; line-height: 1.5; }
+
+/* The claim card stacks on a phone, so its button never runs off it. */
+@media (max-width: 800px) { .claim { flex-direction: column; align-items: stretch; } .claim button { align-self: flex-start; } }
+
+/* Biometric unlock (the phone app, §151). */
+.bio{margin-top:8px}.bio-or{text-align:center;margin:12px 0 0;font-size:13px}
+.bio-actions{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.bio-actions .quiet{color:#3d3000;padding:6px 0}
+
+/* An "i" for anything that needs explaining; the heading stays short. It
+   takes the colour of whatever it sits in, light panel or dark. */
+.tip {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  margin: 0 0 0 6px;
+  padding: 0;
+  vertical-align: 1px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  font: italic 700 10.5px/1 Georgia, serif;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.tip:hover, .tip[aria-expanded='true'] { opacity: 1; }
+.tip:focus-visible { outline: 2px solid #e8a916; outline-offset: 2px; opacity: 1; }
+.tip-bubble {
+  position: absolute;
+  z-index: 100;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #121618;
+  color: #f8f2e4;
+  font: 13px/1.5 Plex, system-ui, sans-serif;
+  box-shadow: 0 0 0 1px #ffffff1f, 0 14px 40px #0006;
+  animation: tip-in .12s ease-out;
+}
+@keyframes tip-in { from { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .tip-bubble { animation: none; } }
+/* The two facts are one line each now; phones show them too. */
+@media (max-width: 800px) {
+  .onboard .promise { display: flex; }
+  .onboard .lede { margin-bottom: 28px; }
+}
+
+/* Transparent ZEC: the one balance anyone can see, so it is set apart from
+   the shielded figure and tinted as public, with Shield beside it. */
+.zec-transparent { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 4px; padding: 14px 16px; border: 1px solid #c9554566; border-radius: 12px; background: #c955450d; }
+.zec-transparent[hidden] { display: none; }
+.zec-transparent b { display: block; font: 700 22px Bricolage; font-variant-numeric: tabular-nums; }
+.zec-t-label { display: block; font: 11px Mono; letter-spacing: .06em; color: #a5412f; margin-bottom: 4px; }
+.zec-transparent .primary { width: auto; margin: 0; gap: 14px; padding: 13px 18px; }
+.zec-seg { display: flex; gap: 6px; margin-top: 24px; }
+.zec-seg button { flex: 1; border: 1px solid #1f242833; background: none; border-radius: 999px; padding: 10px 12px; font-size: 13px; color: #4d5255; }
+.zec-seg button[aria-pressed='true'] { background: #202529; border-color: #202529; color: #f8f2e4; font-weight: 700; }
+.zec-seg + .account-card { margin-top: 12px; }
+.account-card.public span { color: #ff9c8a; }
+.account-card .public-line { color: #ff9c8a; font-weight: 600; font-size: 14px; }
+#shield-dialog .txid { font: 11px/1.6 Mono; overflow-wrap: anywhere; }
+#shield-dialog textarea { width: 100%; margin-top: 9px; border: 1px solid #ffffff2d; background: #121618; color: #fff; padding: 14px; border-radius: 8px; font: 13px/1.5 Mono; outline: none; resize: vertical; }
+#shield-dialog .muted.bad, #shield-state.bad { color: #ff8f83; }
+.withdraw-input:disabled { opacity: .5; cursor: not-allowed; }

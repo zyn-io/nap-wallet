@@ -1,0 +1,11 @@
+/* The old-host notice (src/moved.js): one plain line above the page. */
+.nap-moved {
+  position: relative;
+  z-index: 10;
+  padding: 10px 16px;
+  background: #1f2428;
+  color: #f8f2e4;
+  font: 13px/1.45 Plex, system-ui, sans-serif;
+  text-align: center;
+}
+.nap-moved a { color: #e8a916; font-weight: 700; }

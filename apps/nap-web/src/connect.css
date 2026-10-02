@@ -1,0 +1,41 @@
+/* The connect window: a small dark card, the wallet's onboarding palette. */
+.cn-body { min-height: 100vh; background: #202529; color: #f8f2e4; }
+.cn-body a { color: #e8a916; }
+.cn-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid #ffffff1f; }
+.cn-head .brand { font-size: 20px; }
+.cn-head .brand img { width: 32px; height: 32px; }
+.cn-head .network { border-color: #ffffff33; font-size: 10px; padding: 6px 10px; }
+.cn { padding: 26px 22px 18px; display: grid; gap: 14px; max-width: 520px; }
+.cn h2 { font: 700 27px/1.1 Bricolage; margin: 0; text-wrap: balance; }
+.cn .site { color: #e8a916; font-weight: 700; overflow-wrap: anywhere; }
+.cn .kicker { margin: 0; }
+.cn .muted { margin: 0; font-size: 13px; }
+.cn label { display: block; font-size: 13px; margin: 6px 0 0; }
+.cn textarea, .cn input { width: 100%; margin-top: 7px; border: 1px solid #ffffff2d; background: #121618; color: #fff; padding: 11px 12px; border-radius: 8px; font: 13px/1.5 Mono; outline: none; }
+.cn textarea:focus, .cn input:focus { border-color: #e8a916; }
+.cn .primary { margin-top: 0; }
+.cn .primary.danger { background: #d9695b; }
+.cn .quiet { color: #ffffff9c; padding: 8px 0; text-align: left; }
+.cn .rows { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 4px 0; padding: 14px 0; border-top: 1px solid #ffffff25; border-bottom: 1px solid #ffffff25; font-size: 13px; }
+.cn .rows dt { color: #ffffff8c; }
+.cn .rows dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cn .actions { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; align-items: center; }
+.cn .error { color: #ff8f83; min-height: 18px; font-size: 13px; margin: 0; }
+.cn-flash { margin: 0 22px; font: 12px Mono; color: #16c1a3; min-height: 16px; }
+.cn-flash.bad { color: #ff8f83; }
+.cn-spin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid #ffffff22; border-top-color: #e8a916; animation: cn-turn 0.9s linear infinite; }
+@keyframes cn-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .cn-spin { animation: none; } }
+.cn-picture { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid #ffffff2d; }
+
+/* Reject and Not now are real buttons, as easy to hit as Approve. */
+.cn form .primary { margin-top: 16px; }
+.cn .primary { min-height: 52px; align-items: center; }
+.cn .quiet { border: 1px solid #ffffff33; border-radius: 9px; padding: 0 16px; min-height: 48px; text-align: center; color: #f8f2e4; }
+.cn .quiet:hover { border-color: #ffffff70; }
+.cn > .quiet { justify-self: start; }
+.cn .actions .quiet { width: 100%; min-height: 52px; }
+
+/* The second of two setup choices: the same size, quieter. */
+.cn .primary.cn-alt { background: transparent; border: 1px solid #f8f2e438; color: #f8f2e4; }
+.cn .primary.cn-alt:hover { border-color: #e8a916; }

@@ -55,6 +55,19 @@ impl Receiver {
         Some(Receiver { secret, address })
     }
 
+    /// The receiver for a secret key already derived — what a wallet that
+    /// keeps the key rather than the phrase holds (the browser seals these 32
+    /// bytes, never the words). The address is the key's own P2PKH, so it is
+    /// exactly the one [`Receiver::derive`] gave for the same key.
+    pub fn from_secret(secret: [u8; 32]) -> Option<Receiver> {
+        let secret = secp256k1::SecretKey::from_slice(&secret).ok()?;
+        let public = secp256k1::PublicKey::from_secret_key(&secp256k1::Secp256k1::new(), &secret);
+        Some(Receiver {
+            secret,
+            address: TransparentAddress::from_pubkey(&public),
+        })
+    }
+
     pub fn address(&self) -> &TransparentAddress {
         &self.address
     }
@@ -152,6 +165,23 @@ mod tests {
             crate::payout::transparent_address(&s, zcash_protocol::consensus::Network::TestNetwork)
                 .expect("the parser must accept what the encoder produced");
         assert_eq!(&back, t.address(), "round trip changed the testnet address");
+    }
+
+    /// A receiver rebuilt from its kept secret answers to the same address,
+    /// on both networks. If it did not, a browser that seals the key instead
+    /// of the phrase would show one address and be unable to spend from it.
+    #[test]
+    fn a_kept_secret_rebuilds_the_derived_receiver() {
+        for seed in [[9u8; 32], [42u8; 32]] {
+            let m = Receiver::derive(&MAIN_NETWORK, &seed, 0, 0).expect("derive");
+            let back = Receiver::from_secret(m.secret().secret_bytes()).expect("a valid key");
+            assert_eq!(back.address(), m.address());
+            assert_eq!(back.encoded(NetworkType::Main), m.encoded(NetworkType::Main));
+            let t = Receiver::derive(&TEST_NETWORK, &seed, 0, 0).expect("derive");
+            let back = Receiver::from_secret(t.secret().secret_bytes()).expect("a valid key");
+            assert_eq!(back.encoded(NetworkType::Test), t.encoded(NetworkType::Test));
+        }
+        assert!(Receiver::from_secret([0u8; 32]).is_none(), "zero is not a secp256k1 key");
     }
 
     /// Successive indices are distinct addresses — the basis of not reusing

@@ -38,6 +38,7 @@
 // own dependency on the exact version this crate was built against.
 pub use frost_core;
 
+pub mod bitcoin;
 pub mod ceremony;
 pub mod compact;
 pub mod custodian;

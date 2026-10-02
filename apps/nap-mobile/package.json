@@ -1,0 +1,16 @@
+{
+  "name": "nap-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "pages": "npm --prefix ../nap-web run build:mobile",
+    "tauri": "tauri",
+    "ios:sim": "tauri ios build --target aarch64-sim --debug --ci",
+    "ios:release": "tauri ios build --export-method app-store-connect",
+    "android:apk": "tauri android build --debug --target aarch64 --apk --ci",
+    "android:release": "tauri android build --aab --ci"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

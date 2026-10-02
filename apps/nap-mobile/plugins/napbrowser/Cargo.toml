@@ -1,0 +1,21 @@
+[package]
+name = "tauri-plugin-napbrowser"
+version = "0.1.0"
+authors = [ "Nap Wallet" ]
+description = "The Nap browser: dApps in a separate web view, their requests approved by the wallet"
+edition = "2021"
+rust-version = "1.77.2"
+exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
+links = "tauri-plugin-napbrowser"
+
+[dependencies]
+tauri = { version = "2.11.6" }
+serde = "1.0"
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2.6.3", features = ["build"] }
+
+# Built with the app, not the repo workspace.
+[workspace]

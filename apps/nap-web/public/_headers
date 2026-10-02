@@ -1,0 +1,6 @@
+# No page of the wallet is meant to be inside another site's page. The CSP's
+# frame-ancestors says so too, but browsers ignore it in a <meta> tag.
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+  Referrer-Policy: no-referrer

@@ -1,13 +1,57 @@
 {
   "manifest_version": 3,
   "name": "Nap Wallet",
-  "version": "0.1.0",
-  "description": "Your Nap Wallet in the toolbar, and a window.zyn provider for sites — backed by the wallet app running on your machine. Holds no keys.",
-  "icons": { "32": "icons/32.png", "128": "icons/128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "Nap Wallet" },
-  "background": { "service_worker": "background.js" },
-  "permissions": ["storage"],
-  "host_permissions": ["http://127.0.0.1:8977/*"],
-  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start" }],
-  "web_accessible_resources": [{ "resources": ["inpage.js"], "matches": ["<all_urls>"] }]
+  "version": "0.3.3",
+  "description": "A private wallet for Zcash and Zyn: shielded ZEC, Zyn tokens and items, and a wallet sites can ask. Your keys stay on your device.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Nap Wallet",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://nap.zyn-network.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inpage.js"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }

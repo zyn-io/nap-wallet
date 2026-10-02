@@ -149,6 +149,15 @@ pub trait MicrochainVm: Clone + Sized {
     /// The intent that seals an epoch. **S7.**
     fn seal_intent() -> Self::Intent;
 
+    /// Is this the intent that seals an epoch?
+    ///
+    /// Only the VM can say. A publisher has to know, because an epoch whose
+    /// last record is not a seal is one a verifier cannot reproduce — and
+    /// publishing it produces a bundle that halts every replica that reads it
+    /// (§publish::all_sealed). `Intent` is not `PartialEq`, so comparing
+    /// against `seal_intent()` is not open to the caller.
+    fn is_seal(intent: &Self::Intent) -> bool;
+
     /// The checkpoint a seal produced, if these receipts carry one.
     fn sealed(receipts: &[Self::Receipt]) -> Option<Checkpoint>;
 

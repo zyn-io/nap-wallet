@@ -1,0 +1,28 @@
+[package]
+name = "nap-pool"
+version = "0.1.0"
+edition = "2021"
+description = "Nap's private bridge channel in the browser: notes, the pool tree and the spend proof (zyn-pool, compiled to WebAssembly)."
+publish = false
+
+# Its own workspace, like zec-core: built for wasm32 only.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+zyn-pool = { path = "../../../zyn-pool" }
+ark-bn254 = "0.5"
+ark-ff = "0.5"
+ark-serialize = "0.5"
+ark-groth16 = "0.5"
+serde_json = "1"
+wasm-bindgen = "=0.2.128"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = 3
+lto = true

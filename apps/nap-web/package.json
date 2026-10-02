@@ -1,0 +1,26 @@
+{
+  "name": "@zyn/nap-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:extension": "vite build --mode extension --outDir dist-extension",
+    "build:mobile": "vite build --mode mobile --outDir dist-mobile",
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.mjs",
+    "build:embedded": "vite build --config vite.embedded.config.js"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
+    "@noble/ed25519": "3.2.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "vite": "8.3.0"
+  }
+}

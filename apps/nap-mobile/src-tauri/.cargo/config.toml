@@ -1,0 +1,7 @@
+# Google Play requires native libraries aligned for 16 KB memory pages
+# (Android 15+ devices). NDK r27 does not default to it; say so.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

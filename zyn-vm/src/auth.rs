@@ -458,6 +458,9 @@ mod tests {
         fn sections(&self) -> Vec<H> {
             vec![[0u8; 32], [0u8; 32]]
         }
+        fn is_seal(intent: &u64) -> bool {
+            *intent == 0
+        }
         fn seal_intent() -> u64 {
             0
         }
@@ -532,6 +535,9 @@ mod tests {
         }
         fn sections(&self) -> Vec<H> {
             self.0.sections()
+        }
+        fn is_seal(intent: &u64) -> bool {
+            *intent == 0
         }
         fn seal_intent() -> u64 {
             0

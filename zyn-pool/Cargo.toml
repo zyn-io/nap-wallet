@@ -1,0 +1,24 @@
+[package]
+name = "zyn-pool"
+version = "0.1.0"
+edition = "2021"
+description = "The private bridge channel's notes, tree and Groth16 circuit (DECISIONS §158)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ark-bn254 = "0.5"
+ark-ff = "0.5"
+ark-ec = "0.5"
+ark-serialize = "0.5"
+ark-std = "0.5"
+ark-relations = "0.5"
+ark-r1cs-std = "0.5"
+ark-groth16 = "0.5"
+ark-snark = "0.5"
+light-poseidon = "0.4"
+sha3 = "0.10"
+rand_chacha = "0.3"
+serde_json = "1"
+
+[dev-dependencies]
+groth16-solana = "0.2"

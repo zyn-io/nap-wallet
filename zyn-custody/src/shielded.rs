@@ -131,6 +131,11 @@ impl VaultKeys {
             .map(|i| *i.as_bytes())
     }
 
+    /// The diversifier index of one of this key's own addresses, if it is one.
+    pub fn index_of_address(&self, address: &orchard::Address) -> Option<[u8; 11]> {
+        self.plain_ivk.diversifier_index(address).map(|i| *i.as_bytes())
+    }
+
     /// A unified address to hand a depositor.
     ///
     /// Orchard-only on purpose. A unified address containing a Sapling
@@ -696,6 +701,10 @@ pub enum ScanRangeError {
     /// leave the vault holding money whose owner nobody recorded, and the
     /// backing attestation that follows would be wrong by exactly that amount.
     Unattributable {
+        /// Which transaction. Without it the operator is told a deposit
+        /// somewhere in a block cannot be credited and left to find it by
+        /// elimination — which is exactly as slow as it sounds.
+        txid: [u8; 32],
         height: u64,
         amount: Fixed,
     },
@@ -819,11 +828,10 @@ impl Scanner {
             {
                 continue; // read once already, above
             }
-            for txid_hex in zebra.block_txids(height)? {
-                let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else {
-                    continue;
-                };
+            // One request for the whole block. Fetching each transaction
+            // separately cost a round-trip and a JSON parse apiece, which
+            // is what made a rescan take hours (A115).
+            for (txid, raw) in zebra.block_transactions(height)? {
                 // A transaction we cannot parse is not our problem: the
                 // chain contains every version there has ever been.
                 let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
@@ -853,7 +861,11 @@ impl Scanner {
                         height,
                         &handed_out,
                     )
-                    .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
+                    .map_err(|amount| ScanRangeError::Unattributable {
+                        txid,
+                        height,
+                        amount,
+                    })?,
                 );
                 forced.extend(scanned.forced);
             }
@@ -878,11 +890,10 @@ impl Scanner {
             return Ok((to.min(end), found));
         }
         for height in start..=end {
-            for txid_hex in zebra.block_txids(height)? {
-                let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else {
-                    continue;
-                };
+            // One request for the whole block. Fetching each transaction
+            // separately cost a round-trip and a JSON parse apiece, which
+            // is what made a rescan take hours (A115).
+            for (txid, raw) in zebra.block_transactions(height)? {
                 let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
                     continue;
                 };
@@ -958,11 +969,10 @@ impl Scanner {
             return Ok((to.min(end), found));
         }
         for height in start..=end {
-            for txid_hex in zebra.block_txids(height)? {
-                let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else {
-                    continue;
-                };
+            // One request for the whole block. Fetching each transaction
+            // separately cost a round-trip and a JSON parse apiece, which
+            // is what made a rescan take hours (A115).
+            for (txid, raw) in zebra.block_transactions(height)? {
                 let Ok(scanned) = self.keys.scan_actions_lenient(&raw, txid, height) else {
                     continue;
                 };
@@ -1087,11 +1097,10 @@ impl Scanner {
         let result = (|| {
             let mut deposits = Vec::new();
             let mut forced = Vec::new();
-            for txid_hex in zebra.block_txids(height)? {
-                let raw = zebra.raw_transaction_bytes(&txid_hex)?;
-                let Some(txid) = txid_bytes(&txid_hex) else {
-                    continue;
-                };
+            // One request for the whole block. Fetching each transaction
+            // separately cost a round-trip and a JSON parse apiece, which
+            // is what made a rescan take hours (A115).
+            for (txid, raw) in zebra.block_transactions(height)? {
                 // Lenient here, and strict below, once we know what the
                 // transaction is: one that spends our own note is one we
                 // sent, and a note it returns to us is **change** — held,
@@ -1115,15 +1124,26 @@ impl Scanner {
                     };
                     s.spend_nullifier(&a.nullifier, self.keys.fvk());
                 }
+                // The same rule as the deposit pass: a payment to an address
+                // this vault handed out belongs to its account, memo or not.
+                // Using the memo-only rule here stopped the tree walk on the
+                // very deposits per-account addresses exist to accept — a
+                // faucet or exchange paying without a memo (23 Sep, testnet).
+                let handed_out = self.addresses.lock().map(|m| m.clone()).unwrap_or_default();
                 deposits.extend(
-                    classify(
+                    classify_addressed(
                         &scanned,
                         spends_ours,
                         self.attributions.get(&txid).copied(),
                         txid,
                         height,
+                        &handed_out,
                     )
-                    .map_err(|amount| ScanRangeError::Unattributable { height, amount })?,
+                    .map_err(|amount| ScanRangeError::Unattributable {
+                        txid,
+                        height,
+                        amount,
+                    })?,
                 );
                 forced.extend(scanned.forced.iter().cloned());
                 for a in scanned.actions {
@@ -1538,6 +1558,19 @@ mod deposit_address_tests {
                 "never the vault's own index"
             );
         }
+    }
+
+    /// The address an account shares resolves back to that account's index,
+    /// and a stranger's address resolves to nothing.
+    #[test]
+    fn a_deposit_address_resolves_to_its_account_index() {
+        let k = keys();
+        let account = [7u8; 32];
+        let addr = k.fvk.address_at(deposit_index(&account), Scope::External);
+        assert_eq!(k.index_of_address(&addr), Some(*deposit_index(&account).as_bytes()));
+        let other = VaultKeys::from_spending_key([0x42u8; 32]).expect("a valid spending key");
+        let stranger = other.fvk.address_at(deposit_index(&account), Scope::External);
+        assert_eq!(k.index_of_address(&stranger), None, "another vault's address is not ours");
     }
 
     /// The round trip that makes ownership checkable: derive an account's

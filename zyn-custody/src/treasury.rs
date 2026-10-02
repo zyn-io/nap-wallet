@@ -216,6 +216,7 @@ mod tests {
                 zcash: None,
                 solana: None,
                 treasury: Some(crate::custodian::solana::Participant::new(keys.clone())),
+                bitcoin: None,
             };
             let shared = std::sync::Arc::new(std::sync::Mutex::new(c));
             std::thread::spawn(move || serve(shared, listener, || 0));

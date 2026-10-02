@@ -1,0 +1,45 @@
+[package]
+name = "nap-zec"
+version = "0.1.0"
+edition = "2021"
+description = "Nap's Zcash wallet core for the browser: the desktop wallet's keys, scanning and payouts, compiled to WebAssembly."
+publish = false
+
+# Its own workspace: this builds for wasm32 with a C toolchain and features the
+# rest of the tree does not want. Cargo.lock is copied from the root so the
+# Zcash crates are the exact versions the desktop wallet and the bridge run.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# No `multicore`: a browser has no threads for halo2 to prove on.
+zyn-custody = { path = "../../../zyn-custody", default-features = false }
+orchard = { version = "0.15.5", default-features = false, features = ["circuit", "std"] }
+zcash_protocol = "0.10.5"
+zip32 = "0.2.1"
+bip39 = "2.2.0"
+rand = "0.8"
+serde_json = "1"
+wasm-bindgen = "=0.2.128"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Entropy from the browser's crypto.getRandomValues, for both getrandom lines
+# in the tree.
+getrandom = { version = "0.2", features = ["js"] }
+getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+# zyn-custody links an HTTPS client the browser never calls; these let its TLS
+# stack compile for wasm32 so the linker can drop it.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+rustls-pki-types = { version = "1", features = ["web"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[dev-dependencies]
+# To read back a built sweep in the tests; the versions the core already links.
+zcash_primitives = { version = "0.30.1", default-features = false }
+zcash_transparent = "0.10.0"
