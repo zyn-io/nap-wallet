@@ -49,7 +49,7 @@ export function claimSources(identity, limit, from = 0) {
   for (let n = from; n < limit; n++) {
     const nonce = mk.marketNonce(identity.secretKey, n);
     const lend = mk.lendSource(me, nonce);
-    for (const source of [mk.orderId(me, nonce), mk.liquidityId(me, nonce), mk.commitId(me, nonce), mk.launchSource(me, nonce), mk.listingSource(me, nonce), mk.curveOrderId(me, nonce), mk.curveSource(me, nonce), lend, mk.leftoverSource(lend)]) {
+    for (const source of [mk.orderId(me, nonce), mk.liquidityId(me, nonce), mk.commitId(me, nonce), mk.launchSource(me, nonce), mk.listingSource(me, nonce), mk.curveOrderId(me, nonce), mk.curveSource(me, nonce), lend, mk.leftoverSource(lend), mk.routeId(me, nonce)]) {
       out.push(...mk.claimIds(source).map(hex));
     }
   }
@@ -131,6 +131,7 @@ const CLAIM_KINDS = [
   ['curve', ['Creator payout', 'Creator payout', 'Creator payout']],
   ['lend', ['Lending: shares, coins or collateral', 'Lending refund', 'Lending']],
   ['lend-lot', ['Left over after liquidation', 'Collateral back after liquidation', 'Liquidation']],
+  ['route', ['Route delivered', 'Route refunded whole — it would have delivered less than your floor', 'Route: change from its last step']],
 ];
 function claimKinds(identity, limit, from = 0) {
   const kinds = new Map();
@@ -138,7 +139,7 @@ function claimKinds(identity, limit, from = 0) {
   for (let n = from; n < limit; n++) {
     const nonce = mk.marketNonce(identity.secretKey, n);
     const lend = mk.lendSource(me, nonce);
-    const sources = [mk.orderId(me, nonce), mk.liquidityId(me, nonce), mk.commitId(me, nonce), mk.launchSource(me, nonce), mk.listingSource(me, nonce), mk.curveOrderId(me, nonce), mk.curveSource(me, nonce), lend, mk.leftoverSource(lend)];
+    const sources = [mk.orderId(me, nonce), mk.liquidityId(me, nonce), mk.commitId(me, nonce), mk.launchSource(me, nonce), mk.listingSource(me, nonce), mk.curveOrderId(me, nonce), mk.curveSource(me, nonce), lend, mk.leftoverSource(lend), mk.routeId(me, nonce)];
     sources.forEach((source, i) => mk.claimIds(source).forEach((id, k) => kinds.set(hex(id), CLAIM_KINDS[i][1][k])));
   }
   return kinds;

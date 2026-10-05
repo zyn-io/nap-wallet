@@ -1,0 +1,14 @@
+# NU7 code paths in zcash_protocol/zcash_primitives (DECISIONS §165): NU7 has a
+# public-testnet height (4,465,026) and Zyn must build and read its
+# transactions. A stopgap with the vendored zcash_protocol (vendor/) until
+# zcash_protocol 0.11 / zcash_primitives 0.31 are final; no `zip-233` feature.
+# Target-specific rustflags replace [build] ones, so the cross targets carry it
+# too (cargo joins these arrays with ~/.cargo/config.toml's).
+[build]
+rustflags = ["--cfg", 'zcash_unstable="nu7"']
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["--cfg", 'zcash_unstable="nu7"']
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["--cfg", 'zcash_unstable="nu7"']

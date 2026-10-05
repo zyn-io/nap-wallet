@@ -8,3 +8,8 @@ resolver = "2"
 # Silent wrapping in value arithmetic mints money.
 [profile.release]
 overflow-checks = true
+
+# NU7 on testnet (Zyn DECISIONS §165): zcash_protocol 0.10.5 with NU7's branch
+# id and testnet height, until zcash_protocol 0.11 is final.
+[patch.crates-io]
+zcash_protocol = { path = "vendor/zcash_protocol" }

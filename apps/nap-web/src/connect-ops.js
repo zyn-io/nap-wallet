@@ -106,6 +106,18 @@ const validCurve = (c) => isHex(c.token) && isHex(c.quote) && isHex(c.meta)
   && ['reserve', 'graduation', 'creator_fees', 'bond', 'price_per_token'].every((k) => isInt(c[k]))
   && Number.isSafeInteger(c.sold) && c.sold >= 0 && typeof c.graduated === 'boolean';
 
+/// A curve's size (§166): the ledger amount one unit of its shape stands
+/// for. A node from before §166 says nothing, and every curve was ZEC-sized.
+const unitOf = (c) => (isInt(c?.unit) && c.unit !== '0' ? BigInt(c.unit) : mk.ZAT);
+
+/// The assets coins launch in, and each one's size and bond. None named:
+/// ZEC.zy at ZEC's size with the general bond, as before §166.
+function launchAssets(ctx, market, terms) {
+  const named = (market.curve_quotes || []).filter((q) => isHex(q.asset) && isInt(q.unit) && isInt(q.bond));
+  if (named.length) return named.map((q) => ({ asset: q.asset, unit: BigInt(q.unit), bond: BigInt(q.bond) }));
+  return [{ asset: ctx.config.zecAsset, unit: mk.ZAT, bond: BigInt(terms.bond || '0') }];
+}
+
 async function curveBook(ctx) {
   const market = await ledger.call(ctx.config, 'zyn_market');
   const curves = (market.curves || []).filter(validCurve).map((c) => ({ ...c, ...(mk.decodeMeta(c.meta) || { symbol: '?', name: 'Unnamed' }) }));
@@ -273,12 +285,16 @@ export const METHODS = {
 
   zyn_curves: {
     kind: 'public',
-    run: async (ctx) => { const { curves, terms } = await curveBook(ctx); return { curves, terms, curve: mk.CURVE }; },
+    run: async (ctx) => {
+      const { market, curves, terms } = await curveBook(ctx);
+      const quotes = launchAssets(ctx, market, terms).map((q) => ({ asset: q.asset, unit: String(q.unit), bond: String(q.bond) }));
+      return { curves, terms, quotes, curve: mk.CURVE };
+    },
   },
   zyn_curveHoldings: {
     kind: 'read',
     run: async (ctx) => {
-      const { curves } = await curveBook(ctx);
+      const { market, curves, terms } = await curveBook(ctx);
       const h = await holdings(ctx);
       // The tokens this wallet made: its own nonces, turned into token ids.
       const mine = new Set();
@@ -286,6 +302,8 @@ export const METHODS = {
       for (let n = 0; n < count; n++) mine.add(hex(mk.tokenOf(ctx.identity.account, mk.marketNonce(ctx.identity.secretKey, n))));
       return {
         zec: String(h.balances.get(ctx.config.zecAsset) || 0n),
+        // What it holds of each asset coins launch in, to trade them with.
+        quotes: launchAssets(ctx, market, terms).map((q) => ({ asset: q.asset, amount: String(h.balances.get(q.asset) || 0n) })),
         holdings: curves.map((c) => ({ token: c.token, symbol: c.symbol, name: c.name, amount: String(h.balances.get(c.token) || 0n) }))
           .filter((x) => x.amount !== '0'),
         created: curves.filter((c) => mine.has(c.token)).map((c) => ({ token: c.token, symbol: c.symbol, name: c.name })),
@@ -306,16 +324,25 @@ export const METHODS = {
       if (image && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image)) throw bad('The picture must be a PNG, JPEG, WebP or GIF');
       if (image.length > 420_000) throw bad('The picture must be under 300 KB');
       const content = description || image ? { description, image } : null;
-      const { terms } = await curveBook(ctx);
-      const bond = BigInt(terms.bond || '0');
-      if (bond > 0n) await mustHold(ctx, ctx.config.zecAsset, bond, 'ZEC.zy');
+      const { market, terms } = await curveBook(ctx);
+      // The coin it is priced in: ZEC.zy unless the site asks for another
+      // the ledger launches coins in (§166).
+      const quote = p.quote == null ? ctx.config.zecAsset : p.quote;
+      if (!isHex(quote)) throw bad('quote must be 64 hex characters');
+      const as = launchAssets(ctx, market, terms).find((q) => q.asset === quote);
+      if (!as) throw bad('Coins are not launched in that asset');
+      const q$ = (await namer(ctx, market))(quote);
+      const bond = as.bond;
+      if (bond > 0n) await mustHold(ctx, quote, bond, q$);
+      const raise = mk.curveCost(0, mk.CURVE.graduateAt, as.unit);
       return {
         title: `Create ${String(p.symbol).toUpperCase()}`,
         rows: [
           ['Name', String(p.name).trim()],
+          ['Priced in', q$],
           ['Supply', '1,000,000,000 — all sold on the curve or put in its pool; none to you'],
-          ['Graduates', `at ${mk.CURVE.graduateAt.toLocaleString('en-US')} of 80,000 lots (about 17 ZEC.zy raised), into a locked pool`],
-          ['Bond', bond ? `${wadText(bond)} ZEC.zy — returned only if it graduates; otherwise it stays in the curve` : 'none'],
+          ['Graduates', `at ${mk.CURVE.graduateAt.toLocaleString('en-US')} of 80,000 lots (about ${(Number(raise / 10n ** 14n) / 1e4).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${q$} raised), into a locked pool`],
+          ['Bond', bond ? `${wadText(bond)} ${q$} — returned only if it graduates; otherwise it stays in the curve` : 'none'],
           ['Your share', terms.fee_bps ? `10% of its trading fees, paid when it graduates` : 'none (no fee is set)'],
           ...(description ? [['Description', description]] : []),
           ...(image ? [['Picture', 'shown above, stored by the site that asked; it proves you made the token']] : []),
@@ -326,15 +353,15 @@ export const METHODS = {
           let inputs = [], change = [];
           if (bond > 0n) {
             const h = await holdings(ctx);
-            ({ inputs, change } = mk.fund(ctx.identity, h.held, unhex(ctx.config.zecAsset), bond));
+            ({ inputs, change } = mk.fund(ctx.identity, h.held, unhex(quote), bond));
           }
           const nonce = await ledger.submitFresh(ctx.config, ctx.identity, (n) => mk.createCurveIntent({
-            creator: ctx.identity.account, nonce: n, quote: unhex(ctx.config.zecAsset), meta, inputs, change,
+            creator: ctx.identity.account, nonce: n, quote: unhex(quote), meta, inputs, change,
           }));
           const token = mk.tokenOf(ctx.identity.account, nonce);
-          if (!content) return { token: hex(token) };
+          if (!content) return { token: hex(token), quote };
           const hash = contentHash(content);
-          return { token: hex(token), content: { hash: hex(hash), proof: await contentProof(ctx.identity.secretKey, nonce, token, hash) } };
+          return { token: hex(token), quote, content: { hash: hex(hash), proof: await contentProof(ctx.identity.secretKey, nonce, token, hash) } };
         },
       };
     },
@@ -347,8 +374,9 @@ export const METHODS = {
       const q$ = (await namer(ctx, market))(c.quote);
       if (c.graduated) throw bad('That token has graduated; it trades in its pool (zyn_swap)');
       const amount = amountOf(p.amount, 'amount');
-      if (amount < mk.MIN_CURVE_BUY) throw bad(`A buy is at least 0.001 ${q$}`);
-      const q = mk.previewCurveBuy(c.sold, amount, c.fee_bps);
+      const min = mk.curveMinBuy(unitOf(c));
+      if (amount < min) throw bad(`A buy is at least ${wadText(min)} ${q$}`);
+      const q = mk.previewCurveBuy(c.sold, amount, c.fee_bps, unitOf(c));
       if (q.lots === 0) throw bad('That buys less than one lot at the current price');
       const minLots = p.minTokens != null ? BigInt(amountOf(p.minTokens, 'minTokens')) / mk.LOT : 0n;
       await mustHold(ctx, c.quote, amount, q$);
@@ -385,7 +413,7 @@ export const METHODS = {
       const tokens = amountOf(p.tokens, 'tokens');
       if (tokens % mk.LOT !== 0n) throw bad(`Sell whole lots of ${mk.CURVE.lotTokens.toLocaleString('en-US')} tokens`);
       const lots = Number(tokens / mk.LOT);
-      const q = mk.previewCurveSell(c.sold, lots, c.fee_bps);
+      const q = mk.previewCurveSell(c.sold, lots, c.fee_bps, unitOf(c));
       const minZec = p.minZec != null ? amountOf(p.minZec, 'minZec') : 0n;
       await mustHold(ctx, c.token, tokens, c.symbol);
       return {
@@ -404,6 +432,67 @@ export const METHODS = {
             trader: ctx.identity.account, token: unhex(c.token), buy: false, amountIn: tokens, minOut: minZec, inputs, change, nonce: n,
           }));
           return { order: hex(mk.curveOrderId(ctx.identity.account, nonce)) };
+        },
+      };
+    },
+  },
+
+  // One order through up to four venues — a coin's curve, pools, another
+  // coin's curve — settled in one seal, all or nothing (§167).
+  zyn_route: {
+    kind: 'write',
+    async prepare(ctx, p) {
+      const market = await ledger.call(ctx.config, 'zyn_market');
+      const name = await namer(ctx, market);
+      if (!Array.isArray(p.hops) || p.hops.length < 1 || p.hops.length > 4) throw bad('A route is one to four hops');
+      const pools = new Map((market.pools || []).filter((x) => isHex(x.id)).map((x) => [x.id, x]));
+      const curves = new Map((market.curves || []).filter(validCurve).map((c) => [c.token, c]));
+      // Each hop as the chain stands: what it takes, what it gives.
+      const hops = p.hops.map((h, i) => {
+        if (h && isHex(h.pool) && typeof h.sellA === 'boolean') {
+          const x = pools.get(h.pool);
+          if (!x || !isInt(x.reserve_a) || !isInt(x.reserve_b) || BigInt(x.reserve_a) === 0n || BigInt(x.reserve_b) === 0n) throw bad('A pool on that route is gone or empty');
+          return { hop: { pool: unhex(h.pool), sellA: h.sellA }, key: { pool: h.pool, sellA: h.sellA }, input: h.sellA ? x.a : x.b, output: h.sellA ? x.b : x.a, venue: h.pool };
+        }
+        const t = h?.curveSell ?? h?.curveBuy;
+        const c = isHex(t) && curves.get(t);
+        if (!c || c.graduated) throw bad('A coin on that route is not on its curve; route through its pool');
+        if (h.curveSell && i !== 0) throw bad('A sale to a curve can only start a route');
+        if (h.curveBuy && i !== p.hops.length - 1) throw bad('A purchase from a curve can only end a route');
+        return h.curveSell
+          ? { hop: { curveSell: unhex(t) }, key: { curveSell: t }, input: c.token, output: c.quote, venue: t }
+          : { hop: { curveBuy: unhex(t) }, key: { curveBuy: t }, input: c.quote, output: c.token, venue: t };
+      });
+      if (new Set(hops.map((h) => h.venue)).size !== hops.length) throw bad('A route passes each venue once');
+      hops.forEach((h, i) => { if (i && hops[i - 1].output !== h.input) throw bad('Each hop must take what the hop before it gives'); });
+      const amountIn = amountOf(p.amount, 'amount');
+      const minOut = amountOf(p.minOut, 'minOut');
+      if (hops[0].hop.curveSell && amountIn % mk.LOT !== 0n) throw bad(`Sell whole lots of ${mk.CURVE.lotTokens.toLocaleString('en-US')} tokens`);
+      const venues = { pool: (id) => pools.get(hex(id)), curve: (t) => curves.get(hex(t)) };
+      const q = mk.previewRoute(hops.map((h) => h.hop), amountIn, venues);
+      if (!q) throw bad('That route delivers nothing at these prices');
+      const [start, end] = [hops[0].input, hops[hops.length - 1].output];
+      const path = [start, ...hops.map((h) => h.output)].map(name).join(' → ');
+      await mustHold(ctx, start, amountIn, name(start));
+      const show = (asset, raw) => (curves.has(asset) ? `${tokenText(raw)} ${name(asset)}` : `${wadText(raw)} ${name(asset)}`);
+      return {
+        title: `Swap ${name(start)} for ${name(end)}`,
+        danger: !minOut,
+        rows: [
+          ['Route', path],
+          ['You put in', show(start, amountIn)],
+          ['If nobody else trades this epoch', show(end, q.out)],
+          ['At least', minOut ? `${show(end, minOut)}, or the whole route comes back` : 'no floor — it fills at whatever the batches clear at'],
+          ['Settles', 'in one epoch, every hop together'],
+        ],
+        note: 'Each venue on the route clears once this epoch, at one price for everyone in it. If the end of the route would bring less than your floor, nothing on it happens and everything you put in comes back.',
+        run: async () => {
+          const h = await holdings(ctx);
+          const { inputs, change } = mk.fund(ctx.identity, h.held, unhex(start), amountIn);
+          const nonce = await ledger.submitFresh(ctx.config, ctx.identity, (n) => mk.routeIntent({
+            trader: ctx.identity.account, hops: hops.map((x) => x.hop), amountIn, minOut, nonce: n, inputs, change,
+          }));
+          return { order: hex(mk.routeId(ctx.identity.account, nonce)) };
         },
       };
     },

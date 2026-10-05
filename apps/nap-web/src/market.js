@@ -56,9 +56,10 @@ export const MARKET_PROGRAM = Object.freeze(Object.fromEntries([
   ['lendCollateral', 'lend-collateral'],
   ['lendInsure', 'lend-insure'],
   ['lendBid', 'lend-bid'],
+  ['route', 'route'],
 ].map(([k, name]) => [k, hex(named(name))])));
 
-const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51 };
+const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51, route: 53 };
 
 const id = (domain, ...parts) => leaf(te.encode(domain), ...parts);
 
@@ -73,6 +74,9 @@ export const lpAsset = (pool) => id('objectvm.lp.v1', pool);
 export const tokenOf = (creator, nonce) => id('objectvm.token.v1', creator, nonce);
 export const launchSource = (creator, nonce) => id('objectvm.launch.v1', creator, nonce);
 export const orderId = (trader, nonce) => id('objectvm.order.v1', trader, nonce);
+/// A route's id (§167): where what it delivers, or its refund, waits.
+export const routeId = (trader, nonce) => id('objectvm.route.v1', trader, nonce);
+export const routeLegId = (route, hop) => id('objectvm.route-leg.v1', route, new Uint8Array([hop]));
 export const commitId = (buyer, nonce) => id('objectvm.commit.v1', buyer, nonce);
 export const liquidityId = (provider, nonce) => id('objectvm.liquidity.v1', provider, nonce);
 export const claimId = (source, k) => id('objectvm.claim.v1', source, new Uint8Array([k]));
@@ -115,6 +119,18 @@ export const swapIntent = (o) => concatBytes(
   i128Bytes(o.amountIn), i128Bytes(o.minOut), o.nonce, inputs(o.inputs), outputs(o.change),
 );
 
+/// One order through up to four venues, all or nothing (§167). A hop is
+/// `{ pool, sellA }`, `{ curveSell: token }` (first only) or
+/// `{ curveBuy: token }` (last only).
+export function routeIntent(o) {
+  const hops = o.hops.map((h) => (h.pool ? concatBytes(new Uint8Array([0]), h.pool, bool(h.sellA))
+    : h.curveSell ? concatBytes(new Uint8Array([1]), h.curveSell) : concatBytes(new Uint8Array([2]), h.curveBuy)));
+  return concatBytes(
+    new Uint8Array([TAG.route]), o.trader, prog('route'), new Uint8Array([o.hops.length]), ...hops,
+    i128Bytes(o.amountIn), i128Bytes(o.minOut), o.nonce, inputs(o.inputs), outputs(o.change),
+  );
+}
+
 export function claimIntent(o) {
   const ids = [u32be(o.claims.length), ...o.claims];
   return concatBytes(new Uint8Array([TAG.claim]), o.owner, prog('claim'), ...ids, outputs(o.outputs));
@@ -146,27 +162,37 @@ export const CURVE = Object.freeze({
   graduateAt: 51_098,
   poolFeeBps: 30,
 });
-const ZAT = 10_000_000_000n; // one zatoshi, in the ledger's units
+/// One zatoshi, in the ledger's units: a ZEC-sized curve's unit. A curve
+/// priced in another coin (§166) has its own unit, the ledger amount one
+/// "zatoshi" of the same shape stands for (`unit` in `zyn_market`).
+export const ZAT = 10_000_000_000n;
 /// One lot, in the ledger's units (1e18 per token).
 export const LOT = CURVE.lotTokens * WAD;
-/// The smallest buy: 0.001 of the quote asset.
+/// The smallest buy: 0.001 of the quote asset on a ZEC-sized curve.
 export const MIN_CURVE_BUY = 100_000n * ZAT;
+/// A curve's smallest buy at its size.
+export const curveMinBuy = (unit = ZAT) => 100_000n * BigInt(unit);
+/// Fully diluted value at graduation, in units (`GRADUATION_MC_UNITS`).
+export const GRADUATION_MC_UNITS = (CURVE.baseZat + CURVE.slopeZat * BigInt(CURVE.graduateAt)) * BigInt(CURVE.lots);
+/// The unit that makes a curve graduate at `mc` fully diluted (`QuoteTerms::unit_for`).
+export const curveUnitFor = (mc) => BigInt(mc) / GRADUATION_MC_UNITS;
 
 export const curveSource = (creator, nonce) => id('objectvm.curve.v1', creator, nonce);
 export const curveOrderId = (trader, nonce) => id('objectvm.curve-order.v1', trader, nonce);
 
-/// What lots `[q, q+d)` cost, in the ledger's units — `objectvm::curve::cost`.
-export function curveCost(q, d) {
+/// What lots `[q, q+d)` cost, in the ledger's units, on a curve of size
+/// `unit` — `objectvm::curve::cost_at`.
+export function curveCost(q, d, unit = ZAT) {
   const Q = BigInt(q), D = BigInt(d);
-  return (CURVE.baseZat * D + CURVE.slopeZat * ((D * (2n * Q + D - 1n)) / 2n)) * ZAT;
+  return (CURVE.baseZat * D + CURVE.slopeZat * ((D * (2n * Q + D - 1n)) / 2n)) * BigInt(unit);
 }
 
 /// The most lots `budget` buys from lot `q`, at most `cap`.
-export function lotsFor(q, budget, cap) {
+export function lotsFor(q, budget, cap, unit = ZAT) {
   let lo = 0, hi = cap;
   while (lo < hi) {
     const mid = lo + Math.ceil((hi - lo) / 2);
-    if (curveCost(q, mid) <= budget) lo = mid; else hi = mid - 1;
+    if (curveCost(q, mid, unit) <= budget) lo = mid; else hi = mid - 1;
   }
   return lo;
 }
@@ -174,24 +200,24 @@ export function lotsFor(q, budget, cap) {
 /// A buy of `amountIn` alone in its batch: lots, what they cost, the fee.
 /// Other buyers in the same epoch share the price, so this is what a buy
 /// gets at best when nobody else buys — a preview, never a promise.
-export function previewCurveBuy(sold, amountIn, feeBps) {
+export function previewCurveBuy(sold, amountIn, feeBps, unit = ZAT) {
   const budget = (BigInt(amountIn) * BPS) / (BPS + BigInt(feeBps));
-  const lots = lotsFor(sold, budget, Math.max(0, CURVE.graduateAt - sold));
-  const paid = curveCost(sold, lots);
+  const lots = lotsFor(sold, budget, Math.max(0, CURVE.graduateAt - sold), unit);
+  const paid = curveCost(sold, lots, unit);
   const fee = (paid * BigInt(feeBps)) / BPS;
   return { lots, tokens: BigInt(lots) * LOT, paid, fee, refund: BigInt(amountIn) - paid - fee };
 }
 
 /// Selling `lots` alone: gross from the curve, the fee, what arrives.
-export function previewCurveSell(sold, lots, feeBps) {
+export function previewCurveSell(sold, lots, feeBps, unit = ZAT) {
   const n = Math.min(lots, sold);
-  const gross = n ? curveCost(sold - n, n) : 0n;
+  const gross = n ? curveCost(sold - n, n, unit) : 0n;
   const fee = (gross * BigInt(feeBps)) / BPS;
   return { lots: n, gross, fee, net: gross - fee };
 }
 
 /// Price of the next lot, per token, in the ledger's units.
-export const curvePricePerToken = (sold) => curveCost(sold, 1) / CURVE.lotTokens;
+export const curvePricePerToken = (sold, unit = ZAT) => curveCost(sold, 1, unit) / CURVE.lotTokens;
 
 export const createCurveIntent = (o) => concatBytes(
   new Uint8Array([TAG.createCurve]), o.creator, prog('curveCreate'), o.nonce, o.quote, o.meta,
@@ -221,6 +247,26 @@ export function quoteAlone(pool, sellA, amountIn) {
   const net = netOfFee(amountIn, pool.fee_bps);
   if (net <= 0n) return 0n;
   return sellA ? (net * y) / (x + 2n * net) : (net * x) / (y + 2n * net);
+}
+
+/// What a route delivers if it is alone in its venues' batches: each hop's
+/// preview fed by the one before. `venues` resolves a hop to its pool or
+/// curve as `zyn_market` lists them; `null` if a hop delivers nothing.
+export function previewRoute(hops, amountIn, venues) {
+  let amount = BigInt(amountIn);
+  const steps = [];
+  for (const h of hops) {
+    if (h.pool) {
+      amount = quoteAlone(venues.pool(h.pool), h.sellA, amount);
+    } else {
+      const c = venues.curve(h.curveSell || h.curveBuy);
+      const unit = c.unit && c.unit !== '0' ? BigInt(c.unit) : ZAT;
+      amount = h.curveSell ? previewCurveSell(c.sold, Number(amount / LOT), c.fee_bps, unit).net : previewCurveBuy(c.sold, amount, c.fee_bps, unit).tokens;
+    }
+    steps.push(amount);
+    if (amount <= 0n) return null;
+  }
+  return { out: amount, steps };
 }
 
 /// The minimum to sign for, `slippageBps` below the quote.

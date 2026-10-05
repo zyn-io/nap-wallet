@@ -43,3 +43,8 @@ codegen-units = 1
 # To read back a built sweep in the tests; the versions the core already links.
 zcash_primitives = { version = "0.30.1", default-features = false }
 zcash_transparent = "0.10.0"
+
+# NU7 on testnet (DECISIONS §165): zcash_protocol 0.10.5 with NU7's branch id and
+# testnet height, until 0.11 is final.
+[patch.crates-io]
+zcash_protocol = { path = "../../../vendor/zcash_protocol" }

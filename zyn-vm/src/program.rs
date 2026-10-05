@@ -268,6 +268,11 @@ pub fn configure_curves() -> ProgramId {
     named(b"configure-curves")
 }
 
+/// One order through several venues, settled in one seal, all or nothing.
+pub fn route() -> ProgramId {
+    named(b"route")
+}
+
 /// A program named by its code rather than by a rule the VM knows.
 ///
 /// `code` is the hash of the program as shipped — an rv32im ELF, per §2.5's
@@ -308,6 +313,7 @@ pub fn is_named(id: &ProgramId) -> bool {
         curve_create(),
         curve_trade(),
         configure_curves(),
+        route(),
         sale_open(),
         sale_tickets(),
         sale_close(),
@@ -359,6 +365,7 @@ mod tests {
             curve_create(),
             curve_trade(),
             configure_curves(),
+        route(),
             sale_open(),
             sale_tickets(),
             sale_close(),
