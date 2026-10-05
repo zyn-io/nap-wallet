@@ -21,6 +21,9 @@ import * as pool from './pool.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { parsePaymentRequest, zatoshiOf } from './zip321.js';
+import { CAVE_Z, itemName } from './items.js';
+
+export { itemName };
 
 /// EIP-1193's error codes, so a site handles Nap the way it handles any wallet.
 export const ERR = Object.freeze({ REJECTED: 4001, UNAUTHORIZED: 4100, UNSUPPORTED: 4200, PARAMS: -32602 });
@@ -46,14 +49,6 @@ const wadText = (raw) => { const v = BigInt(raw); const f = (v % WAD).toString()
 const amountOf = (v, what) => { try { return parseAmount(String(v ?? '')); } catch (e) { throw bad(`${what}: ${e.message}`); } };
 const NO_ZEC = 'This wallet has no Zcash keys on this device yet. Open Nap, choose Zcash, add your Zcash wallet, then try again.';
 const isHex = (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
-
-/// Collection Z's species share one index space (§86.1).
-const CAVE_Z = '024277b607ce4edbf78fe2855aba562096d00264729168bd0ddea71bdf5b5f1e';
-export function itemName(collection, serial) {
-  if (collection !== CAVE_Z) return `${collection.slice(0, 6)}… #${serial}`;
-  const [species, start] = serial < 2222 ? ['Mole', 0] : serial < 3555 ? ['Owl', 2222] : ['Moth', 3555];
-  return `Zyn ${species} #${String(serial - start + 1).padStart(4, '0')}`;
-}
 
 /// The sale a site asks about: Collection Z unless it names another.
 function saleCollection(p) {
@@ -828,16 +823,18 @@ export const METHODS = {
         zec: { asset: ctx.config.zecAsset, zcash: ctx.config.zcash },
         bridges: st.bridges.map((b) => ({
           key: b.key, symbol: b.symbol, zy: b.zy, chainName: b.chainName, decimals: b.decimals, network: b.network, asset: b.asset,
-          live: b.live, issued: b.issued === null ? null : String(b.issued),
+          live: b.live, waiting: b.waiting || null, issued: b.issued === null ? null : String(b.issued),
           vault: b.vault || null, rpc: b.rpc || null, cluster: b.cluster || null, chainId: b.chainId || null, explorer: b.explorer || null,
           capWei: b.capWei || null, custody: b.custody || null, safe: b.safe || null, chain: b.chain || null,
+          token: b.token || null, assetId: b.assetId || null, faucet: !!b.faucet,
         })),
       };
     },
   },
 
   /// What to send, for a deposit into this wallet: SOL a memo, ETH the
-  /// calldata, BTC an address (watched from now), ZEC this account's
+  /// calldata, an ERC-20 (BOLD) the code and, given an amount, its approve
+  /// and deposit calls, BTC an address (watched from now), ZEC this account's
   /// deposit address. The code names nobody; the other chain sees the sender.
   zyn_bridgeDeposit: {
     kind: 'read',
@@ -851,8 +848,33 @@ export const METHODS = {
       const b = bridges.bridgesOf(ctx.config).find((x) => x.key === key);
       if (!b) throw bad(`No ${key.toUpperCase() || 'such'} bridge on this network`);
       if (key === 'btc') return { key, address: await bridges.btcDepositAddress(ctx.config, ctx.identity, b) };
+      if (b.token) {
+        // A token the chain does not list, or its vault has not registered,
+        // would be stuck in the vault: no code for it until both have.
+        const live = (await bridges.bridgeState(ctx.config)).bridges.find((x) => x.key === key);
+        if (!live?.live) throw bad(live?.waiting === 'vault' ? `The vault does not take ${b.symbol} yet` : `${b.symbol} deposits are not open on this network yet`);
+      }
       const code = await bridges.depositCode(ctx.config, ctx.identity);
       if (key === 'sol') return { key, memo: `zyn:${code}`, vault: b.vault, rpc: b.rpc, cluster: b.cluster };
+      if (b.token) {
+        // An ERC-20 (BOLD): two transactions from the holder's wallet —
+        // approve the vault for the amount, then deposit(code, assetId, amount).
+        const out = { key, to: b.vault, token: b.token, chainId: b.chainId, assetId: b.assetId, decimals: b.decimals, code };
+        if (p?.amount == null) return out;
+        const raw = amountOf(p.amount, 'amount');
+        const scale = 10n ** BigInt(18 - b.decimals);
+        if (raw % scale !== 0n) throw bad(`${b.symbol} has ${b.decimals} decimal places`);
+        const word = (v) => BigInt(v).toString(16).padStart(64, '0');
+        const sel = (sig) => hex(keccak_256(new TextEncoder().encode(sig)).slice(0, 4));
+        return {
+          ...out,
+          amount: String(raw / scale),
+          calls: [
+            { to: b.token, data: `0x${sel('approve(address,uint256)')}${word(BigInt(b.vault))}${word(raw / scale)}` },
+            { to: b.vault, data: `0x${sel('deposit(bytes32,uint32,uint256)')}${code}${word(b.assetId)}${word(raw / scale)}` },
+          ],
+        };
+      }
       const asset = new Uint8Array(32);
       new DataView(asset.buffer).setUint32(28, Number(b.assetId || 1));
       const selector = hex(keccak_256(new TextEncoder().encode('depositNative(bytes32,uint32)')).slice(0, 4));
@@ -860,7 +882,7 @@ export const METHODS = {
     },
   },
 
-  /// SOL.zy / ETH.zy / BTC.zy / ZEC.zy back to their chain.
+  /// SOL.zy / ETH.zy / BOLD.zy / BTC.zy / ZEC.zy back to their chain.
   zyn_bridgeWithdraw: {
     kind: 'write',
     async prepare(ctx, p) {

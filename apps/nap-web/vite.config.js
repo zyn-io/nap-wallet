@@ -1,5 +1,6 @@
-// Two pages, one origin: the wallet and the market share the kept key, the
-// chain route and the content policy, so neither is a second place to trust.
+// The wallet's pages, one origin: the full view, the compact wallet and the
+// connect window share the kept key, the chain route and the content policy,
+// so none is a second place to trust.
 import { defineConfig } from 'vite';
 
 const devProxy = () => {
@@ -41,8 +42,8 @@ export default defineConfig(({ mode }) => ({
     // fails the build instead of the phone.
     target: ['safari16', 'chrome103', 'firefox114'],
     rollupOptions: {
-      // The compact wallet: the extension's toolbar popup and the phone app's home.
-      input: { wallet: 'index.html', market: 'market.html', connect: 'connect.html', bridge: 'bridge.html', ...(mode === 'extension' || mode === 'mobile' ? { popup: 'popup.html' } : {}) },
+      // popup.html, the compact wallet: the extension's toolbar popup and the phone app's home.
+      input: { wallet: 'index.html', connect: 'connect.html', ...(mode === 'extension' || mode === 'mobile' ? { popup: 'popup.html' } : {}) },
     },
   },
   // Local development only: `NAP_DEV_RPC=http://127.0.0.1:8399 npm run dev`

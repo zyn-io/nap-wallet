@@ -1,7 +1,7 @@
 // The object ledger, as the wallet's pages talk to it: one JSON-RPC call,
 // the holder's own view of what they hold, and signing an intent.
 //
-// Shared by Nap Market and the connect window. Two copies of the claim-id
+// Shared by the wallet, the connect window and the embedded core. Two copies of the claim-id
 // derivation or the nonce counter would drift, and a drift here is money the
 // wallet can no longer find — so there is one.
 
@@ -184,14 +184,16 @@ export async function loadBridged(config) {
 
 /// A bridged asset's name from its origin (§146): the network's own coin is
 /// SOL.zy, ETH.zy, BTC.zy or mzBTC.zy; a token bridged from it takes the symbol the deployment
-/// gives its mint, else its short address.
+/// gives its mint or contract (BOLD.zy), else its short address.
 export function bridgedName(config, b) {
   const short = (h) => `${h.slice(0, 8)}…`;
   if (b.origin) {
     const token = b.network.startsWith('solana') && (config.bridges?.sol?.tokens || []).find((t) => {
       try { return hex(b58decode(String(t.mint))) === b.origin; } catch { return false; }
     });
-    return `${token ? String(token.symbol) : short(b.origin)}.zy`;
+    // An ERC-20 into the EVM vault (BOLD, §68), by the symbol the deployment gives it.
+    const erc20 = b.network === `eip155:${config.bridges?.eth?.chainId}` && (config.bridges?.eth?.tokens || []).find((t) => String(t.address || '').slice(2).toLowerCase() === b.origin);
+    return `${token ? String(token.symbol) : erc20 ? String(erc20.symbol) : short(b.origin)}.zy`;
   }
   if (b.network.startsWith('solana')) return 'SOL.zy';
   // BTC through Mezo (testnet 31611, mainnet 31612) is its own asset (§158).

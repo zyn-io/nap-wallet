@@ -1,8 +1,10 @@
 # Nap Web
 
-Browser-first, non-custodial Nap for Zyn accounts, NFT claims, verified media,
-one-item transfers, ZEC in and out of the object ledger (deposit address,
-Take ZEC out), the market (`/market.html`) — and a shielded **Zcash wallet**:
+Browser-first, non-custodial Nap: a wallet. Zyn coins with what each is worth,
+items with their verified pictures, sends, ZEC in and out of the object ledger
+(deposit address, withdrawal), payouts collected as they come due, approvals
+for the sites that use it (Nap Connect: `/connect.html`) — and a shielded
+**Zcash wallet**:
 the desktop wallet's own core (`zec-core/`, Rust → WebAssembly) syncs, receives
 and proves payments in a Web Worker, reaching the block server through the
 same-origin `/zec/<network>` function (DECISIONS §139). The same phrase opens
@@ -27,28 +29,25 @@ By default nothing is persisted: the 24-word phrase and its derived Ed25519
 seed exist only in the live page, and locking, closing, or reloading the tab
 forgets them.
 
-## Market
+## A wallet, not a market
 
-`/market.html` is Nap Market: swap, pools, launchpad and "owed to you" for the
-object ledger (DECISIONS §137). It is a second page of this site rather than a
-second site, so it opens the same kept wallet with the same password, reaches
-the chain through the same `/rpc` route and ships under the same CSP.
+Lending, bridging (SOL, ETH, BTC, BOLD), the launchpad and the Collection Z
+store and sale are sites — Zyn Lend, Jade, Cave — that ask Nap to approve what
+they do, the way a site asks MetaMask or Phantom. Nap lists them under Apps.
+`/market.html` and `/bridge.html` are gone; `public/_redirects` sends old
+links to Jade and to Zyn Lend's Bridge.
 
-- **Swaps are orders in a batch.** They clear at the epoch's seal, every order
-  in a pool at one price; the quote shown is what an order would get alone,
-  and the signed minimum is below it by the chosen tolerance.
-- **What the market owes is collected, not pushed.** Proceeds, refunds, pool
-  shares and allocations are claims. Their ids derive from nonces this wallet
-  derives from its key and a counter (`nap.market.n.<chain>.<account>` in
-  `localStorage` — a counter, not a secret), so a restored wallet finds them
-  again by walking the counter.
-- **Encoders are held to Rust bytes.** `src/market.js` builds every market
-  intent and id; `tests/market.test.mjs` checks each against the `market`
-  section of the shared fixture, which `zyn-object-vectors` prints.
-- **Everything the node says is shape-checked** before it reaches markup, and
-  a launch's creator-chosen name is decoded strictly and escaped.
-
-Try it locally against a devnet node: RUNBOOK §5f-decies.
+- **Worth** is in dollars at the prices posted on Zyn for its lending markets
+  (`zyn_lendMarkets`); a lending share is valued at its pool's share price. A
+  coin with no posted price shows none.
+- **Pictures.** Collection Z's image hashes ship with Nap in
+  `public/art/<collection>.bin` (4,444 × 32 bytes, serial order, from
+  cavebro.win/collection-z.json). A picture is fetched from `/media/<hash>`
+  only after the holder turns on Show artwork, and shown only if its bytes
+  hash to that name and it is a PNG of sane size (`src/items.js`).
+- **What is owed is collected, not pushed.** Swaps and loans made on sites pay
+  out as claims, and coins bridged in through a site wait under this wallet's
+  one-time codes; Nap collects both when it reads the ledger.
 
 ## Keeping a wallet on a device
 
@@ -140,7 +139,5 @@ Serve `Content-Security-Policy` as an HTTP header with `frame-ancestors 'none'`
 `Referrer-Policy: no-referrer`, and `Cache-Control: no-store` on HTML/config and
 RPC/claim responses. Never cache claim URLs or deploy third-party scripts.
 
-Local UI regression fixture, with independent signature verification and no
-real funds: `npm run build`, then `node tests/fixture-server.mjs`, then open
-`http://127.0.0.1:4174/`. Use only the public test mnemonic in the test suite.
+Use only the public test mnemonic in the test suite.
 See [release status and runbook](../../docs/NAP-RELEASE.md).

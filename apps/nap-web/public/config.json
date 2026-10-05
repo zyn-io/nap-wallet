@@ -36,7 +36,16 @@
           "explorer": "https://etherscan.io/tx/{tx}",
           "capWei": "10000000000000000",
           "custody": "2-of-3 Safe",
-          "safe": "0xEE741530abB9eaD1C7d6E9C58E5Df0D43F39b983"
+          "safe": "0xEE741530abB9eaD1C7d6E9C58E5Df0D43F39b983",
+          "vaultRpc": "/eth/mainnet",
+          "tokens": [
+            {
+              "symbol": "BOLD",
+              "address": "0x6440f144b7e50D6a8439336510312d2F54beB01D",
+              "decimals": 18,
+              "assetId": 2
+            }
+          ]
         }
       }
     },
@@ -74,7 +83,16 @@
           "chainId": 11155111,
           "vault": "0xe17bb5943b34133f6a8a5D221BE4eD9493B3ef27",
           "assetId": 1,
-          "explorer": "https://sepolia.etherscan.io/tx/{tx}"
+          "explorer": "https://sepolia.etherscan.io/tx/{tx}",
+          "tokens": [
+            {
+              "symbol": "BOLD",
+              "address": "0xD58C9e3EeBE83fda55D59C186E86b37aa5d0f79a",
+              "decimals": 18,
+              "assetId": 2,
+              "faucet": true
+            }
+          ]
         },
         "btc": {
           "network": "signet",

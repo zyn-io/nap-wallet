@@ -56,13 +56,19 @@ const bytesOf = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => pars
 export const keyringId = (signature) => hexOf(label('zyn-keyring.id.v2', signature));
 const wrapKey = (signature) => label('zyn-keyring.wrap.v2', signature);
 
+/// Where the keyring is asked: `config.keyringUrl` when set, else the chain.
+/// The entry is the account's words sealed under the signature, so one
+/// keyring serves every network: a site that points each network's config at
+/// the same keyring links a wallet to the same account on all of them.
+const keyring = (config) => (config.keyringUrl && config.keyringUrl !== config.rpcUrl ? { ...config, rpcUrl: config.keyringUrl } : config);
+
 /// The words this signature opens: the account it is linked to, if any,
 /// else its own (`linked` says which).
 export async function wordsFor(config, signature) {
   // "Not linked" opens the wallet's own account; "cannot tell" must not, or
   // a linked wallet would quietly open an empty account of its own. A node
   // without a keyring yet is the first.
-  const entry = await call(config, 'zyn_keyringGet', { key: keyringId(signature) }).catch((e) => {
+  const entry = await call(keyring(config), 'zyn_keyringGet', { key: keyringId(signature) }).catch((e) => {
     if (/does not serve zyn_keyring/.test(e.message)) return null;
     throw new Error(`The Zyn keyring did not answer (${e.message}); try again shortly`);
   });
@@ -82,14 +88,14 @@ export async function link(config, identity, words, signature) {
   const blob = new Uint8Array([...nonce, ...sealed]);
   const id = keyringId(signature);
   const digest = sha256(new Uint8Array([...te.encode('zyn-keyring.put.v1'), ...bytesOf(id), ...blob]));
-  await call(config, 'zyn_keyringPut', { key: id, blob: hexOf(blob), account: hexOf(identity.publicKey), signature: hexOf(ed.sign(digest, identity.secretKey)) });
+  await call(keyring(config), 'zyn_keyringPut', { key: id, blob: hexOf(blob), account: hexOf(identity.publicKey), signature: hexOf(ed.sign(digest, identity.secretKey)) });
 }
 
 /// Undo `link` for the wallet that made `signature`.
 export async function unlink(config, identity, signature) {
   const id = keyringId(signature);
   const digest = sha256(new Uint8Array([...te.encode('zyn-keyring.delete.v1'), ...bytesOf(id)]));
-  await call(config, 'zyn_keyringDelete', { key: id, account: hexOf(identity.publicKey), signature: hexOf(ed.sign(digest, identity.secretKey)) });
+  await call(keyring(config), 'zyn_keyringDelete', { key: id, account: hexOf(identity.publicKey), signature: hexOf(ed.sign(digest, identity.secretKey)) });
 }
 
 /// The 24 words a signature opens: the same signature, the same words.
@@ -184,9 +190,17 @@ export function identityFromSignature(signature) {
 }
 
 /// Nap's settings for network `id`, with the ledger reached at `rpcUrl` (a
-/// site calls the node directly, not through Nap's own paths).
-export function networkConfig(id, rpcUrl) {
+/// site calls the node directly, not through Nap's own paths). Options:
+/// `keyringUrl`, where linked wallets are looked up (default: `rpcUrl`);
+/// `ethRpcUrl`, an Ethereum endpoint for the vault registry read in place of
+/// Nap's own relay path (which a site cannot reach).
+export function networkConfig(id, rpcUrl, { keyringUrl, ethRpcUrl } = {}) {
   const n = CONFIG.networks.find((x) => x.id === id);
   if (!n) throw new Error(`No network ${id}`);
-  return { ...n, rpcUrl, lightdUrl: null };
+  const out = { ...n, rpcUrl, keyringUrl: keyringUrl || rpcUrl, lightdUrl: null };
+  if (n.bridges?.eth?.vaultRpc) {
+    // Without a reachable endpoint the read fails, and the token stays shut.
+    out.bridges = { ...n.bridges, eth: { ...n.bridges.eth, vaultRpc: ethRpcUrl || '' } };
+  }
+  return out;
 }

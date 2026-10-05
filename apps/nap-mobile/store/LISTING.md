@@ -10,15 +10,15 @@ feature graphic, 512×512 icon). The app icon itself is
 **Name:** Nap Wallet
 **Subtitle** (App Store, ≤30): Private Zcash & Zyn wallet
 **Short description** (Play, ≤80): Shielded ZEC and Zyn tokens. Your keys stay on your phone.
-**Promotional text** (App Store, ≤170): Shielded ZEC, Zyn tokens and items, and Nap Market's one-price batches — in a wallet whose keys never leave your phone.
+**Promotional text** (App Store, ≤170): Shielded ZEC, Zyn coins and items, and approvals for the apps that use Zyn — in a wallet whose keys never leave your phone.
 
 **Description:**
 
 Nap Wallet is a private wallet for Zcash and Zyn.
 
 • Shielded ZEC — receive at your own shielded address and send from it. The Zcash wallet runs on your phone and scans the chain itself.
-• Zyn tokens and items — ZEC.zy, bridged SOL.zy and ETH.zy, launchpad tokens, pool shares and collectibles, in one pocket.
-• Nap Market — swap and provide liquidity in batches: everyone trading in an epoch pays one price, so nobody can jump the queue.
+• Zyn coins and items — ZEC.zy, bridged SOL.zy and ETH.zy, and the rest, with what each is worth; collectibles with their pictures.
+• Apps — Zyn Lend, Jade and the Cave store open in the Nap browser. Nap shows what each one asks and signs only what you approve.
 
 Your keys stay on your phone. Nap never stores your recovery phrase; if you keep the wallet on this phone, the key is sealed under a password you set. No account, no email, no analytics.
 
@@ -47,7 +47,7 @@ The same recovery phrase opens Nap on the web at nap.zyn-network.com and in the 
 ## Before submitting — decisions and risks
 
 1. **Organization accounts.** Apple requires crypto wallets to be published by an organization (guideline 3.1.5(i)); that needs a D-U-N-S number, which takes days to issue. Google Play: a new *personal* developer account must run a closed test with at least 12 testers for 14 days before it can publish to production; an organization account skips that.
-2. **Exchange features on iOS.** Guideline 3.1.5(iii) allows exchange functionality only from licensed exchanges. Nap Market's swaps and the launchpad are on-chain and non-custodial, but a reviewer may still read them as an exchange. If review objects, the fallback is an iOS build without the Market tab (wallet, receive, send, items) — say so in the review notes up front.
+2. **Exchange features on iOS.** Guideline 3.1.5(iii) allows exchange functionality only from licensed exchanges. Nap has no swap or market screen of its own (removed 5 Oct); sites opened in the Nap browser can ask it to sign trades, as in any wallet's dApp browser. Say so in the review notes up front.
 3. **"Just a website?"** (guideline 4.2). The app bundles its own pages and holds keys on the device, which is a real app, but a Face ID / fingerprint unlock (Keychain / Keystore) would make that obvious and is worth doing before the first submission.
 4. **Encryption export compliance** (App Store): the wallet uses standard cryptography (Ed25519, X25519, AES-GCM, Zcash's Orchard/Sapling) beyond HTTPS. That usually qualifies for the mass-market exemption; confirm, then set `ITSAppUsesNonExemptEncryption` accordingly in the Info.plist.
 5. **Review notes:** give reviewers a testnet recovery phrase with funds (switch the network pill to testnet) so they can see balances and a swap without real money.

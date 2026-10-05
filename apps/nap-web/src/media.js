@@ -52,6 +52,13 @@ export async function boundedBytes(url, max) {
   return bytes;
 }
 
+/// A PNG's own width and height, from its IHDR, or null for anything else.
+export function pngSize(bytes) {
+  if (bytes.length < 24 || hex(bytes.slice(0, 8)) !== '89504e470d0a1a0a' || decoder.decode(bytes.slice(12, 16)) !== 'IHDR') return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
 export function safeRaster(media, bytes) {
   if (!media.width || !media.height || media.width > 4096 || media.height > 4096 || media.bytes > MAX_IMAGE) return false;
   // No SVG/HTML or script-capable media, even when correctly committed.

@@ -9,7 +9,7 @@ const at = (href) => new URL(href);
 
 test('the old host links the same page on the new one', () => {
   assert.equal(movedLink(at('https://nap.cavebro.win/')), 'https://nap.zyn-network.com/');
-  assert.equal(movedLink(at('https://nap.cavebro.win/market.html?network=testnet#swap')), 'https://nap.zyn-network.com/market.html?network=testnet#swap');
+  assert.equal(movedLink(at('https://nap.cavebro.win/connect.html?network=testnet#x')), 'https://nap.zyn-network.com/connect.html?network=testnet#x');
   assert.equal(OLD_HOST, 'nap.cavebro.win');
   assert.equal(NEW_ORIGIN, 'https://nap.zyn-network.com');
 });
@@ -23,8 +23,8 @@ test('no notice on the new host, a preview or a packaged build', () => {
   assert.equal(movedLink(at('https://nap.cavebro.win/'), true), null);
 });
 
-test('the full pages load the notice; the packaged-only popup does not', () => {
-  for (const f of ['app.js', 'market-app.js', 'bridge-app.js']) {
+test('the full view loads the notice; the packaged-only popup does not', () => {
+  for (const f of ['app.js']) {
     assert.match(readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8'), /import '\.\/moved-banner\.js';/, f);
   }
   assert.doesNotMatch(readFileSync(new URL('../src/popup-app.js', import.meta.url), 'utf8'), /moved-banner/);

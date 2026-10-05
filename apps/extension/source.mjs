@@ -10,7 +10,7 @@ const STAGE = 'release/source';
 rmSync(STAGE, { recursive: true, force: true });
 mkdirSync(`${STAGE}/apps`, { recursive: true });
 
-const web = ['index.html', 'market.html', 'bridge.html', 'connect.html', 'vite.config.js', 'package.json', 'package-lock.json', '.env.extension', 'public', 'src', 'zec-core/Cargo.toml', 'zec-core/Cargo.lock', 'zec-core/build.sh', 'zec-core/src'];
+const web = ['index.html', 'popup.html', 'connect.html', 'vite.config.js', 'package.json', 'package-lock.json', '.env.extension', 'public', 'src', 'zec-core/Cargo.toml', 'zec-core/Cargo.lock', 'zec-core/build.sh', 'zec-core/src'];
 for (const f of web) cpSync(`../nap-web/${f}`, `${STAGE}/apps/nap-web/${f}`, { recursive: true });
 for (const f of ['build.mjs', 'package.json', 'src', 'icons']) cpSync(f, `${STAGE}/apps/extension/${f}`, { recursive: true });
 
@@ -28,7 +28,7 @@ The add-on is \`apps/extension/dist-firefox/\` (and zipped as
 
 ## What is built from what
 
-- \`apps/nap-web\` — the wallet (Vite). \`npm run build:extension\` builds its four
+- \`apps/nap-web\` — the wallet (Vite). \`npm run build:extension\` builds its three
   pages with \`VITE_NAP_API=https://nap.zyn-network.com\` (\`.env.extension\`), the
   one server the add-on talks to (\`src/origin.js\`).
 - \`apps/extension\` — \`build.mjs\` copies those pages next to the extension's

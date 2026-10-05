@@ -1,10 +1,13 @@
 // Nap in the toolbar — the extension's popup, a wallet in 360 × 600 — and
 // the phone app's home screen, the same wallet full screen.
 //
-// It opens on what matters — the balance, four actions, what is held — and
-// does the everyday things in place: receive, send, switch network, lock.
-// Setting a wallet up (24 words want room) and the market and bridge open in
-// a tab, the way other toolbar wallets do it. The unlocked keys live in the
+// It opens on what matters — the balance, what is held and what it is worth,
+// the items with their pictures — and does the everyday things in place:
+// receive, send, shield, switch network, lock. What swaps and loans on sites
+// pay out, and coins bridged in through a site, it collects by itself.
+// Lending, bridging, the launchpad and the store are sites (Apps), which ask
+// Nap to approve what they do. Setting a wallet up (24 words want room)
+// opens in a tab, the way other toolbar wallets do it. The unlocked keys live in the
 // browser's memory-only session store (session.js), so reopening the popup
 // does not ask for the password again until it has sat idle. On the phone
 // there is no tab to hand setup to, so it happens here; Face ID or a
@@ -12,10 +15,11 @@
 import QRCode from 'qrcode';
 import { deriveCollectionAccount, deriveIdentity, forgetIdentity, newMnemonic, openSealedWallet, parseAmount, sealWallet, unhex, WAD } from './core.js';
 import { deriveZecKeys, stopZec, ZecAccount } from './zec/client.js';
-import { API_ORIGIN, IN_APP } from './origin.js';
+import { IN_APP } from './origin.js';
 import { parsePaymentRequest } from './zip321.js';
-import { bridgePage, handoffUrl } from './bridges.js';
-import { activity, bridgeOut, bridgesOf, bridgeState, btcDepositAddress, checkBridgeOut, chooseNetwork, claimDeposits, collectOwed, depositAddress, depositCode, loadConfig, loadPocket, logActivity, payOnZyn, placeSwap, quoteSwap, resolveRecipient, revealBridgeExits, revealExits, withdrawZec } from './pocket.js';
+import { activity, bridgesOf, chooseNetwork, claimDeposits, collectOwed, depositAddress, loadConfig, loadPocket, loadPrices, logActivity, payOnZyn, resolveRecipient, revealBridgeExits, revealExits, usdText, withdrawZec } from './pocket.js';
+import { artOn, caveLink, fillArt, setArtOn } from './items.js';
+import { appsFor } from './apps.js';
 import { endSession, loadSession, saveSession } from './session.js';
 import { installTips, tip } from './tip.js';
 import './popup.css';
@@ -47,6 +51,7 @@ let identity = null;
 let receiving = [];
 let pocket = null; // { epoch, coins, items, held }
 let pocketError = '';
+let usdOf = () => null; // (asset, amount) → dollars (WAD), at the prices posted on Zyn
 let zec = null; // ZecAccount
 let zecView = null;
 let zecPlan = null; // what is on the transparent address, and what shielding it lands
@@ -73,12 +78,6 @@ function wadText(v, places = 6) {
   const frac = (v % WAD).toString().padStart(18, '0').slice(0, places).replace(/0+$/, '');
   return frac ? `${whole}.${frac}` : whole;
 }
-/// A tiny amount stays readable: more places until a digit shows.
-function amtText(v) {
-  if (v === 0n) return '0';
-  for (const places of [6, 10, 14, 18]) { const t = wadText(v, places); if (/[1-9]/.test(t)) return t; }
-  return wadText(v, 18);
-}
 function zatOf(text) {
   if (!/^\d+(\.\d{1,8})?$/.test(text)) throw new Error('Enter an amount in ZEC, up to eight decimals');
   const [w, f = ''] = text.split('.');
@@ -101,14 +100,16 @@ async function copy(text, what) {
   try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { toast('Could not copy', true); }
 }
 
-/// Open one of Nap's pages in a tab and close the popup behind it — or, in
-/// the phone app, go to it.
-/// A page on another site (the lending app's Bridge tab).
+/// A site: in the phone app, in the Nap browser beside the wallet; elsewhere
+/// in a tab.
 function openUrl(url) {
+  if (IN_APP && napBrowser) { napBrowser.openBrowser(url).catch((e) => toast(String(e).slice(0, 120), true)); return; }
   if (globalThis.chrome?.tabs?.create) chrome.tabs.create({ url }); else window.open(url, '_blank', 'noopener');
   if (!IN_APP) window.close();
 }
 
+/// Open one of Nap's pages in a tab and close the popup behind it — or, in
+/// the phone app, go to it.
 function openTab(path) {
   if (IN_APP) { location.href = `/${path}`; return; }
   const url = globalThis.chrome?.runtime?.getURL ? chrome.runtime.getURL(path) : path;
@@ -141,8 +142,7 @@ function tokenDisc(el, symbol) {
 const ICON = {
   receive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v13M6 11l6 6 6-6M5 20h14"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V7M6 13l6-6 6 6M5 4h14"/></svg>',
-  swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v14M3 14l4 4 4-4M17 20V6M13 10l4-4 4 4"/></svg>',
-  bridge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h18M5 17v-4a7 7 0 0 1 14 0v4M9 17v-3M15 17v-3"/></svg>',
+  apps: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>',
   back: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   menu: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
@@ -361,8 +361,7 @@ function home() {
       <nav class="actions">
         <button class="act" id="a-receive"><span>${ICON.receive}</span>Receive</button>
         <button class="act" id="a-send"><span>${ICON.send}</span>Send</button>
-        <button class="act" id="a-swap"><span>${ICON.swap}</span>Swap</button>
-        <button class="act" id="a-bridge"><span>${ICON.bridge}</span>Bridge</button>
+        <button class="act" id="a-apps"><span>${ICON.apps}</span>Apps</button>
         ${IN_APP ? `<button class="act" id="a-browse"><span>${ICON.browse}</span>Browser</button>` : ''}
       </nav>
       <div class="tabs" role="tablist">
@@ -379,8 +378,7 @@ function home() {
   $('#a-receive').onclick = () => receive();
   $('#zec-shield').onclick = () => shieldReview();
   $('#a-send').onclick = () => sendPick();
-  $('#a-swap').onclick = () => swap();
-  $('#a-bridge').onclick = () => bridge();
+  $('#a-apps').onclick = () => appsSheet();
   $('#a-browse')?.addEventListener('click', () => (napBrowser ? napBrowser.openBrowser('').catch((e) => toast(String(e).slice(0, 120), true)) : toast('The browser is not available here', true)));
   pop.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; pop.querySelectorAll('[data-tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b))); renderPanel(); }; });
   renderZec();
@@ -434,7 +432,9 @@ function renderPanel() {
   else panel.innerHTML = activityHtml();
   panel.querySelectorAll('.tok[data-sym]').forEach((el) => tokenDisc(el, el.dataset.sym));
   panel.querySelectorAll('[data-coin]').forEach((el) => { el.onclick = () => sendForm(assetOptions().find((o) => o.key === el.dataset.coin)); });
-  panel.querySelectorAll('[data-item]').forEach((el) => { el.onclick = () => sendForm(assetOptions().find((o) => o.key === `item:${el.dataset.item}`)); });
+  panel.querySelectorAll('[data-item]').forEach((el) => { el.onclick = () => itemView(pocket.items.find((i) => i.asset === el.dataset.item)); });
+  $('#art-on')?.addEventListener('change', (e) => { setArtOn(e.target.checked); renderPanel(); });
+  fillArt(config, panel);
   $('#reveal-old')?.addEventListener('click', () => openTab('index.html'));
 }
 
@@ -442,24 +442,36 @@ function tokensHtml() {
   const rows = [];
   if (identity.zec) {
     const held = zecView ? zecView.balance.orchard + zecView.balance.ironwood : null;
-    rows.push(`<li><button class="row" data-coin="zec"><span class="tok" data-sym="ZEC">Z</span><span class="who"><b>ZEC</b><span>Zcash · shielded</span></span><span class="val"><b>${held === null ? '…' : esc(zecText(held))}</b><span class="teal">private</span></span></button></li>`);
+    const usd = held ? usdText(usdOf(config.zecAsset, BigInt(held) * 10_000_000_000n)) : '';
+    rows.push(`<li><button class="row" data-coin="zec"><span class="tok" data-sym="ZEC">Z</span><span class="who"><b>ZEC</b><span>Zcash · shielded</span></span><span class="val"><b>${held === null ? '…' : esc(zecText(held))}</b><span>${esc(usd)}</span></span></button></li>`);
   }
   if (pocketError) rows.push(`<li class="empty"><b>Zyn is not answering.</b>${esc(pocketError)}</li>`);
   else if (!pocket) rows.push('<li class="skeleton"></li><li class="skeleton"></li>');
   else {
     for (const c of pocket.coins) {
-      rows.push(`<li><button class="row" data-coin="${esc(c.asset)}"><span class="tok" data-sym="${esc(c.symbol)}">${esc(c.symbol.replace(/^LP /, '').slice(0, 1))}</span><span class="who"><b>${esc(c.symbol)}</b><span>${esc(c.origin === 'Zyn' ? 'on Zyn' : `${c.origin} · on Zyn`)}</span></span><span class="val"><b>${esc(wadText(c.amount))}</b><span>${esc(config.network)}</span></span></button></li>`);
+      rows.push(`<li><button class="row" data-coin="${esc(c.asset)}"><span class="tok" data-sym="${esc(c.symbol)}">${esc(c.symbol.replace(/^LP /, '').slice(0, 1))}</span><span class="who"><b>${esc(c.symbol)}</b><span>${esc(c.origin === 'Zyn' ? 'on Zyn' : `${c.origin} · on Zyn`)}</span></span><span class="val"><b>${esc(wadText(c.amount))}</b><span>${esc(usdText(usdOf(c.asset, c.amount)))}</span></span></button></li>`);
     }
     if (pocket.old) rows.push('<li class="empty"><b>Balances need your phrase once.</b>This wallet was kept before the object ledger. <button class="link" id="reveal-old">Open the full view</button></li>');
   }
-  return `<ul class="rows">${rows.join('')}</ul>`;
+  const total = totalUsd();
+  return `${total ? `<p class="total">Total ${esc(total)}${tip('In dollars at the prices posted on Zyn for its lending markets. Coins with no posted price are not counted.')}</p>` : ''}<ul class="rows">${rows.join('')}</ul>`;
+}
+
+/// What everything listed is worth, as text; '' when nothing has a price.
+function totalUsd() {
+  let sum = 0n, any = false;
+  const add = (v) => { if (v != null) { sum += v; any = true; } };
+  if (zecView) add(usdOf(config.zecAsset, BigInt(zecView.balance.orchard + zecView.balance.ironwood) * 10_000_000_000n));
+  for (const c of pocket?.coins || []) if (c.amount > 0n) add(usdOf(c.asset, c.amount));
+  return any && sum > 0n ? usdText(sum) : '';
 }
 
 function itemsHtml() {
   if (pocketError) return `<div class="empty"><b>Zyn is not answering.</b>${esc(pocketError)}</div>`;
   if (!pocket) return '<div class="grid"><div class="skeleton"></div><div class="skeleton"></div></div>';
   if (!pocket.items.length) return '<div class="empty"><img src="/nap-mark.png" alt=""><b>No items yet.</b>What you buy in the Cave store, or collect at an event, lands here.</div>';
-  return `<div class="grid">${pocket.items.map((i) => `<button class="card" data-item="${esc(i.asset)}"><div class="art"><img src="/nap-mark.png" alt=""></div><div><b>${esc(i.name)}</b><span>send →</span></div></button>`).join('')}</div>`;
+  return `<label class="art-on"><input type="checkbox" id="art-on"${artOn() ? ' checked' : ''}><span>Show artwork<small>Nap's media gateway then sees your IP address and which items you hold.</small></span></label>
+    <div class="grid">${pocket.items.map((i) => `<button class="card" data-item="${esc(i.asset)}"><div class="art"><img src="/nap-mark.png" alt="" data-art="${esc(i.collection)}:${Number(i.serial)}"></div><div><b>${esc(i.name)}</b><span>${esc(i.collectionName || '')}</span></div></button>`).join('')}</div>`;
 }
 
 function activityHtml() {
@@ -467,7 +479,7 @@ function activityHtml() {
   const shieldTx = new Set(activity(config, identity).filter((a) => a.kind === 'shield').map((a) => a.tx));
   const received = (zecView?.notes || []).filter((n) => !shieldTx.has(n.txid)).slice(0, 20).map((n) => `<li class="row"><span class="tok" data-sym="ZEC">↓</span><span class="who"><b>Received ZEC</b><span>block ${Number(n.height).toLocaleString('en-US')}</span></span><span class="val"><b>+${esc(zecText(n.zatoshi))}</b><span class="teal">shielded</span></span></li>`);
   const all = [...mine, ...received];
-  return all.length ? `<ul class="rows">${all.join('')}</ul>` : '<div class="empty"><b>Nothing yet.</b>Sends from this wallet and ZEC it receives show up here. Zyn keeps no public history of your account — that is the point.</div>';
+  return all.length ? `<ul class="rows">${all.join('')}</ul>` : '<div class="empty"><b>Nothing yet.</b>Sends, shields and collected payouts from this device, and ZEC received, show here.</div>';
 }
 
 // ---------------------------------------------------------------------------
@@ -477,9 +489,9 @@ async function refresh() {
   const g = generation;
   clearTimeout(timer);
   try {
-    const next = await loadPocket(config, identity);
+    const [next, prices] = await Promise.all([loadPocket(config, identity), loadPrices(config)]);
     if (g !== generation) return;
-    pocket = next; pocketError = '';
+    pocket = next; pocketError = ''; usdOf = prices;
     void revealExits(config, identity);
     if (next.owed?.length && !collecting) void collect(next);
     if (bridgesOf(config).length && !collecting) void claimArrived();
@@ -492,7 +504,8 @@ async function refresh() {
   timer = setTimeout(refresh, 20_000);
 }
 
-// Finished swaps pay into claims; the wallet collects them itself.
+// Swaps and loans made on sites pay out as claims; the wallet collects them
+// itself.
 let collecting = false;
 async function collect(p) {
   const g = generation;
@@ -502,13 +515,15 @@ async function collect(p) {
     if (g !== generation) return;
     const byAsset = new Map();
     for (const o of p.owed) byAsset.set(o.asset, (byAsset.get(o.asset) || 0n) + BigInt(o.amount));
-    toast(`Received ${[...byAsset].map(([a, v]) => `${wadText(v)} ${p.nameOf(a)}`).join(', ')}`);
+    const got = [...byAsset].map(([a, v]) => `${wadText(v)} ${p.nameOf(a)}`).join(', ');
+    logActivity(config, identity, { kind: 'in', title: 'Collected', amount: got });
+    toast(`Received ${got}`);
     setTimeout(refresh, 1500);
   } catch { /* tried again on the next pass */ } finally { collecting = false; }
 }
 
-// Bridge deposits land as claims under this wallet's one-time codes; the
-// wallet claims them itself.
+// Coins bridged in through a site land as claims under this wallet's
+// one-time codes; the wallet claims them itself.
 async function claimArrived() {
   const g = generation;
   collecting = true;
@@ -516,7 +531,9 @@ async function claimArrived() {
     const got = await claimDeposits(config, identity);
     if (g !== generation || !got.length) return;
     const zy = Object.fromEntries(bridgesOf(config).map((b) => [b.asset, b.zy]));
-    toast(`Arrived: ${got.map((w) => `${wadText(w.amount)} ${zy[w.asset] || 'coin'}`).join(', ')}`);
+    const text = got.map((w) => `${wadText(w.amount)} ${zy[w.asset] || 'coin'}`).join(', ');
+    logActivity(config, identity, { kind: 'in', title: 'Arrived', amount: text });
+    toast(`Arrived: ${text}`);
     setTimeout(refresh, 1500);
   } catch { /* tried again on the next pass */ } finally { collecting = false; }
 }
@@ -576,25 +593,29 @@ function networkMenu() {
 
 function switchTo(id) {
   config = chooseNetwork(config, id);
-  generation++; clearTimeout(timer); stopZec(); zec = null; zecView = null; zecPlan = null; zecState = ''; pocket = null; pocketError = '';
+  generation++; clearTimeout(timer); stopZec(); zec = null; zecView = null; zecPlan = null; zecState = ''; pocket = null; pocketError = ''; usdOf = () => null;
   home(); refresh(); startZec();
   toast(`Switched to ${config.network}`);
 }
 
 function mainMenu() {
   sheet(`<button data-go="${IN_APP ? 'index.html?full=1' : 'index.html'}">Open full view ${ICON.expand}</button>
-    <button data-go="market.html">Market<span>swap · launch</span></button>
-    ${bridgePage(config) ? `<button data-url="${esc(bridgePage(config))}">Bridge<span>SOL · ETH · BTC · ZEC</span></button>` : '<button data-go="bridge.html">Bridge<span>SOL · ETH · BTC</span></button>'}
     <hr>
     <button id="m-copy">Copy Zyn account id<span>${esc(short(identity.accountHex, 6, 4))}</span></button>
     <button id="m-recovery">Recovery<span>phrase</span></button>
     <hr>
     <button id="m-lock">Lock<span>${IN_APP ? 'this phone' : 'auto after 15 min'}</span></button>`, (el) => {
     el.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => openTab(b.dataset.go); });
-    el.querySelectorAll('[data-url]').forEach((b) => { b.onclick = () => openUrl(b.dataset.url); });
     $('#m-copy', el).onclick = () => { closeSheet(); copy(identity.accountHex, 'Account id'); };
     $('#m-recovery', el).onclick = () => { closeSheet(); recovery(); };
     $('#m-lock', el).onclick = () => { closeSheet(); lock(); };
+  });
+}
+
+/// The sites that use Nap: lending and bridges, the launchpad, the store.
+function appsSheet() {
+  sheet(appsFor(config).map((a) => `<button data-url="${esc(a.url)}">${esc(a.name)}<span>${esc(a.what)}</span></button>`).join(''), (el) => {
+    el.querySelectorAll('[data-url]').forEach((b) => { b.onclick = () => { closeSheet(); openUrl(b.dataset.url); }; });
   });
 }
 
@@ -704,234 +725,18 @@ function shieldReview() {
 }
 
 // ---------------------------------------------------------------------------
-// Swap: pay, receive, one tap. The full market (pools, launchpad) is in the
-// menu; this is the everyday trade.
+// An item: its picture, what it is, and sending it.
 
-let swapPrefs = { pay: null, get: null, slip: 100 };
-let swapping = false;
-
-function swap() {
-  if (!pocket) { toast('Still reading your balances…'); return; }
-  const pools = pocket.pools || [];
-  if (!pools.length) {
-    screen('Swap', `<div class="empty"><img src="/nap-mark.png" alt=""><b>No pools on ${esc(config.network)} yet.</b>Pools and launches are in the full market.</div>`, '<button class="btn ghost" id="w-market">Open the market</button>');
-    $('#w-market').onclick = () => openTab('market.html');
-    return;
-  }
-  const name = pocket.nameOf;
-  const bal = (a) => (pocket.coins.find((c) => c.asset === a)?.amount || 0n);
-  const tokens = [...new Set(pools.flatMap((p) => [p.a, p.b]))];
-  const partners = (a) => [...new Set(pools.filter((p) => p.a === a || p.b === a).map((p) => (p.a === a ? p.b : p.a)))];
-  const poolOf = (a, b) => pools.find((p) => (p.a === a && p.b === b) || (p.a === b && p.b === a));
-  let pay = tokens.includes(swapPrefs.pay) ? swapPrefs.pay : (tokens.find((t) => t === config.zecAsset) || tokens[0]);
-  let get = poolOf(pay, swapPrefs.get) ? swapPrefs.get : partners(pay)[0];
-
-  const s = screen('Swap', `
-    <div class="leg"><div class="leg-top"><span>You pay</span><button type="button" class="bal" id="w-max"></button></div>
-      <div class="leg-row"><input id="w-amt" inputmode="decimal" autocomplete="off" placeholder="0"><button type="button" class="chip" id="w-pay"></button></div></div>
-    <button type="button" class="flip" id="w-flip" aria-label="Flip">${ICON.swap}</button>
-    <div class="leg"><div class="leg-top"><span>You receive, if alone in the batch</span><span id="w-impact"></span></div>
-      <div class="leg-row"><output id="w-out">0</output><button type="button" class="chip" id="w-get"></button></div></div>
-    <div class="facts" id="w-facts"></div>
-    <p class="hint">Every swap in an epoch fills at one price. If it is worse than your minimum, everything you put in comes back.</p>
-    <p class="hint" id="w-err" role="alert"></p>`,
-    '<button class="btn" id="w-go" disabled>Swap</button>');
-  const amt = $('#w-amt', s);
-  let confirmed = '';
-  const chip = (el, a) => { el.innerHTML = `<span class="tok" data-sym="${esc(name(a))}">${esc(name(a).slice(0, 1))}</span>${esc(name(a))}<i>▾</i>`; tokenDisc($('.tok', el), name(a)); };
-  const readAmount = () => { try { return amt.value.trim() ? parseAmount(amt.value.trim().replace(/,/g, '')) : 0n; } catch { return -1n; } };
-  const draw = () => {
-    chip($('#w-pay', s), pay); chip($('#w-get', s), get);
-    $('#w-max', s).textContent = `Balance ${wadText(bal(pay))}`;
-    const pool = poolOf(pay, get);
-    const raw = readAmount();
-    const go = $('#w-go', s), err = $('#w-err', s);
-    err.textContent = ''; err.classList.remove('bad');
-    const q = pool && raw > 0n ? quoteSwap(pool, pool.a === pay, raw, swapPrefs.slip) : null;
-    $('#w-out', s).textContent = q ? amtText(q.out) : '0';
-    $('#w-impact', s).textContent = q && q.impactBps >= 50 ? `${(q.impactBps / 100).toFixed(2)}% below spot` : '';
-    $('#w-impact', s).classList.toggle('bad', !!q && q.impactBps >= 500);
-    confirmed = '';
-    const x = BigInt(pool.reserve_a), y = BigInt(pool.reserve_b);
-    const rate = pool.a === pay ? (y * WAD) / x : (x * WAD) / y;
-    $('#w-facts', s).innerHTML = `<span>Rate</span><b>1 ${esc(name(pay))} ≈ ${esc(amtText(rate))} ${esc(name(get))}</b>
-      ${q ? `<span>Minimum</span><b>${esc(amtText(q.min))} ${esc(name(get))}</b>` : ''}
-      <span>Slippage</span><b class="slips">${[50, 100, 300].map((b) => `<button type="button" data-slip="${b}" class="${swapPrefs.slip === b ? 'on' : ''}">${b / 100}%</button>`).join('')}</b>
-      <span>Pool fee</span><b>${(pool.fee_bps / 100).toFixed(2)}%</b>`;
-    s.querySelectorAll('[data-slip]').forEach((b) => { b.onclick = () => { swapPrefs.slip = Number(b.dataset.slip); draw(); }; });
-    if (raw < 0n) { err.textContent = 'Enter a number'; err.classList.add('bad'); }
-    else if (raw > bal(pay)) { err.textContent = `You have ${wadText(bal(pay))} ${name(pay)}`; err.classList.add('bad'); }
-    go.disabled = swapping || !(q && q.min > 0n && raw <= bal(pay));
-    go.textContent = raw > 0n ? `Swap ${name(pay)} for ${name(get)}` : 'Enter an amount';
-    if (q && q.min <= 0n && raw > 0n) { err.textContent = 'Too small to trade in this pool'; err.classList.add('bad'); }
-  };
-  const pick = (which) => {
-    const list = which === 'pay' ? tokens : partners(pay);
-    sheet(list.map((a) => `<button data-t="${esc(a)}" class="${a === (which === 'pay' ? pay : get) ? 'on' : ''}">${esc(name(a))}<span>${esc(wadText(bal(a)))}</span></button>`).join(''), (el) => {
-      el.querySelectorAll('[data-t]').forEach((b) => {
-        b.onclick = () => {
-          closeSheet();
-          if (which === 'pay') { pay = b.dataset.t; if (!poolOf(pay, get) || get === pay) get = partners(pay)[0]; } else get = b.dataset.t;
-          swapPrefs = { ...swapPrefs, pay, get };
-          draw();
-        };
-      });
-    });
-  };
-  $('#w-pay', s).onclick = () => pick('pay');
-  $('#w-get', s).onclick = () => pick('get');
-  $('#w-flip', s).onclick = () => { [pay, get] = [get, pay]; swapPrefs = { ...swapPrefs, pay, get }; amt.value = ''; draw(); };
-  $('#w-max', s).onclick = () => { amt.value = wadText(bal(pay), 18).replace(/,/g, ''); draw(); };
-  amt.oninput = draw;
-  $('#w-go', s).onclick = async () => {
-    const go = $('#w-go', s), err = $('#w-err', s);
-    const pool = poolOf(pay, get), raw = readAmount();
-    const q0 = quoteSwap(pool, pool.a === pay, raw, swapPrefs.slip);
-    // A swap that moves the pool a lot is asked twice.
-    if (q0.impactBps >= 1500 && confirmed !== amt.value) {
-      confirmed = amt.value;
-      go.textContent = `Confirm: ${(q0.impactBps / 100).toFixed(1)}% below spot`;
-      err.textContent = 'This is a large share of the pool, so it fills far below its price. Press again to swap anyway.';
-      err.classList.add('bad');
-      return;
-    }
-    go.disabled = true; go.textContent = 'Signing…';
-    swapping = true;
-    const g = generation;
-    try {
-      const q = quoteSwap(pool, pool.a === pay, raw, swapPrefs.slip);
-      await placeSwap(config, identity, pocket.held, pool, pool.a === pay, raw, swapPrefs.slip);
-      if (g !== generation) return;
-      logActivity(config, identity, { kind: 'out', title: `Swap placed: ${name(pay)} → ${name(get)}`, symbol: name(get), amount: `≈ ${amtText(q.out)} ${name(get)}` });
-      s.remove();
-      const secs = pocket.epochSeconds || 0;
-      toast(secs ? `Swap placed — fills in about ${secs}s` : 'Swap placed — fills at the end of this batch');
-      setTimeout(refresh, (secs + 4) * 1000);
-      // No second swap from notes this one just spent: wait for the refresh.
-      refresh().finally(() => { swapping = false; });
-    } catch (x) {
-      if (g !== generation) return;
-      swapping = false;
-      err.textContent = x.message; err.classList.add('bad'); go.disabled = false; go.textContent = 'Try again';
-    }
-  };
-  draw();
-  amt.focus();
-}
-
-// ---------------------------------------------------------------------------
-// Bridge: SOL, ETH and BTC in and out. Out, and BTC in, happen here. ETH
-// and SOL come in from MetaMask or Phantom, which do not reach extension
-// pages or this app — so that one step goes to Nap's bridge page with this
-// wallet's one-time code filled in, and what arrives is claimed here.
-
-let bridgeTab = 'in';
-
-async function bridge() {
-  if (!bridgesOf(config).length) {
-    const there = config.networks.find((n) => n.id !== config.id && bridgesOf(n).length);
-    const s = screen('Bridge', `<div class="empty"><img src="/nap-mark.png" alt=""><b>No bridges on ${esc(config.network)}.</b>${there ? `${esc(there.network)} bridges ${esc(bridgesOf(there).map((b) => b.symbol).join(', '))}.` : ''}</div>`,
-      there ? `<button class="btn ghost" id="b-switch">Switch to ${esc(there.network)}</button>` : '');
-    $('#b-switch', s)?.addEventListener('click', () => { s.remove(); switchTo(there.id); });
-    return;
-  }
-  const s = screen('Bridge', '<div class="skeleton"></div><div class="skeleton"></div>');
-  let st;
-  try { st = await bridgeState(config); } catch (e) { $('.screen-body', s).innerHTML = `<div class="empty"><b>Zyn is not answering.</b>${esc(e.message)}</div>`; return; }
-  const draw = () => {
-    $('.screen-body', s).innerHTML = `<div class="seg two-seg" role="group"><button data-bt="in">Bring in</button><button data-bt="out">Send out</button></div><div id="b-panel"></div>`;
-    s.querySelectorAll('[data-bt]').forEach((b) => { b.setAttribute('aria-pressed', String(b.dataset.bt === bridgeTab)); b.onclick = () => { bridgeTab = b.dataset.bt; draw(); }; });
-    const panel = $('#b-panel', s);
-    if (bridgeTab === 'in') {
-      panel.innerHTML = `<div class="pick">${st.bridges.map((b) => `<button class="row" data-in="${b.key}" ${b.live ? '' : 'disabled'}><span class="tok" data-sym="${esc(b.symbol)}">${esc(b.symbol.slice(0, 1))}</span><span class="who"><b>${esc(b.symbol)} → ${esc(b.zy)}</b><span>from ${esc(b.chainName)}${b.capWei ? ' · pilot' : ''}</span></span><span class="val"><span class="${b.live ? 'teal' : ''}">${b.live ? ({ btc: 'any wallet', eth: 'MetaMask', sol: 'Phantom' })[b.key] : 'not yet'}</span></span></button>`).join('')}</div>
-        <p class="hint">Each deposit carries a one-time code from this wallet, not your account, and arrives as a private note. Nap claims it for you.</p>`;
-      panel.querySelectorAll('.tok[data-sym]').forEach((el) => tokenDisc(el, el.dataset.sym));
-      panel.querySelectorAll('[data-in]').forEach((b) => { b.onclick = () => bridgeIn(st.bridges.find((x) => x.key === b.dataset.in), st); });
-    } else {
-      const out = st.bridges.filter((b) => b.live).map((b) => ({ ...b, have: pocket?.coins.find((c) => c.asset === b.asset)?.amount || 0n }));
-      panel.innerHTML = `<div class="pick">${out.map((b) => `<button class="row" data-out="${b.key}" ${b.have > 0n ? '' : 'disabled'}><span class="tok" data-sym="${esc(b.zy)}">${esc(b.symbol.slice(0, 1))}</span><span class="who"><b>${esc(b.zy)} → ${esc(b.symbol)}</b><span>to ${esc(b.chainName)}</span></span><span class="val"><b>${esc(wadText(b.have))}</b></span></button>`).join('')}</div>
-        ${out.some((b) => b.have > 0n) ? '' : '<p class="hint">Nothing bridged to send back yet.</p>'}`;
-      panel.querySelectorAll('.tok[data-sym]').forEach((el) => tokenDisc(el, el.dataset.sym));
-      panel.querySelectorAll('[data-out]').forEach((b) => { b.onclick = () => bridgeOutForm(out.find((x) => x.key === b.dataset.out), st); });
-    }
-  };
-  draw();
-}
-
-async function bridgeIn(b, st) {
-  if (b.key === 'btc') {
-    const s = screen(`Deposit ${b.symbol}`, `<div class="qr"><canvas></canvas></div><div class="address" id="bi-addr">Deriving your address…</div>
-      <p class="hint" id="bi-hint">Send any amount of ${esc(b.chainName)} BTC from any Bitcoin wallet. It is credited after ${Number(b.confirmations) || 2} confirmations and arrives as ${esc(b.zy)}; Nap claims it.</p>`, '<button class="btn" id="bi-copy" disabled>Copy address</button>');
-    try {
-      const address = await btcDepositAddress(config, identity, b);
-      $('#bi-addr', s).textContent = address;
-      await QRCode.toCanvas($('canvas', s), address, { width: 336, margin: 1, color: { dark: '#15181b', light: '#f8f2e4' } });
-      const c = $('#bi-copy', s); c.disabled = false; c.onclick = () => copy(address, 'Address');
-    } catch (e) { $('#bi-hint', s).textContent = e.message; $('#bi-hint', s).classList.add('bad'); $('#bi-addr', s).textContent = 'Unavailable'; }
-    return;
-  }
-  const app = b.key === 'eth' ? 'MetaMask' : 'Phantom';
-  const s = screen(`Deposit ${b.symbol}`, `<div class="big-amount"><b>${esc(app)}</b><span>finishes this deposit</span></div>
-    <p class="hint">${esc(app)} can't reach ${IN_APP ? 'this app' : 'a browser extension'}, so the deposit is made on Nap's bridge page with your one-time code already filled in. What you send arrives here as ${esc(b.zy)} once ${esc(b.chainName)} finalizes it${b.key === 'eth' ? ' (about 15 minutes)' : ''}.</p>
-    ${b.capWei ? `<div class="warn"><b>Pilot.</b> At most ${esc(wadText(BigInt(b.capWei)))} ETH in total${b.issued !== null ? ` (${esc(wadText(BigInt(b.capWei) > b.issued ? BigInt(b.capWei) - b.issued : 0n))} left)` : ''}. The vault is held by a ${esc(b.custody || 'multisig')}, whose owners approve every payout; the contract is not audited.</div>` : ''}
-    ${IN_APP ? `<p class="hint">Open the link in ${esc(app)}'s own browser (its browse tab), or on a computer with ${esc(app)} installed.</p><div class="address" id="bi-link">…</div>` : ''}
-    <p class="hint" id="bi-err" role="alert"></p>`,
-    IN_APP ? '<button class="btn" id="bi-copy" disabled>Copy link</button>' : `<button class="btn" id="bi-open" disabled>Open deposit page</button><button class="btn ghost" id="bi-copy" disabled>Copy link</button>`);
-  try {
-    const code = await depositCode(config, identity);
-    const url = handoffUrl(config, b.key, code, `${API_ORIGIN}/bridge.html#deposit=${b.key}&code=${code}&net=${encodeURIComponent(config.id)}`);
-    if ($('#bi-link', s)) $('#bi-link', s).textContent = url;
-    const c = $('#bi-copy', s); c.disabled = false; c.onclick = () => copy(url, 'Link');
-    const o = $('#bi-open', s);
-    if (o) { o.disabled = false; o.onclick = () => { if (globalThis.chrome?.tabs?.create) { chrome.tabs.create({ url }); window.close(); } else window.open(url, '_blank', 'noopener'); }; }
-  } catch (e) { $('#bi-err', s).textContent = e.message; $('#bi-err', s).classList.add('bad'); }
-}
-
-function bridgeOutForm(b, st) {
-  const fee = st.bps;
-  const s = screen(`Send ${b.zy} out`, `
-    <div class="big-amount"><b>${esc(wadText(b.have))}</b><span>${esc(b.zy)} available</span></div>
-    <label class="field"><span>To (${esc(b.chainName)})</span><textarea id="bo-to" rows="2" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${b.key === 'eth' ? '0x…' : b.key === 'btc' ? (b.chain === 'bitcoin' ? 'bc1…' : 'tb1…') : 'Solana address'}"></textarea></label>
-    <label class="field"><span>Amount</span><span class="inline"><input id="bo-amt" inputmode="decimal" autocomplete="off" placeholder="0.0"><button type="button" id="bo-max">MAX</button></span></label>
-    <p class="hint" id="bo-err" role="alert">${fee ? `A ${Number(fee) / 100}% bridge fee is added on top. ` : ''}${b.key === 'sol' ? 'The 0.000005 SOL network fee comes out of the amount.' : b.key === 'btc' ? 'The Bitcoin network fee comes out of the amount.' : b.capWei ? 'Paid once two of the vault Safe’s owners approve it — this can take hours.' : 'Paid once Ethereum finalizes it.'}</p>`,
-    '<button class="btn" id="bo-go">Review</button>');
-  const err = $('#bo-err', s);
-  $('#bo-max', s).onclick = () => {
-    // Whole lamports or satoshi: swap outputs carry 18-decimal dust the chain
-    // there cannot pay.
-    const unit = b.key === 'sol' ? 1_000_000_000n : b.key === 'btc' ? 10_000_000_000n : 1n;
-    let v = (b.have * 10_000n) / (10_000n + fee);
-    v -= v % unit;
-    $('#bo-amt', s).value = wadText(v, 18).replace(/,/g, '');
-  };
-  let armed = null;
-  $('#bo-go', s).onclick = async () => {
-    const go = $('#bo-go', s);
-    err.classList.remove('bad');
-    try {
-      const to = $('#bo-to', s).value.trim();
-      const raw = parseAmount($('#bo-amt', s).value.trim().replace(/,/g, ''));
-      checkBridgeOut(b, to, raw);
-      const total = raw + (raw * fee) / 10_000n;
-      if (total > b.have) throw new Error(`That needs ${wadText(total)} ${b.zy} with the fee; you have ${wadText(b.have)}`);
-      const key = `${to}|${raw}`;
-      if (armed !== key) {
-        armed = key;
-        s.querySelectorAll('textarea,input').forEach((el) => { el.readOnly = true; });
-        go.textContent = `Confirm: send ${wadText(raw)} ${b.symbol} to ${short(to, 8, 6)}`;
-        err.textContent = 'Check the address: a payment on another chain cannot be undone. Go back to edit.';
-        return;
-      }
-      go.disabled = true; go.textContent = 'Signing…';
-      const g = generation;
-      await bridgeOut(config, identity, pocket.held, b, to, raw, fee);
-      if (g !== generation) return;
-      logActivity(config, identity, { kind: 'out', title: `Sent ${b.symbol} to ${b.chainName}`, symbol: b.zy, amount: `−${wadText(raw)}`, to });
-      pop.querySelectorAll('.screen').forEach((x) => x.remove());
-      toast(`Sent out — the bridge pays once ${b.chainName} confirms`);
-      refresh();
-    } catch (x) { err.textContent = x.message; err.classList.add('bad'); go.disabled = false; if (!armed) go.textContent = 'Review'; }
-  };
+function itemView(i) {
+  if (!i) { toast('That is not in this wallet any more', true); return; }
+  const cave = caveLink(config, i.collection, i.serial);
+  const s = screen(i.name, `<div class="item-art"><img src="/nap-mark.png" alt="" data-art="${esc(i.collection)}:${Number(i.serial)}"></div>
+    <div class="review"><span>Collection</span><b>${esc(i.collectionName || '')}</b><span>Asset</span><b class="mono">${esc(short(i.asset, 10, 8))}</b></div>
+    ${artOn() ? '' : '<p class="hint">Artwork is off. Show artwork under Items loads it; Nap\'s media gateway then sees your IP address and which items you hold.</p>'}`,
+    `<button class="btn" id="i-send">Send</button>${cave ? '<button class="btn ghost" id="i-cave">Open in Cave</button>' : ''}`);
+  fillArt(config, s);
+  $('#i-send', s).onclick = () => sendForm(assetOptions().find((o) => o.key === `item:${i.asset}`));
+  $('#i-cave', s)?.addEventListener('click', () => openUrl(cave));
 }
 
 // ---------------------------------------------------------------------------

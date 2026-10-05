@@ -1,7 +1,7 @@
 {
   "name": "nap-mobile",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "scripts": {
     "pages": "npm --prefix ../nap-web run build:mobile",
     "tauri": "tauri",

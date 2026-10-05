@@ -292,16 +292,30 @@ export async function signedFrame(secretKey, chain, validUntilEpoch, intentBytes
 /// submission: what was refused never arrived. Opening a wallet reads some
 /// eighty things at once; without this, the first refusal was shown to the
 /// holder as "The chain answered HTTP 503" and the page stopped.
+///
+/// The body is JSON sent as text/plain: a "simple" request, so a page on
+/// another origin sends no CORS preflight — one request per call, not two,
+/// and no preflight for the rate limit to refuse, which the browser reports
+/// only as "Failed to fetch". A read that fails that way is sent again; a
+/// write is not, since it may have arrived.
 const BUSY = new Set([429, 503]);
+const WRITES = /submit|put|delete|mint|relay|reveal/i;
 export async function rpcPost(url, payload, { timeout = 15000, attempts = 6 } = {}) {
   for (let attempt = 1; ; attempt++) {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
-      signal: AbortSignal.timeout(timeout),
-    });
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify(payload),
+        cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+        signal: AbortSignal.timeout(timeout),
+      });
+    } catch (e) {
+      if (e?.name !== 'TypeError' || WRITES.test(String(payload?.method || '')) || attempt >= attempts) throw e;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(4000, 250 * 2 ** (attempt - 1)) * (0.5 + Math.random())));
+      continue;
+    }
     if (!BUSY.has(response.status) || attempt >= attempts) return response;
     const after = Number(response.headers.get('retry-after'));
     const wait = after > 0 ? after * 1000 : Math.min(4000, 250 * 2 ** (attempt - 1)) * (0.5 + Math.random());

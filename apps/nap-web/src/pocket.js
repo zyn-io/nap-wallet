@@ -1,14 +1,15 @@
-// What the toolbar wallet (popup-app.js) reads and does, without a page
-// around it: the deployment's networks, what this wallet holds on the object
-// ledger and what each thing is called, where ZEC comes in, and the two ways
-// value leaves — to another Zyn account, or out to a Zcash address. The same
-// rules as the full wallet (app.js), which stays the reference for each.
+// What the wallet reads and does, without a page around it: the
+// deployment's networks, what this wallet holds on the object ledger, what
+// each thing is called and what it is worth, where ZEC comes in, and the two
+// ways value leaves — to another Zyn account, or out to a Zcash address. The
+// compact wallet (popup-app.js) and the full view (app.js) both use it.
 import { x25519 } from '@noble/curves/ed25519.js';
 import { checkedEpoch, hex, unhex } from './core.js';
-import { claimIntent, decodeMeta, fund, lendAsset, quoteAlone, redeem, swapIntent, withSlippage } from './market.js';
-import { bridgedName, call, loadBridged, loadOwed, PER_CLAIM, submitFresh, submitIntent } from './ledger.js';
+import { claimIntent, decodeMeta, fund, lendAsset, redeem, WAD } from './market.js';
+import { bridgedName, call, loadBridged, loadOwed, PER_CLAIM, submitIntent } from './ledger.js';
 import { objectCall, PROGRAM, registerIntent, scan, sealNote, spendIntent } from './object.js';
 import { endpoint } from './origin.js';
+import { CAVE_Z, itemName } from './items.js';
 
 // ---------------------------------------------------------------------------
 // Networks.
@@ -27,6 +28,8 @@ function checkedNetwork(value) {
     if ((key === 'lightdUrl' || key === 'attendUrl') && !value[key]) continue;
     out[key] = endpoint(value[key], key);
   }
+  // The vault registry read (functions/eth) is a path on Nap's origin too.
+  if (value.bridges?.eth?.vaultRpc) out.bridges = { ...value.bridges, eth: { ...value.bridges.eth, vaultRpc: endpoint(value.bridges.eth.vaultRpc, 'vaultRpc') } };
   return out;
 }
 
@@ -53,7 +56,7 @@ export function chooseNetwork(config, id) {
 
 /// Everything this wallet holds on the ledger, summed per asset and named.
 /// The ledger says nothing about who owns what: the notes are opened here,
-/// from the wallet's own keys (see app.js `refreshObject`).
+/// from the wallet's own keys.
 export async function loadPocket(config, identity) {
   const epoch = checkedEpoch(await call(config, 'zyn_status'), config.chain);
   if (!identity.viewing || !identity.nullifier) return { epoch, coins: [], items: [], held: [], old: true };
@@ -73,13 +76,8 @@ export async function loadPocket(config, identity) {
   // bridged coin by its origin, a pool share by its pair, anything else by id.
   const names = new Map([[zec, 'ZEC.zy']]);
   const origin = new Map([[zec, 'Zcash']]);
-  let pools = [], epochSeconds = 0;
   try {
     const market = await objectCall(config.rpcUrl, 'zyn_market');
-    epochSeconds = Number(market.epoch_seconds) || 0;
-    pools = (market.pools || []).filter((p) => ['id', 'a', 'b'].every((k) => /^[0-9a-f]{64}$/.test(p[k]))
-      && /^\d+$/.test(String(p.reserve_a)) && /^\d+$/.test(String(p.reserve_b)) && BigInt(p.reserve_a) > 0n && BigInt(p.reserve_b) > 0n
-      && Number.isSafeInteger(p.fee_bps));
     for (const c of market.curves || []) {
       const m = /^[0-9a-f]{64}$/.test(c.token) && typeof c.meta === 'string' ? decodeMeta(c.meta) : null;
       if (m) { names.set(c.token, m.symbol); origin.set(c.token, 'Launchpad'); }
@@ -95,51 +93,56 @@ export async function loadPocket(config, identity) {
     // Lending receipts (Zyn Lend): derived from the asset lent, so named
     // from it without asking — lSOL.zy is a share of the SOL.zy pool.
     for (const [a, n] of [...names]) {
-      if (/^[0-9a-f]{64}$/.test(a) && !n.startsWith('LP ')) { const r = hex(lendAsset(unhex(a))); names.set(r, `l${n}`); origin.set(r, 'Lending share'); }
+      if (/^[0-9a-f]{64}$/.test(a) && !n.startsWith('LP ')) { const r = hex(lendAsset(unhex(a, 32))); names.set(r, `l${n}`); origin.set(r, 'Lending share'); }
     }
   } catch { /* names only */ }
 
   const sums = new Map();
   for (const h of held) sums.set(h.asset, (sums.get(h.asset) || 0n) + h.amount);
-  const collectionName = (id) => (config.collections.find((c) => String(c.id).toLowerCase() === id) || {}).name || `Collection ${id.slice(0, 6)}`;
+  const collectionName = (id) => (config.collections.find((c) => String(c.id).toLowerCase() === id) || {}).name || (id === CAVE_Z ? 'Cave Collection Z' : `Collection ${id.slice(0, 6)}`);
+  const named = (c, serial) => (c === CAVE_Z ? itemName(c, serial) : `${collectionName(c)} #${serial}`);
   const coins = [...sums].filter(([a, v]) => !items.has(a) && v > 0n)
     .map(([asset, amount]) => ({ asset, amount, symbol: names.get(asset) || `${asset.slice(0, 8)}…`, origin: origin.get(asset) || 'Zyn' }));
   if (zec && !coins.some((c) => c.asset === zec)) coins.push({ asset: zec, amount: 0n, symbol: 'ZEC.zy', origin: 'Zcash' });
   coins.sort((a, b) => (a.asset === zec ? -1 : b.asset === zec ? 1 : a.symbol.localeCompare(b.symbol)));
   const owned = [...sums].filter(([a, v]) => items.has(a) && v > 0n)
-    .map(([asset]) => ({ asset, collection: items.get(asset).collection, serial: items.get(asset).serial, name: `${collectionName(items.get(asset).collection)} #${items.get(asset).serial}` }));
-  // What finished swaps owe this wallet: collected on the next pass.
+    .map(([asset]) => ({ asset, collection: items.get(asset).collection, serial: items.get(asset).serial, collectionName: collectionName(items.get(asset).collection), name: named(items.get(asset).collection, items.get(asset).serial) }));
+  // What finished swaps and loans owe this wallet: collected on the next pass.
   const owed = await loadOwed(config, identity).catch(() => []);
   const nameOf = (id) => names.get(id) || `${id.slice(0, 6)}…`;
-  return { epoch, coins, items: owned, held, pools, epochSeconds, owed, nameOf };
+  return { epoch, coins, items: owned, held, owed, nameOf };
 }
 
 // ---------------------------------------------------------------------------
-// Swapping. A swap is an order in the pool's current batch: every order in
-// an epoch clears at one price when it seals, and what it pays (the coin
-// bought, or the whole input back if the price moved past the minimum)
-// waits as a claim. The compact wallet collects those claims itself, so to
-// the holder a swap is placed, then arrives.
+// Worth, in dollars: the prices posted on Zyn for its lending markets
+// (`zyn_lendMarkets`), the one price source the chain itself checks. A coin
+// with no posted price has no dollar figure; a lending share is worth its
+// pool's share price in the coin lent.
 
-/// The quote if this were the only order in the batch, and the minimum the
-/// order is signed for.
-export function quoteSwap(pool, sellA, amountIn, slippageBps) {
-  const out = quoteAlone(pool, sellA, amountIn);
-  const x = BigInt(pool.reserve_a), y = BigInt(pool.reserve_b);
-  const spot = sellA ? (amountIn * y) / x : (amountIn * x) / y;
-  const impactBps = spot > 0n ? Number(((spot - out) * 10_000n) / spot) : 0;
-  return { out, min: withSlippage(out, slippageBps), impactBps };
+export async function loadPrices(config) {
+  const m = await objectCall(config.rpcUrl, 'zyn_lendMarkets').catch(() => null);
+  const isInt = (v) => typeof v === 'string' && /^\d{1,40}$/.test(v);
+  const isHex = (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+  const price = new Map(Object.entries(m?.prices || {}).filter(([a, v]) => isHex(a) && isInt(v) && v !== '0').map(([a, v]) => [a, BigInt(v)]));
+  const share = new Map((Array.isArray(m?.pools) ? m.pools : []).filter((p) => isHex(p.asset) && isHex(p.receipt) && isInt(p.share_price)).map((p) => [p.receipt, p]));
+  /// Dollars (WAD) for `amount` (WAD) of `asset`, or null.
+  return (asset, amount) => {
+    const s = share.get(asset);
+    const [a, v] = s ? [s.asset, (BigInt(amount) * BigInt(s.share_price)) / WAD] : [asset, BigInt(amount)];
+    const p = price.get(a);
+    return p ? (v * p) / WAD : null;
+  };
 }
 
-export async function placeSwap(config, identity, held, pool, sellA, amountIn, slippageBps) {
-  const sell = unhex(sellA ? pool.a : pool.b, 32);
-  const { min } = quoteSwap(pool, sellA, amountIn, slippageBps);
-  if (min <= 0n) throw new Error('Too small to trade');
-  const { inputs, change } = fund(identity, held, sell, amountIn);
-  await submitFresh(config, identity, (nonce) => swapIntent({ trader: identity.account, pool: unhex(pool.id, 32), sellA, amountIn, minOut: min, inputs, change, nonce }));
+/// Dollars (WAD) as text: `$1,234.56`, `<$0.01`, or '' for none.
+export function usdText(v) {
+  if (v == null || v === 0n) return '';
+  const cents = v / (WAD / 100n);
+  if (cents === 0n && v > 0n) return '<$0.01';
+  return `$${(cents / 100n).toLocaleString('en-US')}.${String(cents % 100n).padStart(2, '0')}`;
 }
 
-/// Collect everything the market owes this wallet. Returns how many.
+/// Collect everything swaps and loans owe this wallet. Returns how many.
 export async function collectOwed(config, identity, owed) {
   let done = 0;
   for (let i = 0; i < owed.length; i += PER_CLAIM) {
@@ -213,5 +216,7 @@ export function logActivity(config, identity, entry) {
 }
 
 // ---------------------------------------------------------------------------
-// The bridges live in bridges.js, shared with Nap Connect.
-export { bridgesOf, bridgeState, claimDeposits, depositCode, btcDepositAddress, revealBridgeExits, checkBridgeOut, bridgeOut } from './bridges.js';
+// Coins bridged in through a site (Zyn Lend's Bridge) arrive under this
+// wallet's one-time codes; the wallet claims them itself. The bridges live in
+// bridges.js, shared with Nap Connect.
+export { bridgesOf, claimDeposits, revealBridgeExits } from './bridges.js';

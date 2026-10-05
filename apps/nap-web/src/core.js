@@ -324,7 +324,8 @@ export function signedFrame(identity, chain, epoch, intent) {
 export async function rpc(url, method, params = []) {
   const id = crypto.randomUUID();
   const response = await fetch(url, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    // text/plain: no CORS preflight (see object.js rpcPost).
+    method: 'POST', headers: { 'content-type': 'text/plain;charset=UTF-8' },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
     cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
     signal: AbortSignal.timeout(15000),

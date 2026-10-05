@@ -1,2 +1,7 @@
 # An event tag's link opens the wallet, which reads the tap from it (§150).
 /tap / 200
+# Nap is the wallet; markets and bridging are sites that use it.
+/market.html https://jade.zyn-network.com/ 302
+/market https://jade.zyn-network.com/ 302
+/bridge.html https://lend.zyn-network.com/#/bridge 302
+/bridge https://lend.zyn-network.com/#/bridge 302

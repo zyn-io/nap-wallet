@@ -1,15 +1,14 @@
 import QRCode from 'qrcode';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { PROGRAM as OBJECT_PROGRAM, scan as scanObjects, objectCall, registerIntent, sealNote, signedFrame as objectFrame, spendIntent, submitSigned, withdrawIntent } from './object.js';
-import { decodeMeta, fund as fundFrom, lendAsset } from './market.js';
-import { bridgedName, loadBridged } from './ledger.js';
-import { bridgePage } from './bridges.js';
-import { activity, logActivity } from './pocket.js';
-import { checkedEpoch, cancelOfferIntent, deriveCollectionAccount, XZEC, deriveIdentity, forgetIdentity, hex, newMnemonic, openSealedWallet, parseAmount, placeOfferIntent, readableAmount, rpc, sealWallet, signedFrame, signedRead, transferFrame, unhex, WAD } from './core.js';
+import { objectCall, registerIntent } from './object.js';
+import { submitIntent } from './ledger.js';
+import { activity, bridgesOf, claimDeposits, collectOwed, depositAddress, loadPocket, loadPrices, logActivity, payOnZyn, resolveRecipient, revealBridgeExits, revealExits, usdText, withdrawZec } from './pocket.js';
+import { artOn, caveLink, fillArt, forgetArt, setArtOn } from './items.js';
+import { appsFor } from './apps.js';
+import { checkedEpoch, deriveCollectionAccount, deriveIdentity, forgetIdentity, hex, newMnemonic, openSealedWallet, parseAmount, rpc, sealWallet, unhex, WAD } from './core.js';
 import { deriveZecKeys, stopZec, ZecAccount } from './zec/client.js';
 import { parsePaymentRequest } from './zip321.js';
-import { boundedBytes, MAX_IMAGE, MAX_MANIFEST, parseManifest, safeRaster } from './media.js';
-import { endpoint, IN_APP, IN_EXTENSION, IN_POPUP, openPage } from './origin.js';
+import { endpoint, IN_APP, IN_EXTENSION, IN_POPUP } from './origin.js';
 import { endSession, hasSession, loadSession, saveSession } from './session.js';
 import { installTips, tip } from './tip.js';
 import './styles.css';
@@ -22,13 +21,11 @@ let config;
 let identity = null;
 /// Where bought items land — one per collection the deployment declares.
 let receiving = [];
-/// Our own resting offers — items escrowed in the order book, not in an account.
-let listings = [];
-let assets = [];
-let holdings = [];
-/// The object ledger's notes this wallet holds, with commitments — what a
-/// withdrawal spends.
-let objectHeld = [];
+/// What this wallet holds on Zyn, named (pocket.js `loadPocket`): coins,
+/// items, the notes a send spends, what swaps and loans owe it.
+let pocket = null;
+/// Dollars (WAD) for an amount of an asset, at the prices posted on Zyn.
+let usdOf = () => null;
 let generatedWords = '';
 /// The Zcash wallet for the chosen network: plain shielded ZEC, held the way
 /// any Zcash wallet holds it. Separate from the Zyn account above it on
@@ -74,16 +71,14 @@ history.replaceState(null, '', giftUrl.pathname + giftUrl.search);
 if (IN_APP && !tapLink && !claimCode && !new URLSearchParams(location.search).has('full')) location.replace('/popup.html');
 let generation = 0;
 let refreshId = 0;
-const artUrls = new Set();
 function clearSession() {
   generation++; refreshId++;
   napBrowser?.closeBrowser();
   clearTimeout(zecTimer); stopZec(); zecAccount = null;
   forgetIdentity(identity); identity = null;
   for (const r of receiving) forgetIdentity(r);
-  receiving = []; holdings = []; assets = []; listings = []; generatedWords = '';
-  for (const url of artUrls) URL.revokeObjectURL(url);
-  artUrls.clear();
+  receiving = []; pocket = null; usdOf = () => null; generatedWords = '';
+  forgetArt();
 }
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -107,6 +102,8 @@ const networkPill = () => (config.networks && config.networks.length > 1)
 /// a wallet quietly talking to a host the policy never admitted.
 function checkedNetwork(value) {
   if (!Number.isInteger(value.chain) || value.chain < 0 || value.chain > 0xffffffff || typeof value.network !== 'string') throw new Error('Deployment configuration is incomplete');
+  // Nap reads object ledgers only: the account-model chains are retired.
+  if (value.kind !== 'object') throw new Error(`${value.network} is not an object ledger`);
   // A Zyn chain sits on exactly one Zcash network and the node refuses to mix
   // them. Naming it lets the header say both — and `zcashPrefix` is what keeps
   // that name honest, because a label nothing checks is a label that can lie.
@@ -170,34 +167,10 @@ function switchNetwork(id) {
   config = { ...next, networks: config.networks };
   // Deliberately NOT clearSession(): that forgets the phrase, and the phrase is
   // not what changed. Only the chain's answers are stale.
-  holdings = []; assets = [];
+  pocket = null; usdOf = () => null;
   clearTimeout(zecTimer); stopZec(); zecAccount = null;
   generation++; refreshId++;
   if (identity) { wallet(); refresh(); } else onboarding();
-}
-
-// Asking a gateway for the picture of an item you own tells that host your IP,
-// which item you hold, and when — on a shielded chain, the one thing the chain
-// itself will not reveal. The desktop wallet has always kept this behind an
-// explicit toggle; this one fetched art for every holding on every render, so a
-// single page load handed over the complete list. Off until the holder says
-// otherwise, and the reason is on the button rather than in a help page.
-const ART_KEY = 'nap_web_art';
-function artEnabled() {
-  try {
-    return localStorage.getItem(ART_KEY) === '1';
-  } catch {
-    // A browser that refuses storage is a browser that cannot remember consent,
-    // and unremembered consent is not consent. Stay off.
-    return false;
-  }
-}
-function setArtEnabled(on) {
-  try {
-    localStorage.setItem(ART_KEY, on ? '1' : '0');
-  } catch {
-    /* refused storage: the setting lasts for this render only */
-  }
 }
 
 function shell(content) {
@@ -440,42 +413,46 @@ function wallet(message = '') {
   shell(`<main class="wallet">
     <aside class="rail">
       <div><p class="kicker">ZYN ACCOUNT</p><button class="account-copy" id="copy-account"><b>${short(account)}</b><span>Copy full ID</span></button></div>
-      <nav><button class="active">Pocket</button><button id="zec-link">Zcash</button><button id="receive-link">Receive</button><button id="market-link">Market</button><button id="bridge-link">Bridge</button>${napBrowser ? '<button id="browser-link">Browser</button>' : ''}<button id="recovery-link">Recovery</button></nav>
+      <nav><button class="active" data-go="top">Pocket</button><button data-go="zec">Zcash</button><button data-go="account">Receive</button><button data-go="activity">Activity</button><button data-go="apps">Apps</button>${napBrowser ? '<button id="browser-link">Browser</button>' : ''}<button id="recovery-link">Recovery</button></nav>
       <button class="quiet" id="forget">${keptWallet() ? 'Lock' : 'Lock &amp; forget key'}</button>
     </aside>
-    <section class="content">
-      <div class="topline"><div><h1>Pocket</h1></div><button class="refresh" id="refresh" aria-label="Refresh"><span aria-hidden="true">↻</span><span class="refresh-word">Refresh</span></button></div>
+    <section class="content" id="top">
+      <div class="topline"><div><h1>Pocket</h1><p class="worth" id="worth"></p></div><button class="refresh" id="refresh" aria-label="Refresh"><span aria-hidden="true">↻</span><span class="refresh-word">Refresh</span></button></div>
       <div class="notice ${message ? 'show' : ''}" id="notice">${escapeHtml(message)}</div>
       ${claimCode ? `<section class="claim"><div><p class="kicker">GIFT CARD</p><h2>Nap Mole to claim${tip('The gift coordinator sees this public account ID, not your phrase or key.')}</h2></div><button id="claim">Claim <span>→</span></button></section>` : ''}
       ${tapLink ? `<section class="claim"><div><p class="kicker">EVENT TAG</p><h2>Certificate to collect${tip('The certificate service learns this account ID and nothing else. Nobody can see who holds it.')}</h2></div><button id="attend">Collect <span>→</span></button></section>` : ''}
       ${zecSection()}
       <section><div class="section-title"><h2>Coins</h2><span id="coin-count">—</span></div><div class="coins" id="coins"><div class="skeleton"></div></div></section>
-      <section><div class="section-title"><h2>Items</h2><span id="item-count">—</span></div><label class="art-consent"><input type="checkbox" id="art-toggle"><span>Show artwork${tip("Loads each item's picture from the gateway, which tells that host your IP address, which items you hold, and when. Off by default.")}</span></label><div class="items" id="items"><div class="skeleton"></div><div class="skeleton"></div></div></section>
-      <section class="activity"><div class="section-title"><h2>Account</h2></div><div class="account-card"><div><span>Public account</span><code>${account}</code></div><canvas id="qr" width="164" height="164"></canvas></div></section>
+      <section><div class="section-title"><h2>Items</h2><span id="item-count">—</span></div><label class="art-consent"><input type="checkbox" id="art-toggle"><span>Show artwork. Off by default: each picture is loaded from Nap's media gateway, which then learns your IP address and which items you hold.</span></label><div class="items" id="items"><div class="skeleton"></div><div class="skeleton"></div></div></section>
+      <section class="activity" id="account"><div class="section-title"><h2>Account</h2></div><div class="account-card"><div><span>Public account</span><code>${account}</code><p class="muted">For Zyn coins and items from another Zyn wallet.${tip('Not a Zcash address: ZEC sent here is lost. To bring ZEC in, use the deposit address below.')}</p></div><canvas id="qr" width="164" height="164"></canvas></div></section>
       <section class="activity"><div class="section-title"><h2>Deposit ZEC</h2></div><div class="account-card" id="deposit-card"><div><span>Your Zcash deposit address</span><code id="deposit-address">Asking the node…</code><p class="muted" id="deposit-note">Arrives as ZEC.zy.${tip('Send shielded ZEC here. No memo needed; this address is yours alone.')}</p><button class="quiet" id="copy-deposit" hidden>Copy address</button> <button class="quiet" id="deposit-from-zec">Pay it from my ZEC →</button></div><canvas id="deposit-qr" width="164" height="164"></canvas></div></section>
-      ${config.kind === 'object' ? `<section class="activity"><div class="section-title"><h2>Withdraw ZEC</h2></div><form class="account-card" id="withdraw-form"><div><span>Send ZEC.zy back to a Zcash address</span><label class="visually-hidden" for="withdraw-to">Zcash address</label><input id="withdraw-to" class="withdraw-input" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(config.zcashPrefix)}… or t…"><label class="visually-hidden" for="withdraw-amount">Amount</label><input id="withdraw-amount" class="withdraw-input" inputmode="decimal" autocomplete="off" placeholder="0.0 ZEC"><p class="muted">Fees${tip('The chain records only a commitment to the address. The vault pays it once two custodians sign. The Zcash network fee comes out of the amount; any bridge fee is added on top.')}</p></div><div><button class="primary" type="submit" id="withdraw-go">Withdraw <span>→</span></button></div></form></section>` : ''}
+      <section class="activity"><div class="section-title"><h2>Withdraw ZEC</h2></div><form class="account-card" id="withdraw-form"><div><span>Send ZEC.zy back to a Zcash address</span><label class="visually-hidden" for="withdraw-to">Zcash address</label><input id="withdraw-to" class="withdraw-input" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(config.zcashPrefix)}… or t…"><label class="visually-hidden" for="withdraw-amount">Amount</label><input id="withdraw-amount" class="withdraw-input" inputmode="decimal" autocomplete="off" placeholder="0.0 ZEC"><p class="muted">Fees${tip('The chain records only a commitment to the address. The vault pays it once two custodians sign. The Zcash network fee comes out of the amount; any bridge fee is added on top.')}</p></div><div><button class="primary" type="submit" id="withdraw-go">Withdraw <span>→</span></button></div></form></section>
+      <section class="activity" id="activity"><div class="section-title"><h2>Activity</h2><span>this device</span></div><ul class="log" id="log"></ul></section>
+      <section class="activity" id="apps"><div class="section-title"><h2>Apps</h2></div><div class="apps">${appsFor(config).map((a) => `<a class="app" href="${escapeHtml(a.url)}" target="_blank" rel="noopener" data-url="${escapeHtml(a.url)}"><b>${escapeHtml(a.name)}</b><span>${escapeHtml(a.what)}</span><code>${escapeHtml(a.host)}</code></a>`).join('')}</div></section>
     </section>
   </main><dialog id="send-dialog"></dialog><dialog id="shield-dialog"></dialog><dialog id="recovery-dialog"><button class="x">×</button><h2>Recovery</h2><p>Restore this phrase, passphrase and account index in any Nap to recover <code>${account}</code>. Nap does not store the phrase.</p><div class="descriptor"><span>Derivation</span><b>nap.zyn.ed25519.v1</b><span>Account index</span><b>${identity.accountIndex}</b><span>Network scoped</span><b>No</b></div></dialog>`);
   QRCode.toCanvas(root.querySelector('#qr'), account, { width: 164, margin: 1, color: { dark: '#1f2428', light: '#f8f2e4' } });
   void loadDepositAddress(identity);
-  root.querySelector('#withdraw-form')?.addEventListener('submit', async (e) => {
+  root.querySelector('#withdraw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const button = root.querySelector('#withdraw-go');
     button.disabled = true;
     try {
       const to = root.querySelector('#withdraw-to').value.trim();
+      const amount = root.querySelector('#withdraw-amount').value.trim();
       if (!to.startsWith(config.zcashPrefix) && !/^t[a-z0-9]/i.test(to)) throw new Error(`That is not a ${config.zcash} address`);
-      await withdrawToZcash(to, root.querySelector('#withdraw-amount').value.trim());
+      if (!pocket?.held) throw new Error('Still reading your balances; try again in a moment.');
+      await withdrawZec(config, identity, pocket.held, to, amount);
+      logActivity(config, identity, { kind: 'out', title: 'Withdrew to Zcash', symbol: 'ZEC', amount: `−${amount}`, to });
       note('Withdrawal recorded. The vault pays it once two custodians sign — usually within minutes.');
       root.querySelector('#withdraw-amount').value = '';
       refresh(false);
     } catch (err) { note(err.message, true); } finally { button.disabled = false; }
   });
   root.querySelector('#copy-account').onclick = async () => { await navigator.clipboard.writeText(account); note('Account ID copied.'); };
-  root.querySelector('#receive-link').onclick = () => root.querySelector('.account-card').scrollIntoView({ behavior: 'smooth', block: 'center' });
-  // Same origin, same kept key: the market opens it with the same password.
-  root.querySelector('#market-link').onclick = () => openPage('/market.html');
-  root.querySelector('#bridge-link').onclick = () => (bridgePage(config) ? window.open(bridgePage(config), '_blank', 'noopener') : openPage('/bridge.html'));
+  root.querySelectorAll('.rail [data-go]').forEach((b) => { b.onclick = () => root.querySelector(`#${b.dataset.go}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  // In the phone app a site opens in the Nap browser, beside the wallet.
+  root.querySelectorAll('.app[data-url]').forEach((a) => { a.onclick = (e) => { if (napBrowser) { e.preventDefault(); openSite(a.dataset.url); } }; });
   root.querySelector('#recovery-link').onclick = () => root.querySelector('#recovery-dialog').showModal();
   root.querySelector('#browser-link')?.addEventListener('click', () => napBrowser.openBrowser('').catch((e) => note(String(e).slice(0, 160), true)));
   root.querySelector('#recovery-dialog .x').onclick = () => root.querySelector('#recovery-dialog').close();
@@ -483,7 +460,6 @@ function wallet(message = '') {
   // the wallet is kept here, the phrase if it is not.
   root.querySelector('#forget').onclick = () => { clearSession(); void endSession(); onboarding(keptWallet() ? 'kept' : 'restore'); };
   root.querySelector('#refresh').onclick = () => { refresh(); zecSync(); };
-  root.querySelector('#zec-link').onclick = () => root.querySelector('#zec').scrollIntoView({ behavior: 'smooth', block: 'start' });
   root.querySelector('#deposit-from-zec').onclick = () => {
     const address = root.querySelector('#deposit-address').textContent.trim();
     if (!address.startsWith(config.zcashPrefix)) { note('The deposit address has not arrived yet.', true); return; }
@@ -493,9 +469,24 @@ function wallet(message = '') {
     root.querySelector('#zec').scrollIntoView({ behavior: 'smooth', block: 'start' });
     root.querySelector('#zec-amount').focus();
   };
+  const artToggle = root.querySelector('#art-toggle');
+  artToggle.checked = artOn();
+  artToggle.onchange = () => {
+    setArtOn(artToggle.checked);
+    note(artToggle.checked ? 'Artwork on. The media gateway now learns which items you hold.' : 'Artwork off. Nothing is requested for your items.');
+    renderItems();
+  };
+  renderActivity();
   bindZec();
   root.querySelector('#claim')?.addEventListener('click', claimGift);
   root.querySelector('#attend')?.addEventListener('click', collectCertificate);
+}
+
+/// A site: in the phone app, in the Nap browser beside the wallet; elsewhere
+/// in a new tab.
+function openSite(url) {
+  if (napBrowser) napBrowser.openBrowser(url).catch((e) => note(String(e).slice(0, 160), true));
+  else window.open(url, '_blank', 'noopener');
 }
 // ---------------------------------------------------------------------------
 // Zcash: plain shielded ZEC, synced, received and sent from this tab.
@@ -529,7 +520,7 @@ function zecSection() {
       </div><div><button class="primary" type="submit">Add Zcash <span>→</span></button></div></form></section>`;
   }
   return `<section class="zec" id="zec"><div class="section-title"><h2>Zcash</h2><span id="zec-sync">Opening…</span></div>
-    <div class="zec-balance"><div><b id="zec-total">—</b><span>ZEC</span></div><p id="zec-detail" class="zec-detail">Shielded. Only this phrase can see it.</p></div>
+    <div class="zec-balance"><div><b id="zec-total">—</b><span>ZEC</span><i id="zec-usd" class="zec-usd"></i></div><p id="zec-detail" class="zec-detail">Shielded. Only this phrase can see it.</p></div>
     <div class="zec-transparent" id="zec-t" hidden><div><span class="zec-t-label">Transparent · public</span><b id="zec-t-amount">—</b></div><button class="primary" type="button" id="zec-shield">Shield <span>→</span></button></div>
     <div class="zec-seg" role="group" aria-label="Receive"><button type="button" data-addr="shielded" aria-pressed="true">Shielded address</button><button type="button" data-addr="transparent" aria-pressed="false">Transparent address</button></div>
     <div class="account-card" id="zec-receive"><div><span id="zec-address-label">Your Zcash address</span><code id="zec-address">Opening…</code><p class="muted" id="zec-address-note">Shielded${tip('Pay it from any Zcash wallet or exchange that sends shielded. What arrives is visible only to this phrase.')}</p><button class="quiet" id="zec-copy" hidden>Copy address</button></div><canvas id="zec-qr" width="164" height="164"></canvas></div>
@@ -555,6 +546,8 @@ function renderZec(v) {
   if (!el || !v) return;
   const held = v.balance.orchard + v.balance.ironwood;
   root.querySelector('#zec-total').textContent = zecText(held);
+  root.querySelector('#zec-usd').textContent = held ? usdText(usdOf(config.zecAsset, BigInt(held) * 10_000_000_000n)) : '';
+  renderWorth();
   const parts = [];
   if (v.balance.inFlight) parts.push(`${zecText(v.balance.inFlight)} ZEC on its way (change from a send, back after 3 blocks)`);
   if (v.balance.orchard && v.balance.ironwood) parts.push(`Ironwood ${zecText(v.balance.ironwood)} · Orchard ${zecText(v.balance.orchard)}`);
@@ -844,6 +837,8 @@ function bindZec() {
       });
       renderZec(view);
       form.reset();
+      logActivity(config, identity, { kind: 'out', title: 'Sent ZEC', symbol: 'ZEC', amount: `−${zecText(zat)}`, to, tx: view.txid });
+      renderActivity();
       note(`Sent ${zecText(zat)} ZEC. Transaction ${view.txid}.`);
     } catch (err) {
       note(err.message, true);
@@ -862,143 +857,80 @@ function note(text, bad = false) {
   el.textContent = text; el.classList.add('show'); el.classList.toggle('bad', bad);
 }
 
+/// Read what this wallet holds on Zyn. The ledger says nothing about who owns
+/// what: `loadPocket` opens the published notes with the wallet's own keys,
+/// so nothing here asks the operator a question whose answer they could
+/// tailor.
 async function refresh(announce = true) {
   if (!identity) return;
-  const owner = identity, current = generation, request = ++refreshId;
+  const current = generation, request = ++refreshId;
   const active = () => generation === current && request === refreshId;
   const button = root.querySelector('#refresh');
   if (button) button.disabled = true;
   try {
-    const status = await rpc(config.rpcUrl, 'zyn_status');
+    const [next, prices] = await Promise.all([loadPocket(config, identity), loadPrices(config)]);
     if (!active()) return;
-    const epoch = checkedEpoch(status, config.chain);
-
-    // An object ledger answers none of the questions below. It publishes
-    // commitments and nullifiers and says nothing about who owns what, so the
-    // balance is computed here from the holder's own keys rather than asked
-    // for. Everything after this point is the AMM chains' shape.
-    if (config.kind === 'object') {
-      await refreshObject(epoch, announce, active);
-      return;
+    // Event certificates (§150) are named by the event they came from.
+    if (config.attendUrl && next.items.some((i) => !(config.collections || []).some((c) => String(c.id).toLowerCase() === i.collection))) {
+      await loadEventNames();
+      if (!active()) return;
     }
-    // The identity *and* every receiving account. An item bought through a
-    // store lands in the latter (§97.5), so reading only the identity shows an
-    // empty pocket to somebody who has just paid.
-    const owners = [{ key: owner, name: null }, ...receiving.map((r) => ({ key: r, name: r.name }))];
-    const [allAssets, allOffers, ...records] = await Promise.all([
-      rpc(config.rpcUrl, 'zyn_assets'),
-      // A listed item is escrowed, so it is gone from `spendable` — without
-      // this the wallet would show it as vanished the moment it was listed.
-      rpc(config.rpcUrl, 'zyn_offers').catch(() => []),
-      ...owners.map((o) => rpc(config.rpcUrl, 'zyn_account', [hex(signedRead(o.key, config.chain, epoch))])),
-    ]);
-    if (!active()) return;
-    if (!Array.isArray(allAssets)) throw new Error('Malformed holdings response');
-    const validAsset = (id) => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id);
-    if (!allAssets.every((a) => validAsset(a.id))) throw new Error('Invalid asset identifier');
-
-    const merged = [];
-    for (const [i, record] of records.entries()) {
-      if (record !== null && !Array.isArray(record?.spendable)) throw new Error('Malformed holdings response');
-      for (const h of record?.spendable || []) {
-        if (!validAsset(h.asset)) throw new Error('Invalid asset identifier');
-        // Tagged with the account it was found in, so a send signs with the
-        // key that actually holds the item rather than the identity's.
-        merged.push({ ...h, owner: owners[i].key, via: owners[i].name });
-      }
-    }
-    const mine = new Map(owners.map((o) => [hex(o.key.account), o]));
-    listings = (Array.isArray(allOffers) ? allOffers : [])
-      .filter((o) => mine.has(String(o.maker)))
-      .map((o) => ({ ...o, owner: mine.get(String(o.maker)).key, via: mine.get(String(o.maker)).name }));
-    assets = allAssets;
-    holdings = merged;
-    renderCoins();
-    renderItems();
-    if (announce) note(`Synced at epoch ${status.epoch}.`);
+    pocket = next; usdOf = prices;
+    renderCoins(); renderItems(); renderWorth();
+    if (next.old) { note('This wallet was stored before the object ledger existed. Restore it from the recovery phrase to read balances here.', true); return; }
+    void revealExits(config, identity);
+    void revealBridgeExits(config);
+    if (announce) note(`Synced at epoch ${next.epoch}.`);
+    void collectWaiting(next);
   } catch (e) {
     if (!active()) return;
-    holdings = []; assets = []; listings = [];
+    pocket = null;
     const coinCount = root.querySelector('#coin-count');
     if (coinCount) coinCount.textContent = 'Unavailable';
     const coinList = root.querySelector('#coins');
     if (coinList) coinList.innerHTML = '';
-    root.querySelector('#item-count').textContent = 'Unavailable';
-    root.querySelector('#items').innerHTML = '<div class="empty"><h3>Holdings unavailable.</h3><p>Reconnect and refresh before sending.</p></div>';
+    const itemCount = root.querySelector('#item-count');
+    if (itemCount) itemCount.textContent = 'Unavailable';
+    const items = root.querySelector('#items');
+    if (items) items.innerHTML = '<div class="empty"><h3>Holdings unavailable.</h3><p>Reconnect and refresh before sending.</p></div>';
     note(e.message === 'Failed to fetch' ? 'RPC unavailable. Your key is safe; try again when the connection returns.' : e.message, true);
   } finally { if (button) button.disabled = false; }
+}
+
+// What swaps and loans made on sites pay out waits as claims, and coins
+// bridged in through a site wait under this wallet's one-time codes. Both
+// are collected here, without asking: they only move what is owed to this
+// wallet into it.
+let collecting = false;
+async function collectWaiting(p) {
+  if (collecting) return;
+  const current = generation;
+  collecting = true;
+  try {
+    const got = [];
+    if (p.owed?.length) {
+      await collectOwed(config, identity, p.owed);
+      const byAsset = new Map();
+      for (const o of p.owed) byAsset.set(o.asset, (byAsset.get(o.asset) || 0n) + BigInt(o.amount));
+      for (const [a, v] of byAsset) got.push(`${wadText(v, 6)} ${p.nameOf(a)}`);
+    }
+    if (bridgesOf(config).length) {
+      const zy = Object.fromEntries(bridgesOf(config).map((b) => [b.asset, b.zy]));
+      for (const w of await claimDeposits(config, identity)) got.push(`${wadText(w.amount, 6)} ${zy[w.asset] || 'coin'}`);
+    }
+    if (generation !== current || !got.length) return;
+    logActivity(config, identity, { kind: 'in', title: 'Collected', amount: got.join(', ') });
+    renderActivity();
+    note(`Collected ${got.join(', ')}.`);
+    setTimeout(() => refresh(false), 1500);
+  } catch { /* tried again on the next refresh */ } finally { collecting = false; }
 }
 
 // The deposit address is not the account. The account receives Zyn items from
 // other Zyn users; this receives *Zcash*, and sending ZEC to the account id
 // would be sending it to a string that is not an address at all. They sit in
-// separate cards, labelled differently, for that reason.
-//
-// Asking requires a signature, which the browser wallet can produce and a
-// stranger cannot: issuing an address writes it into the node's scan register,
-// so the public method is gated rather than open (DECISIONS 87.6).
-/// Sign and send an intent through the object ledger's holders' door. A
-/// refusal inside the receipts is an error here too.
-async function submitObject(intent) {
-  const status = await rpc(config.rpcUrl, 'zyn_status');
-  const epoch = checkedEpoch(status, config.chain);
-  const frame = await objectFrame(identity.secretKey, config.chain, epoch + 100n, intent);
-  const result = await submitSigned(config.rpcUrl, frame);
-  const refused = /Refused\("([^"]*)"\)/.exec(String(result?.receipts || ''));
-  if (refused) throw new Error(`The chain refused: ${refused[1]}`);
-  return result;
-}
-
-/// Publish where this account is paid: its viewing key. Public by design —
-/// a payer who cannot read it cannot pay — and it cannot spend anything.
-async function registerObjectAccount(owner) {
-  await submitObject(registerIntent(owner.account, x25519.getPublicKey(owner.viewing)));
-  // Done on its own when the wallet opens: said only if nothing more useful
-  // (what to do next, after setting up) is already on show.
-  if (!root.querySelector('#notice')?.classList.contains('show')) note('Registered this account to receive ZEC. Deposits to the address below are credited to it.');
-}
-
-const EXITS_KEY = () => `nap.exits.${config.chain}.${identity.accountHex}`;
-const pendingExits = () => { try { return JSON.parse(localStorage.getItem(EXITS_KEY()) || '[]'); } catch { return []; } };
-const savePendingExits = (list) => { try { localStorage.setItem(EXITS_KEY(), JSON.stringify(list)); } catch { /* this session only */ } };
-
-/// Tell the vault where a withdrawal goes, now or on a later visit. The chain
-/// holds only a commitment; until the address and salt are revealed the exit
-/// is owed and cannot be paid. Kept on this device until the node files it.
-async function revealExits() {
-  const left = [];
-  for (const x of pendingExits()) {
-    try {
-      await objectCall(config.rpcUrl, 'zyn_exitReveal', { address: x.address, salt: x.salt });
-    } catch (e) {
-      if (!/no unpaid exit/.test(e.message)) left.push(x);
-    }
-  }
-  savePendingExits(left);
-}
-
-/// ZEC.zy back to Zcash: commit to the address, sign the withdrawal, reveal.
-async function withdrawToZcash(address, amountText) {
-  const zec = config.zecAsset;
-  const raw = parseAmount(amountText);
-  // The vault pays whole zatoshi: at most eight decimals.
-  if (raw % 10_000_000_000n !== 0n) throw new Error('ZEC has eight decimal places');
-  if (raw < 100_000n * 10_000_000_000n) throw new Error('Withdraw at least 0.001 ZEC — the Zcash fee comes out of it');
-  const salt = hex(crypto.getRandomValues(new Uint8Array(32)));
-  const { destination } = await objectCall(config.rpcUrl, 'zyn_exitCommitment', { address, salt });
-  if (!/^[0-9a-f]{64}$/.test(String(destination))) throw new Error('The node did not return a commitment');
-  // The bridge fee rides on top of what leaves, and stays in the ZYN pot.
-  const market = await objectCall(config.rpcUrl, 'zyn_market');
-  const bps = BigInt(Number(market?.fees?.bridge_bps) || 0);
-  const fee = (raw * bps) / 10_000n;
-  const { inputs, change } = fundFrom(identity, objectHeld, unhex(zec, 32), raw + fee);
-  // Kept before submitting: if the page closes between the two steps, the
-  // next visit still knows where this exit was meant to go.
-  savePendingExits([...pendingExits(), { address, salt }]);
-  await submitObject(withdrawIntent({ holder: identity.account, inputs, asset: unhex(zec, 32), amount: raw, destination: unhex(destination, 32), outputs: change }));
-  await revealExits();
-}
-
+// separate cards, labelled differently, for that reason. Asking for it
+// publishes where this account is paid first, if it never has.
 async function loadDepositAddress(owner) {
   const current = generation;
   const field = root.querySelector('#deposit-address');
@@ -1006,32 +938,11 @@ async function loadDepositAddress(owner) {
   const copy = root.querySelector('#copy-deposit');
   if (!field) return;
   try {
-    let result;
-    if (config.kind === 'object') {
-      result = await objectCall(config.rpcUrl, 'zyn_depositAddress', { account: owner.accountHex });
-      if (generation !== current) return;
-      // An address only credits an account that has published where to be
-      // paid. The node now holds such a payment as a debt rather than losing
-      // it, but registering first means it is credited the moment it lands.
-      if (result && result.registered === false && owner.viewing) {
-        await registerObjectAccount(owner);
-        if (generation !== current) return;
-      }
-    } else {
-      const status = await rpc(config.rpcUrl, 'zyn_status');
-      if (generation !== current) return;
-      const payload = signedRead(owner, config.chain, checkedEpoch(status, config.chain));
-      result = await rpc(config.rpcUrl, 'zyn_depositAddress', [hex(payload)]);
-    }
+    // An address from the other Zcash network is refused outright: the
+    // header says which one this is, and the money would go to a chain the
+    // holder did not mean.
+    const address = await depositAddress(config, owner);
     if (generation !== current) return;
-    const address = result?.address;
-    if (typeof address !== 'string' || !address) throw new Error('No address returned');
-    // The header says which Zcash network this is. If the node hands back an
-    // address from the other one, the header is wrong and the money would go
-    // to a chain the buyer did not mean — so nothing is shown at all.
-    if (!address.startsWith(config.zcashPrefix)) {
-      throw new Error(`This node answered with an address that is not ${config.zcash}`);
-    }
     field.textContent = address;
     copy.hidden = false;
     copy.onclick = async () => { await navigator.clipboard.writeText(address); note('Deposit address copied.'); };
@@ -1048,96 +959,6 @@ async function loadDepositAddress(owner) {
   }
 }
 
-/// Fungible holdings: what the account can spend, as opposed to what it owns
-/// one of. ZEC.zy is always listed even at zero — somebody who has just sent a
-/// deposit needs to watch it arrive, and an empty list would look like the
-/// wallet had not noticed.
-
-/// Hold-and-compute, for a chain that will not tell you what you own.
-///
-/// `zyn_published` carries every note the chain has ever published and every
-/// nullifier it has seen. Opening the ones that belong to this wallet, and
-/// dropping the ones already spent, is the balance. Nothing here asks the
-/// operator a question whose answer they could tailor.
-async function refreshObject(epoch, announce, active) {
-  if (!identity?.viewing || !identity?.nullifier) {
-    holdings = []; assets = []; listings = [];
-    renderCoins(); renderItems();
-    note('This wallet was stored before the object ledger existed. Restore it from the recovery phrase to read balances here.', true);
-    return;
-  }
-
-  const published = await rpc(config.rpcUrl, 'zyn_published');
-  if (!active()) return;
-  const { held } = scanObjects(published, {
-    secret: identity.viewing,
-    nkey: identity.nullifier,
-    owner: identity.account,
-  });
-
-  // An object ledger has no asset registry, so the only name this wallet can
-  // put to an id is the one the deployment pinned. Anything else is shown by
-  // its id rather than given a name nobody assigned.
-  const zec = config.zecAsset;
-  const seen = [...new Set(held.map((h) => h.asset))];
-  // Items are their own assets; the node says which collection and serial.
-  const items = new Map();
-  const others = seen.filter((a) => a !== zec);
-  if (others.length) {
-    try {
-      for (const i of await objectCall(config.rpcUrl, 'zyn_items', { assets: others.slice(0, 500).join(',') })) {
-        if (/^[0-9a-f]{64}$/.test(i.asset) && /^[0-9a-f]{64}$/.test(i.collection) && Number.isSafeInteger(i.serial)) items.set(i.asset, i);
-      }
-    } catch { /* names only: an item still shows, by id */ }
-    if (!active()) return;
-  }
-  // Launchpad tokens name themselves: their ticker is in the curve's meta.
-  const tickers = new Map();
-  if (others.some((a) => !items.has(a))) {
-    try {
-      const market = await objectCall(config.rpcUrl, 'zyn_market');
-      for (const c of market.curves || []) {
-        const m = /^[0-9a-f]{64}$/.test(c.token) && typeof c.meta === 'string' ? decodeMeta(c.meta) : null;
-        if (m) tickers.set(c.token, m.symbol);
-      }
-      // Bridged coins name themselves by origin (SOL.zy, ETH.zy, a token's
-      // .zy), and pool shares by their pair, the way the market names them.
-      for (const b of await loadBridged(config)) tickers.set(b.asset, bridgedName(config, b));
-      const nameOf = (id) => (id === zec ? 'ZEC.zy' : tickers.get(id) || `${id.slice(0, 6)}…`);
-      for (const p of market.pools || []) {
-        if (/^[0-9a-f]{64}$/.test(p.lp) && typeof p.a === 'string' && typeof p.b === 'string') tickers.set(p.lp, `LP ${nameOf(p.a)}/${nameOf(p.b)}`);
-      }
-      // Lending shares: lZEC.zy, lETH.zy, lSOL.zy, as Zyn Lend names them.
-      for (const a of [zec, ...tickers.keys()]) {
-        if (/^[0-9a-f]{64}$/.test(a) && !tickers.get(a)?.startsWith('LP ')) tickers.set(hex(lendAsset(unhex(a, 32))), `l${nameOf(a)}`);
-      }
-    } catch { /* names only */ }
-    if (!active()) return;
-  }
-  // Event certificates (§150) are named by the event they came from.
-  if (config.attendUrl && [...items.values()].some((i) => !(config.collections || []).some((c) => String(c.id).toLowerCase() === i.collection))) {
-    await loadEventNames();
-    if (!active()) return;
-  }
-  const collectionName = (id) => ((config.collections || []).find((c) => String(c.id).toLowerCase() === id) || {}).name || eventNames.get(id)?.name || `Collection ${id.slice(0, 6)}`;
-  assets = seen.map((id) => ({
-    id,
-    symbol: id === zec ? 'ZEC.zy' : items.has(id) ? `${collectionName(items.get(id).collection)} #${items.get(id).serial}` : tickers.get(id) || `asset ${id.slice(0, 8)}…`,
-    item: items.has(id),
-    event: items.has(id) ? eventNames.get(items.get(id).collection) || null : null,
-  }));
-  if (zec && !seen.includes(zec)) assets.unshift({ id: zec, symbol: 'ZEC.zy' });
-
-  objectHeld = held;
-  void revealExits();
-  // `renderCoins` reads decimal strings, and these are WAD BigInts.
-  holdings = held.map((h) => ({ asset: h.asset, amount: h.amount.toString() }));
-  listings = [];
-  renderCoins();
-  renderItems();
-  if (announce) note(`Synced at epoch ${epoch}.`);
-}
-
 /// A WAD amount as a trimmed decimal with thousands marks, to `places`
 /// decimals (cut, never rounded up), for display only.
 function wadText(raw, places = 18) {
@@ -1147,227 +968,102 @@ function wadText(raw, places = 18) {
   return frac ? `${whole}.${frac}` : whole;
 }
 
+/// Everything held, in dollars, beside the heading.
+function renderWorth() {
+  const el = root.querySelector('#worth');
+  if (!el) return;
+  let sum = 0n, any = false;
+  const add = (v) => { if (v != null) { sum += v; any = true; } };
+  const view = zecAccount?.view;
+  if (view) add(usdOf(config.zecAsset, BigInt(view.balance.orchard + view.balance.ironwood) * 10_000_000_000n));
+  for (const c of pocket?.coins || []) if (c.amount > 0n) add(usdOf(c.asset, c.amount));
+  el.innerHTML = any && sum > 0n ? `${escapeHtml(usdText(sum))}${tip('In dollars at the prices posted on Zyn for its lending markets. Coins with no posted price are not counted.')}` : '';
+}
+
+/// Coins: what the account can spend, with what each is worth. ZEC.zy is
+/// always listed, even at zero — somebody who has just sent a deposit needs
+/// to watch it arrive.
 function renderCoins() {
-  let coins = holdings
-    .map((h) => ({ ...h, meta: assets.find((a) => a.id === h.asset) }))
-    .filter((h) => h.meta && !h.meta.content && !h.meta.item && decimalRaw(h.amount) > 0n);
-  // On the object ledger a holding is one note, in WAD units: the pocket
-  // shows one card per coin, its notes summed, as a decimal. What is sent is
-  // funded from the notes themselves, not from this total.
-  if (config.kind === 'object') {
-    const byAsset = new Map();
-    for (const c of coins) {
-      const had = byAsset.get(c.asset);
-      byAsset.set(c.asset, had ? { ...had, amount: (BigInt(had.amount) + BigInt(c.amount)).toString() } : { ...c });
-    }
-    // Six places, rounded down so a card never shows more than is held; the
-    // exact amount is in the title. Below that, say so rather than show 0.
-    coins = [...byAsset.values()].map((c) => {
-      const shown = wadText(c.amount, 6);
-      return { ...c, shown: shown === '0' && BigInt(c.amount) > 0n ? '< 0.000001' : shown, exact: wadText(c.amount) };
-    });
-  }
-
-  const deposit = assets.find((a) => a.symbol === 'ZEC.zy');
-  if (deposit && !coins.some((c) => c.asset === deposit.id)) {
-    coins.unshift({ asset: deposit.id, amount: '0', meta: deposit });
-  }
-  coins.sort((a, b) => (a.meta.symbol === 'ZEC.zy' ? -1 : b.meta.symbol === 'ZEC.zy' ? 1 : a.meta.symbol.localeCompare(b.meta.symbol)));
-
   const holder = root.querySelector('#coins');
   const count = root.querySelector('#coin-count');
   if (!holder) return;
-  count.textContent = String(coins.length);
-  holder.innerHTML = coins.map((c, i) => `<div class="coin"><div><p class="kicker">${escapeHtml(c.meta.symbol)}</p><b${c.exact ? ` title="${escapeHtml(c.exact)}"` : ''}>${escapeHtml(c.shown ?? readableAmount(c.amount))}</b></div>${config.kind === 'object' && decimalRaw(c.amount) > 0n ? `<button class="quiet coin-send" data-coin="${i}">Send →</button>` : (c.meta.symbol === 'ZEC.zy' ? '<span class="muted">deposited ZEC</span>' : '')}</div>`).join('');
-  holder.querySelectorAll('[data-coin]').forEach((b) => { b.onclick = () => openObjectSend(coins[Number(b.dataset.coin)]); });
-}
-
-function renderItems() {
-  for (const url of artUrls) URL.revokeObjectURL(url);
-  artUrls.clear();
-  // Held items, plus the ones resting in the order book. An escrowed item is
-  // still the holder's — it is one cancellation away — so hiding it would be
-  // telling them it is gone.
-  const held = holdings.map((h) => ({ ...h, meta: assets.find((a) => a.id === h.asset) }))
-    .filter((h) => (h.meta?.content || h.meta?.item) && decimalRaw(h.amount) > 0n);
-  const resting = listings
-    .map((o) => ({ asset: o.offerAsset, amount: o.offerAmount, owner: o.owner, via: o.via,
-                   meta: assets.find((a) => a.id === o.offerAsset), listing: o }))
-    .filter((h) => h.meta?.content);
-  const list = [...held, ...resting];
-  // On the object ledger an item is shown and sent here; listing, buying and
-  // redeeming are the Cave store's.
-  if (config.kind === 'object') {
-    root.querySelector('#item-count').textContent = String(held.length);
-    root.querySelector('#items').innerHTML = held.length ? held.map((h, i) => `<article class="item" data-index="${i}"><div class="art"><img src="/nap-mark.png" alt=""></div><div><p class="kicker">ITEM</p><h3>${escapeHtml(h.meta.symbol)}</h3><p class="media-status">${h.meta.event ? `${escapeHtml(h.meta.event.date)}${h.meta.event.place ? ` · ${escapeHtml(h.meta.event.place)}` : ''}. Proof you were there; only you can see you hold it.` : 'Trade it in the Cave store.'}</p><button>Send →</button></div></article>`).join('') : '<div class="empty"><img src="/nap-mark.png" alt=""><h3>No items yet.</h3><p>Items you buy in the Cave store appear here.</p></div>';
-    root.querySelectorAll('.item').forEach((el) => {
-      const h = held[Number(el.dataset.index)];
-      el.querySelector('button').onclick = () => openObjectSend({ asset: h.asset, amount: h.amount, meta: h.meta });
-    });
-    return;
-  }
-  root.querySelector('#item-count').textContent = String(list.length);
-  root.querySelector('#items').innerHTML = list.length ? list.map((h, i) => `<article class="item" data-index="${i}"><div class="art" data-content="${escapeHtml(h.meta.content)}"><img src="/nap-mark.png" alt="Generic placeholder; artwork not verified"></div><div><p class="kicker">ITEM · #${escapeHtml(h.asset)}</p><h3>${escapeHtml(h.meta.symbol || `Item ${h.asset}`)}</h3><p class="media-status">${h.listing ? `Listed · ${escapeHtml(readableAmount(h.listing.wantAmount))} ZEC.zy` : 'Artwork not verified'}</p><button>Review & send →</button> <button data-list>${h.listing ? 'Cancel listing' : 'List for sale'} →</button></div></article>`).join('') : `<div class="empty"><img src="/nap-mark.png" alt=""><h3>No items yet.</h3><p>Claim a gift or receive a Zyn item at the account below.</p></div>`;
-  root.querySelectorAll('.item').forEach((el) => {
-    const item = list[Number(el.dataset.index)];
-    const [send, listBtn] = el.querySelectorAll('button');
-    // An escrowed item cannot be sent — it is not in the account to send from.
-    if (item.listing) { send.disabled = true; send.textContent = 'In escrow'; }
-    else send.onclick = () => openSend(item);
-    listBtn.onclick = () => openList(item);
+  const coins = pocket?.coins || [];
+  count.textContent = String(coins.filter((c) => c.amount > 0n).length);
+  // Six places, rounded down so a card never shows more than is held; the
+  // exact amount is in the title. Below that, say so rather than show 0.
+  holder.innerHTML = coins.map((c, i) => {
+    const shown = wadText(c.amount, 6);
+    const usd = usdText(usdOf(c.asset, c.amount));
+    return `<div class="coin"><div><p class="kicker">${escapeHtml(c.symbol)}</p><b title="${escapeHtml(wadText(c.amount))}">${escapeHtml(shown === '0' && c.amount > 0n ? '< 0.000001' : shown)}</b><span class="coin-usd">${escapeHtml(usd)}</span></div>${c.amount > 0n ? `<button class="quiet coin-send" data-coin="${i}">Send →</button>` : `<span class="muted">${c.asset === config.zecAsset ? 'deposited ZEC' : ''}</span>`}</div>`;
+  }).join('');
+  holder.querySelectorAll('[data-coin]').forEach((b) => {
+    const c = coins[Number(b.dataset.coin)];
+    b.onclick = () => openObjectSend({ asset: c.asset, symbol: c.symbol, item: false, amount: c.amount });
   });
-  // The gate. Nothing reaches the gateway until this is on, so the default
-  // render makes no request that names an item.
-  if (artEnabled()) {
-    list.forEach((h, i) => loadVerifiedArt(root.querySelectorAll('.art')[i], h.meta.content));
-  } else {
-    root.querySelectorAll('.media-status').forEach((el) => {
-      el.textContent = 'Artwork not fetched — privacy';
-    });
-  }
-  const artToggle = root.querySelector('#art-toggle');
-  if (artToggle) {
-    artToggle.checked = artEnabled();
-    artToggle.onchange = () => {
-      setArtEnabled(artToggle.checked);
-      note(
-        artToggle.checked
-          ? 'Artwork on. The gateway now learns which items you hold.'
-          : 'Artwork off. Nothing is requested for your items.',
-      );
-      renderItems();
-    };
-  }
-}
-function decimalRaw(value) {
-  if (!/^(0|[1-9]\d{0,38})(\.\d{1,18})?$/.test(String(value))) throw new Error('Invalid holdings amount');
-  const [whole, frac = ''] = String(value).split('.');
-  return BigInt(whole || 0) * WAD + BigInt(frac.padEnd(18, '0').slice(0, 18) || 0);
-}
-async function loadVerifiedArt(el, content) {
-  try {
-    if (!/^[a-f0-9]{64}$/.test(content)) return;
-    const manifestBytes = await boundedBytes(`${config.mediaGateway.replace(/\/$/, '')}/${content}`, MAX_MANIFEST);
-    const committed = new Uint8Array(manifestBytes.length + 1); committed.set(manifestBytes, 1);
-    if (hex(new Uint8Array(await crypto.subtle.digest('SHA-256', committed))) !== content) return;
-    const manifest = parseManifest(manifestBytes);
-    const media = manifest.media.find((m) => m.role === 0);
-    if (!media) return;
-    if (media.bytes > MAX_IMAGE) return;
-    const bytes = await boundedBytes(`${config.mediaGateway.replace(/\/$/, '')}/${media.hash}`, MAX_IMAGE);
-    if (bytes.length !== media.bytes || hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) !== media.hash) return;
-    if (!safeRaster(media, bytes) || !el.isConnected) return;
-    const url = URL.createObjectURL(new Blob([bytes], { type: media.mime }));
-    artUrls.add(url);
-    el.innerHTML = `<img src="${url}" alt="${escapeHtml(manifest.name)}">`;
-    el.classList.add('verified');
-    el.closest('.item').querySelector('.media-status').textContent = 'Artwork hash verified';
-  } catch (_) { /* the committed placeholder remains */ }
 }
 
-/// List an item, or take it back off the market.
-///
-/// The frame is signed by `item.owner` — the receiving account for anything
-/// bought through a store — because an offer is escrowed from the account that
-/// holds the item, and the identity holds nothing (§124.3).
-function openList(item) {
-  const owner = item.owner || identity, current = generation;
+/// What an item is called here: an event certificate by its event, anything
+/// else as the pocket named it.
+function itemLabel(it) {
+  const ev = eventNames.get(it.collection);
+  return ev ? { name: `${ev.name} #${it.serial}`, about: `${ev.date}${ev.place ? ` · ${ev.place}` : ''}. Proof you were there; only you can see you hold it.` } : { name: it.name, about: it.collectionName || '' };
+}
+
+/// Items, with their pictures once the holder turns artwork on. Nothing
+/// reaches the media gateway until then (items.js `itemArt`).
+function renderItems() {
+  const box = root.querySelector('#items');
+  const count = root.querySelector('#item-count');
+  if (!box) return;
+  const items = pocket?.items || [];
+  count.textContent = String(items.length);
+  box.innerHTML = items.length
+    ? items.map((it, i) => { const l = itemLabel(it); return `<article class="item" data-index="${i}"><div class="art"><img src="/nap-mark.png" alt="" data-art="${escapeHtml(it.collection)}:${Number(it.serial)}"></div><div><p class="kicker">ITEM</p><h3>${escapeHtml(l.name)}</h3><p class="media-status">${escapeHtml(l.about)}</p><button>View →</button></div></article>`; }).join('')
+    : '<div class="empty"><img src="/nap-mark.png" alt=""><h3>No items yet.</h3><p>Items you buy in the Cave store, or collect at an event, appear here.</p></div>';
+  box.querySelectorAll('.item').forEach((el) => {
+    el.querySelector('button').onclick = () => itemDialog(items[Number(el.dataset.index)]);
+  });
+  if (artOn()) fillArt(config, box);
+}
+
+/// One item: its picture, what it is, and sending it.
+function itemDialog(it) {
   const dialog = root.querySelector('#send-dialog');
-  const listed = item.listing;
-  dialog.innerHTML = listed
-    ? `<button class="x">×</button><p class="kicker">LISTING</p><h2>${escapeHtml(item.meta.symbol || `Item ${item.asset}`)}</h2><p class="muted">This item is escrowed in the order book until it is taken or you cancel. Cancelling returns it to this account.</p><div class="review"><span>Offer</span><b>#${listed.id}</b><span>Asking</span><b>${escapeHtml(readableAmount(listed.wantAmount))} ZEC.zy</b></div><form><button class="primary" type="submit">Cancel the listing <span>→</span></button><p class="error" role="alert"></p></form>`
-    : `<button class="x">×</button><p class="kicker">LIST FOR SALE</p><h2>${escapeHtml(item.meta.symbol || `Item ${item.asset}`)}</h2><p class="muted">The item is escrowed while it rests. Nobody can take it except at your price, and you can cancel until they do.</p><form><label>Price in ZEC.zy<input id="ask" autocomplete="off" inputmode="decimal" placeholder="1.5"></label><div class="review"><span>Item</span><b>#${item.asset.slice(0, 12)}…</b><span>Rests until</span><b>cancelled</b></div><button class="primary" type="submit">Sign &amp; list <span>→</span></button><p class="error" role="alert"></p></form>`;
+  const l = itemLabel(it);
+  const cave = caveLink(config, it.collection, it.serial);
+  dialog.innerHTML = `<button class="x">×</button><p class="kicker">ITEM</p><h2>${escapeHtml(l.name)}</h2><div class="art item-view"><img src="/nap-mark.png" alt="" data-art="${escapeHtml(it.collection)}:${Number(it.serial)}"></div>
+    <div class="review"><span>Collection</span><b>${escapeHtml(it.collectionName || '')}</b><span>Asset</span><b><code class="txid">${escapeHtml(it.asset)}</code></b></div>
+    ${artOn() ? '' : '<p class="muted">Artwork is off. Show artwork under Items loads it; the media gateway then learns your IP address and which items you hold.</p>'}
+    <button class="primary" id="item-send">Send <span>→</span></button>${cave ? `<p class="muted"><a href="${escapeHtml(cave)}" target="_blank" rel="noopener" id="item-cave">Open in Cave →</a></p>` : ''}`;
   dialog.querySelector('.x').onclick = () => dialog.close();
-
-  let submitted = false;
-  dialog.querySelector('form').onsubmit = async (event) => {
-    event.preventDefault();
-    const button = dialog.querySelector('.primary');
-    button.disabled = true;
-    try {
-      const status = await rpc(config.rpcUrl, 'zyn_status');
-      const epoch = checkedEpoch(status, config.chain);
-      if (generation !== current) return;
-      const intent = listed
-        ? cancelOfferIntent(owner.account, BigInt(listed.id))
-        // Rests until cancelled: a silent lapse would look like a theft to
-        // whoever was about to take it.
-        : placeOfferIntent(owner.account, item.asset, WAD, XZEC, parseAmount(dialog.querySelector('#ask').value), 0xffffffffffffffffn);
-      const frame = signedFrame(owner, config.chain, epoch, intent);
-      submitted = true;
-      const accepted = await rpc(config.rpcUrl, 'zyn_sendRawIntent', [hex(frame)]);
-      if (generation !== current) return;
-      dialog.close(); await refresh(false);
-      if (generation !== current) return;
-      note(listed ? `Listing cancelled at sequence ${accepted.seq}.` : `Listed at sequence ${accepted.seq}; acceptance is not anchored finality.`);
-    } catch (e) {
-      if (generation !== current) return;
-      dialog.querySelector('.error').textContent = submitted ? `${e.message}. Submission outcome unknown: refresh and check before trying again.` : e.message;
-      button.disabled = submitted;
-    }
-  };
+  dialog.querySelector('#item-send').onclick = () => { dialog.close(); openObjectSend({ asset: it.asset, symbol: l.name, item: true, amount: WAD }); };
+  dialog.querySelector('#item-cave')?.addEventListener('click', (e) => { if (napBrowser) { e.preventDefault(); openSite(cave); } });
+  if (artOn()) fillArt(config, dialog);
   dialog.showModal();
 }
 
-function openSend(item) {
-  // The key that holds *this* item, which is the identity for a gift and a
-  // receiving account for anything bought through a store. Signing with the
-  // identity would be a signature from an account that holds nothing.
-  const owner = item.owner || identity, current = generation;
-  let reviewedTo = null;
-  const dialog = root.querySelector('#send-dialog');
-  dialog.innerHTML = `<button class="x">×</button><p class="kicker">SEND ONE ITEM</p><h2>${escapeHtml(item.meta.symbol || `Item ${item.asset}`)}</h2><p class="muted">Nap sends exactly one whole NFT unit. Review the destination carefully; transfers cannot be undone.</p><form><label>Recipient Zyn account<input id="send-to" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="64 hex characters"></label><div class="review"><span>Asset</span><b>#${item.asset}</b><span>Amount</span><b>1 item</b><span>Network</span><b>${escapeHtml(config.network)} · ${config.chain}</b></div><button class="primary" type="submit">Sign & relay <span>→</span></button><p class="error" role="alert"></p></form>`;
-  dialog.querySelector('.x').onclick = () => dialog.close();
-  dialog.querySelector('.primary').textContent = 'Review destination →';
-  dialog.querySelector('form').onsubmit = async (event) => {
-    event.preventDefault(); const button = dialog.querySelector('.primary'); button.disabled = true;
-    let submitted = false;
-    try {
-      const to = unhex(dialog.querySelector('#send-to').value, 32);
-      if (generation !== current) throw new Error('Wallet locked or changed. Restore and review again.');
-      if (to.every((b) => b === 0) || hex(to) === owner.accountHex) throw new Error('Choose a different, nonzero recipient account');
-      if (!reviewedTo) {
-        reviewedTo = hex(to);
-        dialog.querySelector('#send-to').value = reviewedTo;
-        dialog.querySelector('#send-to').readOnly = true;
-        button.textContent = 'Confirm: sign & relay 1 item'; button.disabled = false;
-        dialog.querySelector('.error').textContent = 'Check all 64 recipient characters above. Close to edit the destination.';
-        return;
-      }
-      if (hex(to) !== reviewedTo) throw new Error('Destination changed; close and review again');
-      const status = await rpc(config.rpcUrl, 'zyn_status');
-      const epoch = checkedEpoch(status, config.chain);
-      if (generation !== current) return;
-      const account = await rpc(config.rpcUrl, 'zyn_account', [hex(signedRead(owner, config.chain, epoch))]);
-      if (generation !== current) return;
-      if (!account?.spendable?.some((h) => h.asset === item.asset && decimalRaw(h.amount) >= WAD)) throw new Error('This account no longer holds one whole item');
-      const frame = transferFrame(owner, config.chain, epoch, to, item.asset, WAD);
-      submitted = true;
-      const accepted = await rpc(config.rpcUrl, 'zyn_sendRawIntent', [hex(frame)]);
-      if (generation !== current) return;
-      dialog.close(); await refresh(false);
-      if (generation !== current) return;
-      note(accepted.queued ? `Transfer queued at sequence ${accepted.seq}; not yet settled.` : `Transfer accepted at sequence ${accepted.seq}; acceptance is not anchored finality.`);
-    } catch (e) {
-      if (generation !== current) return;
-      dialog.querySelector('.error').textContent = submitted ? `${e.message}. Submission outcome unknown: refresh holdings and check the node before trying again.` : e.message;
-      button.disabled = submitted;
-    }
-  };
-  dialog.showModal();
+/// What this wallet did, as this device saw it: the ledger publishes no
+/// history an account can read back.
+function renderActivity() {
+  const list = root.querySelector('#log');
+  if (!list) return;
+  const log = activity(config, identity).slice(0, 20);
+  list.innerHTML = log.length
+    ? log.map((a) => `<li><b>${escapeHtml(a.title || '')}</b><span>${escapeHtml(a.kind === 'shield' ? `+${a.amount} ZEC` : a.amount || '')}${a.to ? ` · to ${escapeHtml(short(String(a.to)))}` : ''}</span><time>${escapeHtml(new Date(a.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</time></li>`).join('')
+    : '<li class="zec-empty">Nothing yet. Sends, shields, withdrawals and collected payouts from this device show here.</li>';
 }
 
-/// Send a coin to another Zyn account on the object ledger: retire notes this
-/// wallet holds and create one for the recipient, sealed to the viewing key
-/// they registered, plus change sealed to this wallet. Nothing on chain names
-/// either account in the clear.
+/// Send a coin or an item: to another Zyn account on the object ledger
+/// (retire notes this wallet holds and make one sealed to the key the
+/// recipient published, with change back here — nothing on chain names
+/// either account), or ZEC.zy out to an outside Zcash address.
 function openObjectSend(coin) {
   const current = generation;
   let reviewed = null;
   const dialog = root.querySelector('#send-dialog');
-  const isItem = !!coin.meta.item;
+  const isItem = coin.item;
   const isZec = coin.asset === config.zecAsset;
-  dialog.innerHTML = `<button class="x">×</button><p class="kicker">SEND ${escapeHtml(coin.meta.symbol)}</p><h2>${isItem ? 'Send item' : 'Send'}</h2><p class="muted">To a Zyn account ID or a Zcash address. Cannot be undone.${tip(`A Zcash address that belongs to a Zyn account is paid on Zyn, privately and at once${isZec ? '. Any other Zcash address is paid on Zcash, as a withdrawal' : isItem ? '. An item cannot go to any other Zcash address' : ''}.`)}</p><form><label>Recipient<input id="send-to" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Zyn account (64 hex) or ${escapeHtml(config.zcashPrefix)}…"></label>${isItem ? '<input id="send-amount" type="hidden" value="1">' : '<label>Amount<input id="send-amount" inputmode="decimal" autocomplete="off" placeholder="0.0"></label>'}<div class="review"><span>Asset</span><b>${escapeHtml(coin.meta.symbol)}</b><span>You hold</span><b>${escapeHtml(coin.exact ?? readableAmount(coin.amount))}</b><span>Network</span><b>${escapeHtml(config.network)} · ${config.chain}</b></div><button class="primary" type="submit">Review →</button><p class="error" role="alert"></p></form>`;
+  dialog.innerHTML = `<button class="x">×</button><p class="kicker">SEND ${escapeHtml(coin.symbol)}</p><h2>${isItem ? 'Send item' : 'Send'}</h2><p class="muted">To a Zyn account ID or a Zcash address. Cannot be undone.${tip(`A Zcash address that belongs to a Zyn account is paid on Zyn, privately and at once${isZec ? '. Any other Zcash address is paid on Zcash, as a withdrawal' : isItem ? '. An item cannot go to any other Zcash address' : ''}.`)}</p><form><label>Recipient<input id="send-to" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Zyn account (64 hex) or ${escapeHtml(config.zcashPrefix)}…"></label>${isItem ? '<input id="send-amount" type="hidden" value="1">' : '<label>Amount<input id="send-amount" inputmode="decimal" autocomplete="off" placeholder="0.0"></label>'}<div class="review"><span>Asset</span><b>${escapeHtml(coin.symbol)}</b><span>You hold</span><b>${escapeHtml(isItem ? '1 item' : wadText(coin.amount))}</b><span>Network</span><b>${escapeHtml(config.network)} · ${config.chain}</b></div><button class="primary" type="submit">Review →</button><p class="error" role="alert"></p></form>`;
   dialog.querySelector('.x').onclick = () => dialog.close();
   dialog.querySelector('form').onsubmit = async (event) => {
     event.preventDefault();
@@ -1376,53 +1072,42 @@ function openObjectSend(coin) {
     button.disabled = true;
     try {
       const raw = dialog.querySelector('#send-to').value.trim();
-      const amount = parseAmount(dialog.querySelector('#send-amount').value.trim());
+      const amountText = dialog.querySelector('#send-amount').value.trim().replace(/,/g, '');
+      const amount = isItem ? WAD : parseAmount(amountText);
+      if (amount > coin.amount) throw new Error('More than this wallet holds');
       // Who this is, decided before anything is signed: a Zyn account, a
       // Zcash address that belongs to one, or a Zcash address outside Zyn.
-      let to = null, external = null;
-      if (/^[0-9a-f]{64}$/i.test(raw)) {
-        to = unhex(raw.toLowerCase(), 32);
-      } else if (raw.startsWith(config.zcashPrefix) || /^t[a-z0-9]{20,}$/i.test(raw)) {
-        const r = await objectCall(config.rpcUrl, 'zyn_resolveAddress', { address: raw });
-        if (r && /^[0-9a-f]{64}$/.test(String(r.account))) to = unhex(r.account, 32);
-        else external = raw;
-      } else {
-        throw new Error(`That is neither a Zyn account nor a ${config.zcash} address`);
-      }
-      if (external && !isZec) throw new Error(isItem ? 'An item cannot leave Zyn. Send it to a Zyn account, or to a Zcash address that belongs to one.' : 'Only ZEC.zy can be paid to an outside Zcash address.');
-      if (to && (to.every((b) => b === 0) || hex(to) === identity.accountHex)) throw new Error('Choose a different, nonzero recipient');
-      const key = `${to ? hex(to) : external}:${amount}`;
+      const { to, external } = await resolveRecipient(config, identity, raw, { isZec, isItem });
+      if (generation !== current) return;
+      const key = `${to || external}:${amount}`;
       if (!reviewed) {
         reviewed = key;
         dialog.querySelectorAll('input').forEach((el) => { el.readOnly = true; });
         button.textContent = external
-          ? `Confirm: withdraw ${readableAmount(String(amount / WAD))}${amount % WAD ? '…' : ''} ZEC to Zcash`
-          : `Confirm: send ${isItem ? 'the item' : `${readableAmount(dialog.querySelector('#send-amount').value.trim())} ${coin.meta.symbol}`} on Zyn`;
+          ? `Confirm: withdraw ${wadText(amount)} ZEC to Zcash`
+          : `Confirm: send ${isItem ? 'the item' : `${wadText(amount)} ${coin.symbol}`} on Zyn`;
         button.disabled = false;
         error.textContent = external
           ? 'An outside Zcash address: this leaves Zyn as a withdrawal. The bridge fee is added and the Zcash network fee comes out of it.'
-          : `Paying Zyn account ${hex(to).slice(0, 10)}…${hex(to).slice(-6)} privately. Close to edit.`;
+          : `Paying Zyn account ${to.slice(0, 10)}…${to.slice(-6)} privately. Close to edit.`;
         return;
       }
       if (key !== reviewed) throw new Error('Details changed; close and review again');
+      if (!pocket?.held) throw new Error('Still reading your balances; try again in a moment.');
       if (external) {
-        await withdrawToZcash(external, dialog.querySelector('#send-amount').value.trim());
+        await withdrawZec(config, identity, pocket.held, external, amountText);
+        logActivity(config, identity, { kind: 'out', title: 'Withdrew to Zcash', symbol: 'ZEC', amount: `−${wadText(amount)}`, to: external });
         if (generation !== current) return;
         dialog.close();
         note('Withdrawal recorded. The vault pays it once two custodians sign.');
-        refresh(false);
-        return;
+      } else {
+        await payOnZyn(config, identity, pocket.held, coin.asset, amount, to);
+        logActivity(config, identity, { kind: 'out', title: `Sent ${coin.symbol}`, symbol: coin.symbol, amount: isItem ? '1' : `−${wadText(amount)}`, to: raw });
+        if (generation !== current) return;
+        dialog.close();
+        note(`Sent ${isItem ? coin.symbol : `${wadText(amount)} ${coin.symbol}`}.`);
       }
-      const { viewing } = await objectCall(config.rpcUrl, 'zyn_viewingKey', { account: hex(to) });
-      if (generation !== current) return;
-      const asset = unhex(coin.asset, 32);
-      const { inputs, change } = fundFrom(identity, objectHeld, asset, amount);
-      const note = { asset, amount, owner: to, nonce: crypto.getRandomValues(new Uint8Array(32)) };
-      const enc = sealNote(unhex(viewing, 32), crypto.getRandomValues(new Uint8Array(32)), note);
-      await submitObject(spendIntent(identity.account, OBJECT_PROGRAM.privateTransfer, inputs, [{ note, enc }, ...change]));
-      if (generation !== current) return;
-      dialog.close();
-      note_(`Sent ${readableAmount(dialog.querySelector('#send-amount')?.value || '')} ${coin.meta.symbol}.`);
+      renderActivity();
       refresh(false);
     } catch (e) {
       if (generation !== current) return;
@@ -1432,7 +1117,6 @@ function openObjectSend(coin) {
   };
   dialog.showModal();
 }
-const note_ = (text) => note(text);
 
 /// Events by collection ({name, date}), from the certificate service's public list.
 const eventNames = new Map();
@@ -1456,7 +1140,7 @@ async function collectCertificate() {
     // first if this wallet has never been opened on this network.
     const published = await objectCall(config.rpcUrl, 'zyn_viewingKey', { account: owner.accountHex }).then((r) => /^[0-9a-f]{64}$/.test(String(r?.viewing || '')), () => false);
     if (generation !== current) return;
-    if (!published && owner.viewing) await registerObjectAccount(owner);
+    if (!published && owner.viewing) await submitIntent(config, owner, registerIntent(owner.account, x25519.getPublicKey(owner.viewing)));
     if (generation !== current) return;
     const response = await fetch(`${config.attendUrl.replace(/\/$/, '')}/attend`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: tap.event, picc: tap.picc, cmac: tap.cmac, account: owner.accountHex }), cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(30000) });
     const body = await response.json().catch(() => ({}));

@@ -75,6 +75,7 @@ async function loadNetworks() {
       if (!n[key]) continue;
       n[key] = endpoint(n[key], key);
     }
+    if (n.bridges?.eth?.vaultRpc) n.bridges = { ...n.bridges, eth: { ...n.bridges.eth, vaultRpc: endpoint(n.bridges.eth.vaultRpc, 'vaultRpc') } };
     return n;
   });
 }

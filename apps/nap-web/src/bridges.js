@@ -1,6 +1,8 @@
-// The bridges (§146, §154, §155), shared by the toolbar wallet (pocket.js)
-// and Nap Connect (connect-ops.js), so a site's bridge page and Nap's own
-// follow one set of rules. No page, no Vite: it runs in Node's tests too.
+// The bridges (§146, §154, §155), as Nap Connect (connect-ops.js) serves
+// them to a site's bridge page (Zyn Lend's Bridge), and what the wallet
+// itself does with them (pocket.js): claim what arrived under its codes, and
+// tell the vault where its exits go. No page, no Vite: it runs in Node's
+// tests too.
 import { hex, parseAmount, unhex } from './core.js';
 import { bridgedAsset, exitCommitment, fund } from './market.js';
 import { bridgeMemo, call, claimWaiting, loadBridged, loadWaiting, submitIntent } from './ledger.js';
@@ -8,19 +10,20 @@ import * as btc from './bitcoin.js';
 import { solanaKey } from './solana.js';
 import { objectCall, withdrawIntent } from './object.js';
 
-/// Where bridging happens on testnet: the lending app's Bridge tab, where
-/// Phantom and MetaMask can reach the page (they cannot reach Nap's own
-/// extension pages). Mainnet keeps Nap's page for the ETH pilot until the app
-/// serves mainnet.
-export const LEND_BRIDGE = 'https://lend.zyn-network.com/#/bridge';
-export const bridgePage = (config) => (config?.id === 'testnet' ? LEND_BRIDGE : null);
-/// A deposit handed over with its one-time code, on the page for `config`.
-export const handoffUrl = (config, key, code, fallback) => (bridgePage(config) ? `${LEND_BRIDGE}/deposit/${key}?code=${code}` : fallback);
-
 const read = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const write = (k, v) => { try { localStorage.setItem(k, v); } catch { /* this session only */ } };
 
-/// The bridges a network's config declares, as bridge.html reads them.
+/// The ERC-20s an EVM bridge config lists (`tokens`), the malformed left out.
+/// Their keys must not take a coin's own (eth, sol, btc, zec).
+export function evmTokens(eth) {
+  return (Array.isArray(eth?.tokens) ? eth.tokens : []).filter((t) => /^[A-Z][A-Z0-9]{1,9}$/.test(String(t?.symbol || ''))
+    && !['ETH', 'SOL', 'BTC', 'ZEC'].includes(t.symbol)
+    && /^0x[0-9a-fA-F]{40}$/.test(String(t.address || ''))
+    && Number.isSafeInteger(t.assetId) && t.assetId > 1 && t.assetId < 2 ** 32
+    && Number.isSafeInteger(t.decimals) && t.decimals >= 0 && t.decimals <= 18);
+}
+
+/// The bridges a network's config declares.
 export function bridgesOf(net) {
   const b = net.bridges || {};
   const out = [];
@@ -28,7 +31,22 @@ export function bridgesOf(net) {
     out.push({ ...b.sol, key: 'sol', symbol: 'SOL', zy: 'SOL.zy', chainName: /devnet/.test(b.sol.network) ? 'Solana devnet' : /testnet/.test(b.sol.network) ? 'Solana testnet' : 'Solana', decimals: 9, network: b.sol.network, asset: hex(bridgedAsset(b.sol.network)) });
   }
   if (b.eth && /^0x[0-9a-fA-F]{40}$/.test(b.eth.vault || '') && Number.isSafeInteger(b.eth.chainId)) {
-    out.push({ ...b.eth, key: 'eth', symbol: 'ETH', zy: 'ETH.zy', chainName: b.eth.chainId === 1 ? 'Ethereum' : 'Sepolia', decimals: 18, network: `eip155:${b.eth.chainId}`, asset: hex(bridgedAsset(`eip155:${b.eth.chainId}`)) });
+    const chainName = b.eth.chainId === 1 ? 'Ethereum' : 'Sepolia';
+    const network = `eip155:${b.eth.chainId}`;
+    out.push({ ...b.eth, key: 'eth', evm: true, symbol: 'ETH', zy: 'ETH.zy', chainName, decimals: 18, network, asset: hex(bridgedAsset(network)) });
+    // ERC-20s into the same vault (BOLD, §68): approve, then deposit under
+    // the token's own vault asset id. Each is its own asset on Zyn, named by
+    // the symbol the deployment gives it.
+    for (const t of evmTokens(b.eth)) {
+      out.push({
+        key: t.symbol.toLowerCase(), evm: true, symbol: t.symbol, zy: `${t.symbol}.zy`, chainName, decimals: t.decimals, network,
+        vault: b.eth.vault, chainId: b.eth.chainId, explorer: b.eth.explorer, token: t.address, assetId: t.assetId, origin: t.address.slice(2).toLowerCase(),
+        faucet: !!t.faucet && b.eth.chainId !== 1, asset: hex(bridgedAsset(network, unhex(t.address.slice(2).toLowerCase(), 20))),
+        // A vault whose registry is read on its own chain (mainnet): the token
+        // waits for it. Declared but unreachable is shut, never skipped.
+        checkVault: b.eth.vaultRpc !== undefined, vaultRpc: typeof b.eth.vaultRpc === 'string' && b.eth.vaultRpc ? b.eth.vaultRpc : null,
+      });
+    }
   }
   if (b.btc && /^[0-9a-f]{64}$/.test(b.btc.internal || '')) {
     const chain = ['bitcoin', 'testnet4'].includes(b.btc.network) ? b.btc.network : 'signet';
@@ -38,13 +56,48 @@ export function bridgesOf(net) {
   return out;
 }
 
+/// `assets(uint32)` on a ZynVault: the token registered under an asset id.
+export const VAULT_ASSETS = 'f8a80dc8';
+
+/// The vault's answer to `assets(id)`: the token (lowercase), its decimals,
+/// and whether the id is registered; null for anything else.
+export function readVaultAsset(result) {
+  const h = String(result ?? '').replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{192}$/.test(h)) return null;
+  return { token: `0x${h.slice(24, 64).toLowerCase()}`, decimals: Number(BigInt(`0x${h.slice(64, 128)}`)), registered: BigInt(`0x${h.slice(128, 192)}`) === 1n };
+}
+
+/// Whether `b`'s vault has registered `b.token` under `b.assetId`, read on
+/// its chain through `b.vaultRpc`. A token the vault does not take yet would
+/// be stuck in it, so anything short of that exact answer is false.
+export async function vaultTakes(b) {
+  if (!b.token || !b.checkVault) return true;
+  if (!b.vaultRpc) return false;
+  try {
+    const r = await fetch(b.vaultRpc, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: b.vault, data: `0x${VAULT_ASSETS}${BigInt(b.assetId).toString(16).padStart(64, '0')}` }, 'latest'] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const a = readVaultAsset((await r.json())?.result);
+    return !!a?.registered && a.token === String(b.token).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 /// Which bridges this chain has registered, what each has issued, and the fee.
+/// A token on a vault checked on its own chain (mainnet BOLD) is live only
+/// once the chain lists it and the vault has registered it; `waiting` says
+/// which is missing.
 export async function bridgeState(config) {
   const [bridged, market] = await Promise.all([loadBridged(config), objectCall(config.rpcUrl, 'zyn_market').catch(() => ({}))]);
-  const bridges = bridgesOf(config).map((b) => {
+  const bridges = await Promise.all(bridgesOf(config).map(async (b) => {
     const row = bridged.find((x) => x.asset === b.asset);
-    return { ...b, live: !!row, issued: /^\d+$/.test(String(row?.issued ?? '')) ? BigInt(row.issued) : null };
-  });
+    const vault = await vaultTakes(b);
+    return { ...b, live: !!row && vault, waiting: !vault ? 'vault' : !row ? 'chain' : null, issued: /^\d+$/.test(String(row?.issued ?? '')) ? BigInt(row.issued) : null };
+  }));
   return { bridges, bps: BigInt(Number(market?.fees?.bridge_bps) || 0) };
 }
 
@@ -81,7 +134,7 @@ function destinationBytes(b, text) {
   return unhex(t.slice(2).toLowerCase(), 20);
 }
 
-// Exits waiting to be revealed — the record bridge.html keeps, shared.
+// Exits waiting to be revealed: a record kept on this device, shared by every page of Nap.
 const bridgeExitsKey = (config) => `nap.bridge.exits.${config.chain}`;
 const bridgeExits = (config) => { try { return JSON.parse(read(bridgeExitsKey(config)) || '[]'); } catch { return []; } };
 
@@ -101,10 +154,11 @@ export function checkBridgeOut(b, to, raw) {
   if (b.key === 'sol' && raw <= 5_000n * LAMPORT) throw new Error('Send more than the 0.000005 SOL network fee');
   if (b.key === 'btc' && raw % SAT !== 0n) throw new Error('BTC has eight decimal places');
   if (b.key === 'btc' && raw < 10_000n * SAT) throw new Error('Send at least 0.0001 BTC; the Bitcoin fee comes out of it');
+  if (b.token && b.decimals < 18 && raw % 10n ** BigInt(18 - b.decimals) !== 0n) throw new Error(`${b.symbol} has ${b.decimals} decimal places`);
   return destinationBytes(b, to);
 }
 
-/// SOL.zy / ETH.zy / BTC.zy back to their chain: commit to the address,
+/// SOL.zy / ETH.zy / BOLD.zy / BTC.zy back to their chain: commit to the address,
 /// burn, then show the address to the bridge that pays it.
 export async function bridgeOut(config, identity, held, b, to, raw, bps) {
   return bridgeOutTo(config, identity, held, b, checkBridgeOut(b, to, raw), raw, bps);
