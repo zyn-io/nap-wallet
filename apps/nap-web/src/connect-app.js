@@ -17,13 +17,21 @@
 // - Connecting shows the site the Zyn account and a Zcash address, nothing
 //   else. Every write is approved one at a time, and the approval describes
 //   what the chain says, not what the site says.
-// - What is remembered is which sites are connected, in localStorage. Never a
-//   key, never a balance.
+// - A read that says more than a connection does (private-channel notes,
+//   lending positions) waits for the holder to allow it to that site, once,
+//   on a card naming exactly what goes (connect-grants.js).
+// - Public answers (markets, the bridges' state) need no wallet: they never
+//   read the session. Only the holder's own actions here — unlocking, a click
+//   on a card — keep an extension session from lapsing; a site asking does
+//   not (audit, 9 Oct 2026).
+// - What is remembered is which sites are connected, and what each was
+//   allowed to read, in localStorage. Never a key, never a balance.
 
-import { loadSession, saveSession } from './session.js';
+import { peekSession, saveSession, touchSession } from './session.js';
 import { deriveIdentity, forgetIdentity, openSealedWallet } from './core.js';
 import { deriveZecKeys, stopZec, ZecAccount } from './zec/client.js';
 import { ERR, METHODS, ProviderError, session } from './connect-ops.js';
+import { allowed, connectedTo, SCOPES, scopesOf, withConnection, withScope, without } from './connect-grants.js';
 import { endpoint, IN_EXTENSION } from './origin.js';
 import './styles.css';
 import './connect.css';
@@ -40,12 +48,13 @@ const keptWallet = () => { try { return JSON.parse(read(KEPT_KEY) || 'null'); } 
 const connections = () => { try { return JSON.parse(read(CONNECTED_KEY) || '{}') || {}; } catch { return {}; } };
 /// A site is connected on a network, to one wallet: another wallet opened in
 /// this browser later is not connected to it until its holder says so.
-const isConnected = (origin, net) => {
-  const c = connections()[origin];
-  return c?.network === net && !!identity && c.account === identity.accountHex;
-};
-function remember(origin, net) { const c = connections(); c[origin] = { network: net, account: identity.accountHex, at: Date.now() }; write(CONNECTED_KEY, JSON.stringify(c)); }
-function forget(origin) { const c = connections(); delete c[origin]; write(CONNECTED_KEY, JSON.stringify(c)); }
+const isConnected = (origin, net) => connectedTo(connections(), origin, net, identity?.accountHex);
+/// Whether the holder allowed `scope` to this site, on this network and wallet.
+const isAllowed = (origin, net, scope) => allowed(connections(), origin, net, identity?.accountHex, scope);
+function remember(origin, net) { write(CONNECTED_KEY, JSON.stringify(withConnection(connections(), origin, net, identity.accountHex))); }
+function allow(origin, net, scope) { write(CONNECTED_KEY, JSON.stringify(withScope(connections(), origin, net, identity.accountHex, scope))); }
+/// Disconnecting takes back every scope with the connection.
+function forget(origin) { write(CONNECTED_KEY, JSON.stringify(without(connections(), origin))); }
 
 let networks = [];
 let config = null;
@@ -227,13 +236,16 @@ async function handle(job) {
   const m = METHODS[method];
   if (!m) throw new ProviderError(ERR.UNSUPPORTED, `Nap does not do ${method}`);
 
-  // In the extension the toolbar can lock Nap; what it locked is locked here.
-  if (IN_EXTENSION && identity && !(await loadSession())) { forgetIdentity(identity); identity = null; }
-
   if (method === 'nap_disconnect') { forget(site); return true; }
   useNetwork(method, params);
+  // Public: what the chain says to anyone. No wallet, and the session is not
+  // read — so a site polling these keeps nothing unlocked.
+  if (m.kind === 'public') return m.run({ config, identity: null, zec: null, zecReady: null }, params);
+
+  // In the extension the toolbar can lock Nap; what it locked is locked here.
+  // Looked at, not used: a site's request never pushes the idle lock out.
+  if (IN_EXTENSION && identity && !(await peekSession())) { forgetIdentity(identity); identity = null; }
   if (method === 'nap_session') return identity && isConnected(site, config.id) ? session(context()) : null;
-  if (m.kind === 'public') return m.run(context(), params);
 
   if (!identity) { tell(job, { nap: 'attention' }); await unlock(method); }
   if (siteGone(job)) throw new ProviderError(ERR.REJECTED, 'The site went away');
@@ -244,6 +256,15 @@ async function handle(job) {
     remember(site, config.id);
   }
   if (method === 'nap_connect') { working_('Connected.'); return session(context()); }
+  // A read that says more than the connection does: asked once per site,
+  // network and wallet, on its own card (audit, 9 Oct 2026).
+  if (m.scope && !isAllowed(site, config.id, m.scope)) {
+    tell(job, { nap: 'attention' });
+    show(scopeCard(m.scope));
+    if (!(await decide())) throw new ProviderError(ERR.REJECTED, 'The holder did not allow this site to read that');
+    if (siteGone(job)) throw new ProviderError(ERR.REJECTED, 'The site went away');
+    allow(site, config.id, m.scope);
+  }
   if (m.kind === 'read') { working_('Answering…'); return m.run(context(), params); }
   if (m.kind === 'auto') { working_('Collecting what settled…'); const r = await m.run(context(), params); flash(r?.collected ? `Collected ${r.collected}.` : 'Nothing to collect yet.'); return r; }
 
@@ -268,8 +289,9 @@ async function handle(job) {
 
 async function unlock(method) {
   // Unlocked already in this browser session: the site's request is still
-  // shown and approved below, but the password is not asked again.
-  const held = await loadSession();
+  // shown and approved below, but the password is not asked again. A site
+  // asked, not the holder: the idle deadline stays where it was.
+  const held = await peekSession();
   if (held) { identity = held.identity; return; }
   return new Promise((resolve, reject) => {
     const why = method === 'nap_connect' ? 'wants to connect to your Nap' : 'is asking your Nap';
@@ -346,7 +368,7 @@ async function unlock(method) {
       if (!kept) { if (screen === 'password') noWallet(); return; }
       if (screen === 'password' && JSON.stringify(kept) === shownKept) return;
       // The tab that saved it may have opened it for this browser session too.
-      const held = await loadSession();
+      const held = await peekSession();
       if (held) { done(held.identity); return; }
       askPassword(kept);
     }
@@ -387,10 +409,27 @@ function connectCard() {
   return `<p class="kicker">CONNECT</p><h2>${siteName()} wants to connect.</h2>
     <dl class="rows"><dt>It will see</dt><dd>Your Zyn account ID${identity.zec ? ' and your Zcash address' : ''}</dd>
     <dt>When it asks</dt><dd>Your ZEC.zy and token balances, your items, what you are owed, your sale tickets and the coins you made</dd>
+    <dt>Only if you allow it</dt><dd>${esc(capital(scopeList(Object.keys(SCOPES))))} — each asked on its own card</dd>
     <dt>It will not see</dt><dd>Your keys or your recovery phrase</dd>
     <dt>Network</dt><dd>${esc(config.network)} · ${esc(config.zcash)}</dd></dl>
     <p class="muted">It can ask you to approve payments and trades. Nothing moves unless you approve it here.</p>
     <div class="actions"><button class="quiet" id="no">Reject</button><button class="primary" id="yes">Connect <span>→</span></button></div>`;
+}
+
+const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+/// "your private-channel notes and your lending positions".
+const scopeList = (scopes) => scopes.map((s) => SCOPES[s].what).join(' and ');
+
+/// A read beyond the connection: what goes, and what the site can learn from
+/// it, before Allow. Kept for this site on this network until it disconnects.
+function scopeCard(scope) {
+  const s = SCOPES[scope];
+  return `<p class="kicker">SHARE</p><h2>${siteName()} asks to see ${esc(s.what)}.</h2>
+    <dl class="rows"><dt>It will see</dt><dd>${esc(s.shows)}</dd>
+    <dt>Network</dt><dd>${esc(config.network)}</dd></dl>
+    <p class="muted">${esc(s.risk)}</p>
+    <p class="muted">Allowed once for this site on ${esc(config.network)}. Disconnecting the site takes it back.</p>
+    <div class="actions"><button class="quiet" id="no">Reject</button><button class="primary" id="yes">Allow <span>→</span></button></div>`;
 }
 
 function approvalCard(plan) {
@@ -413,9 +452,11 @@ function show(inner, { keep = false } = {}) {
     // land on this one's Approve.
     yes.disabled = true;
     setTimeout(() => { yes.disabled = false; }, 500);
-    yes.onclick = () => { const a = answer; answer = null; a?.(true); };
+    yes.onclick = () => { void touchSession(); const a = answer; answer = null; a?.(true); };
   }
-  if (no) no.onclick = () => { const a = answer; answer = null; a?.(false); };
+  // A click on a card is the holder at the keyboard: the one thing in this
+  // window, besides unlocking, that keeps the session from lapsing.
+  if (no) no.onclick = () => { void touchSession(); const a = answer; answer = null; a?.(false); };
   root.querySelector('#disconnect')?.addEventListener('click', () => { forget(site); render(); });
 }
 
@@ -441,8 +482,10 @@ function render() {
   const how = IN_EXTENSION
     ? 'It asks you here before anything moves. While Nap is unlocked, sites you connected can read your holdings; lock Nap from the toolbar to stop that.'
     : 'Keep this window open while you use the site; it asks you here before anything moves. Closing it locks Nap for that site.';
+  const shared = connected ? scopesOf(connections(), site, config.id, identity?.accountHex) : [];
   show(`<p class="kicker">NAP CONNECT</p><h2>${connected ? `Connected to ${siteName()}.` : `${siteName()} is not connected.`}</h2>
     <p class="muted">${connected ? how : 'Nothing was shared.'}</p>
+    ${shared.length ? `<p class="muted">You allowed it to see ${esc(scopeList(shared))}.</p>` : ''}
     ${connected ? '<button class="quiet" id="disconnect">Disconnect this site</button>' : ''}`, { keep: true });
 }
 

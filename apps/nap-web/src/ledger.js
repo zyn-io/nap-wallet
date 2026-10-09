@@ -145,9 +145,21 @@ function claimKinds(identity, limit, from = 0) {
   return kinds;
 }
 
+/// Where a redeemed item's floor share waits: under the item note's own
+/// commitment (`objectvm::market::redemption_source`), which no nonce gives.
+/// Every spent one-unit note this account owned may have been an item it
+/// redeemed; asking about the ones that were not costs a lookup, nothing more.
+export function redemptionClaims(gone) {
+  return new Map(gone.filter((g) => g.amount === 10n ** 18n)
+    .map((g) => [hex(mk.claimId(mk.redemptionSource(unhex(g.commitment)), 0)), 'Floor share for a redeemed item']));
+}
+
 export async function loadOwed(config, identity) {
   await ensureNonces(config, identity);
   const kinds = claimKinds(identity, nonceCount(config, identity) + LOOKAHEAD);
+  // A restore finds these too: the spent notes are still published.
+  const { gone } = await loadHoldings(config, identity, []).catch(() => ({ gone: [] }));
+  for (const [id, kind] of redemptionClaims(gone || [])) kinds.set(id, kind);
   const ids = [...kinds.keys()];
   const rows = [];
   for (let i = 0; i < ids.length; i += 240) {
@@ -232,25 +244,68 @@ export async function loadWaiting(config, identity, bridged) {
     .map((r) => ({ ...want.get(r.key), amount: BigInt(r.amount) }));
 }
 
-/// The code a deposit on another chain carries: `zyn:<commitment>`. The same
-/// code comes back until a deposit with it lands, then a fresh one — so two
-/// deposits are not linked to each other by their memo.
-export async function bridgeMemo(config, identity) {
-  const saved = read(bridgeKey(config, identity));
-  if (saved != null && !usedNonces(config, identity).has(Number(saved))) {
-    const n = Number(saved);
-    const waiting = await loadWaiting(config, identity).catch(() => []);
-    if (!waiting.some((w) => w.n === n)) {
-      const commitment = mk.depositCommitment(identity.account, mk.marketNonce(identity.secretKey, n));
-      return { memo: `zyn:${hex(commitment)}`, commitment: hex(commitment) };
-    }
-    markUsed(config, identity, n);
+/// The code a deposit on another chain carries: `zyn:<commitment>`, from this
+/// account and one of its market nonces — so a restore from the phrase finds
+/// it again (recoverNonces walks every nonce's deposit keys), and this device
+/// finds it below nonceCount, inside what loadWaiting and claimWaiting scan.
+///
+/// A fresh code per request (audit, 9 Oct 2026). The code used to come back
+/// the same until a deposit with it landed, so two requests before a credit —
+/// two bring-ins on Jade, a SOL memo and an ETH call, a BTC address and a
+/// private exit into Zyn — carried one code, and the chains showed those
+/// deposits, their wallets and the private exit as one person's.
+///
+/// `kind` is what the code is for: the bridge's key (`sol`, `eth`, `bold`,
+/// `btc`), or `to-zyn` for a private-pool note moved into Zyn. A code is never
+/// handed to two kinds. `to-zyn` is always fresh: its proof is bound to the code
+/// and relayed at once. The others are bounded the way burnMemo is: each
+/// takes a market nonce, and an unbounded run of unused ones hides a restored
+/// wallet's later activity and outruns another device's LOOKAHEAD. At most
+/// DEPOSIT_OUTSTANDING codes of a kind wait for their deposit at once; past
+/// that, the one that has waited longest unused is handed out again (and goes
+/// to the back of the line) — never one of another kind. A code leaves the
+/// line once its deposit waits on the ledger or was claimed here.
+export async function bridgeMemo(config, identity, { kind = 'any' } = {}) {
+  const code = (n) => {
+    const commitment = hex(mk.depositCommitment(identity.account, mk.marketNonce(identity.secretKey, n)));
+    return { memo: `zyn:${commitment}`, commitment };
+  };
+  const fresh = () => { const n = nonceCount(config, identity); nextNonce(config, identity); return n; };
+  if (kind === 'to-zyn') return code(fresh());
+  // The one code kept before, shared by every kind: dropped, never handed out
+  // again. Its nonce is below the count, so a deposit made with it is found.
+  try { localStorage.removeItem(bridgeKey(config, identity)); } catch { /* nothing kept */ }
+  let open = openCodes(config, identity);
+  if (open.length) {
+    const landed = usedNonces(config, identity);
+    for (const w of await loadWaiting(config, identity).catch(() => [])) landed.add(w.n);
+    open = open.filter((o) => !landed.has(o.n));
   }
-  const n = nonceCount(config, identity);
-  nextNonce(config, identity);
-  write(bridgeKey(config, identity), String(n));
-  const commitment = mk.depositCommitment(identity.account, mk.marketNonce(identity.secretKey, n));
-  return { memo: `zyn:${hex(commitment)}`, commitment: hex(commitment) };
+  const line = open.filter((o) => o.kind === kind);
+  let n;
+  if (line.length >= DEPOSIT_OUTSTANDING) {
+    n = line[0].n;
+    open = [...open.filter((o) => o !== line[0]), line[0]];
+  } else {
+    n = fresh();
+    open.push({ n, kind });
+  }
+  write(bridgeOpenKey(config, identity), JSON.stringify(open));
+  return code(n);
+}
+
+/// Deposit codes of one kind that may wait for their deposit at once. Every
+/// bridge's together stay inside LOOKAHEAD (tests/deposit-codes.test.mjs), so
+/// another device holding the phrase still looks far enough ahead.
+export const DEPOSIT_OUTSTANDING = 4;
+
+const bridgeOpenKey = (config, identity) => `nap.bridge.open.${config.chain}.${identity.accountHex}`;
+/// The codes handed out and not yet seen landing, oldest first.
+function openCodes(config, identity) {
+  try {
+    const list = JSON.parse(read(bridgeOpenKey(config, identity)) || '[]');
+    return Array.isArray(list) ? list.filter((o) => o && Number.isSafeInteger(o.n) && typeof o.kind === 'string') : [];
+  } catch { return []; }
 }
 
 function markUsed(config, identity, n) {
@@ -316,12 +371,34 @@ export async function burnMemo(config, identity, { fresh = false } = {}) {
     const landed = await call(config, 'zyn_tickets', { ids: hex(mk.voucherTicketId(commitment, 0)) });
     if (!(Array.isArray(landed) && landed.length)) return { memo: `zyn:${hex(commitment)}`, commitment: hex(commitment) };
   }
-  const n = nonceCount(config, identity);
-  nextNonce(config, identity);
+  // A site may ask for a fresh memo per burn, but each one takes a market
+  // nonce, and an unbounded run of unused nonces slows every later scan and
+  // hides a restored wallet's later activity (audit, 6 Oct 2026). At most
+  // FRESH_OUTSTANDING memos wait unburned; past that the newest is reused.
+  const listKey = `nap.burn.open.${config.chain}.${identity.accountHex}`;
+  let open = [];
+  try { open = JSON.parse(read(listKey) || '[]').filter(Number.isSafeInteger); } catch { open = []; }
+  const commitOf = (i) => mk.voucherCommitment(identity.account, mk.marketNonce(identity.secretKey, i));
+  if (open.length) {
+    const landed = await call(config, 'zyn_tickets', { ids: open.map((i) => hex(mk.voucherTicketId(commitOf(i), 0))).join(',') }).catch(() => []);
+    const used = new Set((Array.isArray(landed) ? landed : []).map((t) => t.ticket));
+    open = open.filter((i) => !used.has(hex(mk.voucherTicketId(commitOf(i), 0))));
+  }
+  let n;
+  if (open.length >= FRESH_OUTSTANDING) n = open[open.length - 1];
+  else {
+    n = nonceCount(config, identity);
+    nextNonce(config, identity);
+    open.push(n);
+  }
+  write(listKey, JSON.stringify(open));
   write(key, String(n));
-  const commitment = mk.voucherCommitment(identity.account, mk.marketNonce(identity.secretKey, n));
+  const commitment = commitOf(n);
   return { memo: `zyn:${hex(commitment)}`, commitment: hex(commitment) };
 }
+
+/// Burn memos that may wait unburned at once (each holds a market nonce).
+export const FRESH_OUTSTANDING = 5;
 
 /// A sale as the chain holds it, and the posted draw and open-mint order —
 /// each checked against the root the chain holds, so the node serving them
@@ -370,7 +447,7 @@ export async function loadOffers(config) {
 /// items (asked by asset, which says nothing a listing does not).
 export async function loadHoldings(config, identity, offers) {
   const published = await call(config, 'zyn_published');
-  const { held, balances } = scan(published, { secret: identity.viewing, nkey: identity.nullifier, owner: identity.account });
+  const { held, balances, gone } = scan(published, { secret: identity.viewing, nkey: identity.nullifier, owner: identity.account });
   const items = new Map();
   for (const o of offers) if (o.serial >= 0) items.set(o.asset, { collection: o.collection, serial: o.serial });
   const unknown = [...new Set(held.map((h) => h.asset))].filter((a) => a !== config.zecAsset && !items.has(a));
@@ -380,7 +457,7 @@ export async function loadHoldings(config, identity, offers) {
       if (isHex(i.asset) && isHex(i.collection) && isSmall(i.serial)) items.set(i.asset, { collection: i.collection, serial: i.serial });
     }
   }
-  return { held, balances, items };
+  return { held, balances, items, gone };
 }
 
 /// Submit an intent that carries a nonce, taking the next nonce and trying
@@ -412,7 +489,17 @@ export async function submitIntent(config, identity, intent) {
   const status = await call(config, 'zyn_status');
   const epoch = checkedEpoch(status, config.chain);
   const frame = await signedFrame(identity.secretKey, config.chain, epoch + VALIDITY, intent);
-  const result = await submitSigned(config.rpcUrl, frame);
+  let result;
+  try {
+    result = await submitSigned(config.rpcUrl, frame);
+  } catch (e) {
+    // A write that timed out may still have reached the chain: say so, or the
+    // holder approves it again and trades twice (audit, 6 Oct 2026).
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+      throw new Error('No answer from the chain in time. It may have gone through: check your activity before trying again.');
+    }
+    throw e;
+  }
   const refused = /Refused\("([^"]*)"\)/.exec(String(result?.receipts || ''));
   if (refused) throw new Error(`The chain refused: ${refused[1]}`);
   return result;

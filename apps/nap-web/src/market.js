@@ -57,9 +57,10 @@ export const MARKET_PROGRAM = Object.freeze(Object.fromEntries([
   ['lendInsure', 'lend-insure'],
   ['lendBid', 'lend-bid'],
   ['route', 'route'],
+  ['dao', 'dao'],
 ].map(([k, name]) => [k, hex(named(name))])));
 
-const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51, route: 53 };
+const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51, route: 53, memberPass: 57, propose: 58, vote: 59, proposeZyn: 63 };
 
 const id = (domain, ...parts) => leaf(te.encode(domain), ...parts);
 
@@ -76,6 +77,38 @@ export const launchSource = (creator, nonce) => id('objectvm.launch.v1', creator
 export const orderId = (trader, nonce) => id('objectvm.order.v1', trader, nonce);
 /// A route's id (§167): where what it delivers, or its refund, waits.
 export const routeId = (trader, nonce) => id('objectvm.route.v1', trader, nonce);
+/// An account's place on a gated sale's list (§168), blinded: `sale::allow_key`.
+export const saleAllowKey = (collection, account) => id('objectvm.sale-allow.v1', collection, account);
+
+// A collection's DAO (objectvm::dao, DECISIONS §172): a member pass, a
+// proposal, a vote — each proved by one of the holder's live items.
+export const DAO_BACK = 0;
+export const DAO_YES = 1;
+export const DAO_NO = 2;
+/// The pass hash a token makes: what the members' chat is shown.
+export const daoPass = (token) => id('objectvm.dao-pass.v1', token);
+/// Where a passed proposal's payment waits as a claim.
+export const daoPaymentSource = (collection, proposal) => id('objectvm.dao-pay.v1', collection, u32be(proposal));
+export const memberPassIntent = (o) => concatBytes(new Uint8Array([TAG.memberPass]), o.holder, prog('dao'), o.collection, o.item, o.pass);
+export const proposeIntent = (o) => concatBytes(
+  new Uint8Array([TAG.propose]), o.proposer, prog('dao'), o.collection, o.item, o.text,
+  o.pay ? concatBytes(new Uint8Array([1]), o.pay.asset, i128Bytes(o.pay.amount), o.pay.to) : new Uint8Array([0]),
+);
+/// A proposal on the Zyn track (§176): members vote on Zyn's issues; it pays nothing.
+export const proposeZynIntent = (o) => concatBytes(new Uint8Array([TAG.proposeZyn]), o.proposer, prog('dao'), o.collection, o.item, o.text);
+export const voteIntent = (o) => concatBytes(
+  new Uint8Array([TAG.vote]), o.voter, prog('dao'), o.collection, u32be(o.proposal), new Uint8Array([o.choice]),
+  u32be(o.items.length), ...o.items,
+);
+/// What a listed account's `n`th ticket (from 1) costs: the ticket price up to
+/// `base`, then one more ticket price per ticket — `sale::gated_price`.
+export const gatedPrice = (price, base, n) => BigInt(price) * BigInt(n <= base ? 1 : n - base + 1);
+/// Tickets `bought+1 ..= bought+count` together — `sale::gated_total`.
+export function gatedTotal(price, base, bought, count) {
+  let t = 0n;
+  for (let n = bought + 1; n <= bought + count; n++) t += gatedPrice(price, base, n);
+  return t;
+}
 export const routeLegId = (route, hop) => id('objectvm.route-leg.v1', route, new Uint8Array([hop]));
 export const commitId = (buyer, nonce) => id('objectvm.commit.v1', buyer, nonce);
 export const liquidityId = (provider, nonce) => id('objectvm.liquidity.v1', provider, nonce);
@@ -260,7 +293,8 @@ export function previewRoute(hops, amountIn, venues) {
       amount = quoteAlone(venues.pool(h.pool), h.sellA, amount);
     } else {
       const c = venues.curve(h.curveSell || h.curveBuy);
-      const unit = c.unit && c.unit !== '0' ? BigInt(c.unit) : ZAT;
+      // Only a plain positive integer is a unit; anything else is a ZEC-sized curve.
+      const unit = typeof c.unit === 'string' && /^[1-9]\d{0,39}$/.test(c.unit) ? BigInt(c.unit) : ZAT;
       amount = h.curveSell ? previewCurveSell(c.sold, Number(amount / LOT), c.fee_bps, unit).net : previewCurveBuy(c.sold, amount, c.fee_bps, unit).tokens;
     }
     steps.push(amount);

@@ -89,6 +89,20 @@ async function quoteName(ctx, asset) {
   return (await namer(ctx, await ledger.call(ctx.config, 'zyn_market')))(asset);
 }
 
+const shortHex = (h) => `${String(h).slice(0, 8)}…${String(h).slice(-6)}`;
+const collectionLabel = (c) => (c === CAVE_Z ? 'Cave, batch one (Collection Z)' : `${c.slice(0, 10)}…`);
+/// What the team's vote weighs on a DAO's Zyn track (§176), from the chain.
+const teamRule = (z) => (z?.rule === 'weighted' ? `the team's account casts ${Number(z.share_bps) / 100}% of the tally` : "the team's account can veto, not pass");
+
+/// This wallet's items of `collection`, as the DAO's member proofs: refused
+/// when it holds none, so a site learns only that this wallet is not a member.
+async function daoItems(ctx, collection) {
+  const h = await holdings(ctx);
+  const mine = h.held.map((note) => ({ note, item: h.items.get(note.asset) })).filter((x) => x.item?.collection === collection && BigInt(x.note.amount) === mk.ITEM_UNIT);
+  if (!mine.length) throw bad('This wallet holds no item of that collection');
+  return mine;
+}
+
 function heldItem(h, asset) {
   if (!isHex(asset)) throw bad('asset must be 64 hex characters');
   const note = h.held.find((x) => x.asset === asset);
@@ -106,6 +120,16 @@ const validCurve = (c) => isHex(c.token) && isHex(c.quote) && isHex(c.meta)
   && ['reserve', 'graduation', 'creator_fees', 'bond', 'price_per_token'].every((k) => isInt(c[k]))
   && Number.isSafeInteger(c.sold) && c.sold >= 0 && typeof c.graduated === 'boolean';
 
+/// A coin's address in a card row: names and tickers repeat, addresses do not
+/// (audit, 6 Oct 2026: a copycat "PEPE" read the same as the real one).
+const addrText = (a) => `${a.slice(0, 8)}…${a.slice(-6)}`;
+/// Other coins on a curve under the same ticker, which a card must say.
+const lookalikes = (curves, c) => curves.filter((x) => x.token !== c.token && x.symbol === c.symbol).length;
+/// How far a floor sits below what the order would get alone, in percent.
+const floorGap = (preview, floor) => (preview > 0n ? Number(((preview - (floor < preview ? floor : preview)) * 10_000n) / preview) / 100 : 0);
+/// Above this gap a floor protects little and the card says so in red.
+const LOOSE_FLOOR = 10;
+
 /// A curve's size (§166): the ledger amount one unit of its shape stands
 /// for. A node from before §166 says nothing, and every curve was ZEC-sized.
 const unitOf = (c) => (isInt(c?.unit) && c.unit !== '0' ? BigInt(c.unit) : mk.ZAT);
@@ -116,6 +140,15 @@ function launchAssets(ctx, market, terms) {
   const named = (market.curve_quotes || []).filter((q) => isHex(q.asset) && isInt(q.unit) && isInt(q.bond));
   if (named.length) return named.map((q) => ({ asset: q.asset, unit: BigInt(q.unit), bond: BigInt(q.bond) }));
   return [{ asset: ctx.config.zecAsset, unit: mk.ZAT, bond: BigInt(terms.bond || '0') }];
+}
+
+/// This account on a sale's list (§168), as the chain has it.
+async function saleAccess(ctx, collection) {
+  const key = hex(mk.saleAllowKey(unhex(collection), ctx.identity.account));
+  const r = await ledger.call(ctx.config, 'zyn_saleAllow', { collection, key }).catch(() => null);
+  // A node from before §168 has no gates: every sale is open to all.
+  if (!r) return { gated: false, listed: true, bought: 0, base: null };
+  return { gated: !!r.gated, listed: !!r.listed, bought: Number(r.bought) || 0, base: r.base ?? null };
 }
 
 async function curveBook(ctx) {
@@ -247,6 +280,23 @@ async function ownPosition(ctx, id) {
   return p;
 }
 
+/// A site's private-channel notes: what a site's bridge page acts on, and no
+/// more (audit, 9 Oct 2026). The relayer's transaction signature is never
+/// handed out, and neither is a spent note's commitment: on its chain the
+/// one ties the spend to its exit address, the other the deposit to its
+/// wallet, and neither is anything a site can still act on. An unspent
+/// note keeps its commitment, which Move into Zyn and Send name it by.
+export function siteNotes(notes) {
+  return notes.map((n) => ({
+    ch: n.ch, size: String(n.size), kind: n.kind, state: n.state,
+    ...(['to zyn', 'sent', 'spent'].includes(n.state) ? {} : { commitment: n.commitment }),
+  }));
+}
+
+/// `kind`: 'public' answers anyone; 'read' and 'auto' a connected site,
+/// without a card; 'write' after the holder approves its card. A read that
+/// names a `scope` (connect-grants.js) also waits for the holder to allow
+/// that scope to the site, once.
 export const METHODS = {
   nap_connect: { kind: 'connect' },
   nap_session: { kind: 'session' },
@@ -361,7 +411,7 @@ export const METHODS = {
           const token = mk.tokenOf(ctx.identity.account, nonce);
           if (!content) return { token: hex(token), quote };
           const hash = contentHash(content);
-          return { token: hex(token), quote, content: { hash: hex(hash), proof: await contentProof(ctx.identity.secretKey, nonce, token, hash) } };
+          return { token: hex(token), quote, content: { hash: hex(hash), proof: await contentProof(ctx.identity.secretKey, nonce, token, hash, ctx.config.chain) } };
         },
       };
     },
@@ -380,18 +430,22 @@ export const METHODS = {
       if (q.lots === 0) throw bad('That buys less than one lot at the current price');
       const minLots = p.minTokens != null ? BigInt(amountOf(p.minTokens, 'minTokens')) / mk.LOT : 0n;
       await mustHold(ctx, c.quote, amount, q$);
+      const gap = floorGap(q.tokens, minLots * mk.LOT);
+      const twins = lookalikes((await curveBook(ctx)).curves, c);
       return {
         title: `Buy ${c.symbol} with ${wadText(amount)} ${q$}`,
-        // No floor means filling at whatever price the batch clears: said, in red.
-        danger: !minLots,
+        // No floor, or one far below the preview, fills at whatever the batch
+        // clears; a ticker other coins share may not be the coin meant: red.
+        danger: !minLots || gap > LOOSE_FLOOR || twins > 0,
         rows: [
           ['Token', `${c.name} (${c.symbol})`],
+          ['Address', `${addrText(c.token)}${twins ? ` — ${twins} other coin${twins > 1 ? 's use' : ' uses'} the ticker ${c.symbol}; check this address` : ''}`],
           ['If nobody else buys this epoch', `${tokenText(q.tokens)} tokens`],
           ['Fee', c.fee_bps ? `${wadText(q.fee)} ${q$} (${c.fee_bps / 100}%)` : 'none'],
           ['Unspent', `${wadText(q.refund)} ${q$} comes back`],
-          ['At least', minLots ? `${tokenText(minLots * mk.LOT)} tokens, or the whole buy comes back` : 'no floor — it fills at whatever price the batch clears'],
+          ['At least', minLots ? `${tokenText(minLots * mk.LOT)} tokens${gap > LOOSE_FLOOR ? ` — ${gap.toFixed(1)}% below the preview` : ''}, or the whole buy comes back` : 'no floor — it fills at whatever price the batch clears'],
         ],
-        note: 'Everyone buying this epoch pays one price, set when it closes; nobody can buy ahead of you. Collect the tokens once it settles.',
+        note: 'Everyone buying this epoch pays one price, set when it closes; other buyers in the same epoch move it. Collect the tokens once it settles.',
         run: async () => {
           const h = await holdings(ctx);
           const { inputs, change } = mk.fund(ctx.identity, h.held, unhex(c.quote), amount);
@@ -416,13 +470,15 @@ export const METHODS = {
       const q = mk.previewCurveSell(c.sold, lots, c.fee_bps, unitOf(c));
       const minZec = p.minZec != null ? amountOf(p.minZec, 'minZec') : 0n;
       await mustHold(ctx, c.token, tokens, c.symbol);
+      const gap = floorGap(q.net, minZec);
       return {
         title: `Sell ${tokenText(tokens)} ${c.symbol}`,
-        danger: !minZec,
+        danger: !minZec || gap > LOOSE_FLOOR,
         rows: [
+          ['Address', addrText(c.token)],
           ['If nobody else sells this epoch', `${wadText(q.net)} ${q$}`],
           ['Fee', c.fee_bps ? `${wadText(q.fee)} ${q$} (${c.fee_bps / 100}%)` : 'none'],
-          ['At least', minZec ? `${wadText(minZec)} ${q$}, or the tokens come back` : 'no floor — it sells at whatever price the batch clears'],
+          ['At least', minZec ? `${wadText(minZec)} ${q$}${gap > LOOSE_FLOOR ? ` — ${gap.toFixed(1)}% below the preview` : ''}, or the tokens come back` : 'no floor — it sells at whatever price the batch clears'],
         ],
         note: `Sellers this epoch share one price, set when it closes. Collect the ${q$} once it settles.`,
         run: async () => {
@@ -471,18 +527,38 @@ export const METHODS = {
       const venues = { pool: (id) => pools.get(hex(id)), curve: (t) => curves.get(hex(t)) };
       const q = mk.previewRoute(hops.map((h) => h.hop), amountIn, venues);
       if (!q) throw bad('That route delivers nothing at these prices');
+      // How far below the pools' own prices the route fills, hop by hop
+      // (audit, 6 Oct 2026: a thin pool on a route lost half the value and
+      // nothing said so). Curve hops are priced by the curve, not a pool.
+      let kept = 1;
+      let into = amountIn;
+      hops.forEach((h, i) => {
+        if (h.hop.pool) {
+          const x = pools.get(h.key.pool);
+          const [rin, rout] = h.key.sellA ? [BigInt(x.reserve_a), BigInt(x.reserve_b)] : [BigInt(x.reserve_b), BigInt(x.reserve_a)];
+          const spot = (into * rout) / rin;
+          if (spot > 0n) kept *= Number(q.steps[i]) / Number(spot);
+        }
+        into = q.steps[i];
+      });
+      const impact = Math.max(0, (1 - kept) * 100);
+      const gap = floorGap(q.out, minOut);
       const [start, end] = [hops[0].input, hops[hops.length - 1].output];
       const path = [start, ...hops.map((h) => h.output)].map(name).join(' → ');
       await mustHold(ctx, start, amountIn, name(start));
-      const show = (asset, raw) => (curves.has(asset) ? `${tokenText(raw)} ${name(asset)}` : `${wadText(raw)} ${name(asset)}`);
+      // Whole tokens where the amount is whole; never a floor rounded to "0".
+      const show = (asset, raw) => (curves.has(asset) && BigInt(raw) % WAD === 0n ? `${tokenText(raw)} ${name(asset)}` : `${wadText(raw)} ${name(asset)}`);
+      const endCurve = curves.get(end);
       return {
         title: `Swap ${name(start)} for ${name(end)}`,
-        danger: !minOut,
+        danger: !minOut || gap > LOOSE_FLOOR || impact >= 5,
         rows: [
           ['Route', path],
+          ...(endCurve ? [['Address', addrText(end)]] : []),
+          ['Below the pools\' prices', `${impact.toFixed(2)}%${impact >= 5 ? ' — the pools on this route are thin for this amount' : ''}`],
           ['You put in', show(start, amountIn)],
           ['If nobody else trades this epoch', show(end, q.out)],
-          ['At least', minOut ? `${show(end, minOut)}, or the whole route comes back` : 'no floor — it fills at whatever the batches clear at'],
+          ['At least', minOut ? `${show(end, minOut)}${gap > LOOSE_FLOOR ? ` — ${gap.toFixed(1)}% below the preview` : ''}, or the whole route comes back` : 'no floor — it fills at whatever the batches clear at'],
           ['Settles', 'in one epoch, every hop together'],
         ],
         note: 'Each venue on the route clears once this epoch, at one price for everyone in it. If the end of the route would bring less than your floor, nothing on it happens and everything you put in comes back.',
@@ -552,7 +628,8 @@ export const METHODS = {
   // --- Zyn Lend ---------------------------------------------------------------
 
   zyn_lendMarkets: { kind: 'public', run: async (ctx) => ledger.call(ctx.config, 'zyn_lendMarkets') },
-  zyn_lendPositions: { kind: 'read', run: async (ctx) => ({ positions: await ledger.loadPositions(ctx.config, ctx.identity) }) },
+  /// This wallet's positions, once the holder allows it (scope `positions`).
+  zyn_lendPositions: { kind: 'read', scope: 'positions', run: async (ctx) => ({ positions: await ledger.loadPositions(ctx.config, ctx.identity) }) },
 
   zyn_lendSupply: {
     kind: 'write',
@@ -914,7 +991,7 @@ export const METHODS = {
           key: b.key, symbol: b.symbol, zy: b.zy, chainName: b.chainName, decimals: b.decimals, network: b.network, asset: b.asset,
           live: b.live, waiting: b.waiting || null, issued: b.issued === null ? null : String(b.issued),
           vault: b.vault || null, rpc: b.rpc || null, cluster: b.cluster || null, chainId: b.chainId || null, explorer: b.explorer || null,
-          capWei: b.capWei || null, custody: b.custody || null, safe: b.safe || null, chain: b.chain || null,
+          capWei: b.capWei || null, custody: b.custody || null, safe: b.safe || null, multisig: b.multisig || null, chain: b.chain || null,
           token: b.token || null, assetId: b.assetId || null, faucet: !!b.faucet,
         })),
       };
@@ -925,6 +1002,8 @@ export const METHODS = {
   /// calldata, an ERC-20 (BOLD) the code and, given an amount, its approve
   /// and deposit calls, BTC an address (watched from now), ZEC this account's
   /// deposit address. The code names nobody; the other chain sees the sender.
+  /// Each call gives a fresh code, of this bridge only (ledger.js bridgeMemo,
+  /// audit 9 Oct 2026): ask once per deposit, right before it is made.
   zyn_bridgeDeposit: {
     kind: 'read',
     async run(ctx, p) {
@@ -943,7 +1022,7 @@ export const METHODS = {
         const live = (await bridges.bridgeState(ctx.config)).bridges.find((x) => x.key === key);
         if (!live?.live) throw bad(live?.waiting === 'vault' ? `The vault does not take ${b.symbol} yet` : `${b.symbol} deposits are not open on this network yet`);
       }
-      const code = await bridges.depositCode(ctx.config, ctx.identity);
+      const code = await bridges.depositCode(ctx.config, ctx.identity, key);
       if (key === 'sol') return { key, memo: `zyn:${code}`, vault: b.vault, rpc: b.rpc, cluster: b.cluster };
       if (b.token) {
         // An ERC-20 (BOLD): two transactions from the holder's wallet —
@@ -1003,7 +1082,7 @@ export const METHODS = {
         title: `Withdraw ${b.symbol}`,
         danger: true,
         rows: [['You send', `${wadText(amount)} ${b.zy}`], ['Bridge fee', `${wadText(fee)} ${b.zy}`], ['To', to], ['On', b.chainName]],
-        note: `${b.chainName} will show this address receiving the amount from the vault${b.safe ? '; the Safe owners approve each payout, which can take hours' : ''}.`,
+        note: `${b.chainName} will show this address receiving the amount from the vault${b.safe ? '; the Safe owners approve each payout, which can take hours' : b.multisig ? "; the multisig's owners approve each payout, which can take hours" : ''}.`,
         run: async () => {
           const h = await holdings(ctx);
           await bridges.bridgeOut(ctx.config, ctx.identity, h.held, b, to, amount, st.bps);
@@ -1047,9 +1126,12 @@ export const METHODS = {
     },
   },
 
+  /// This wallet's private-channel notes, once the holder allows it (scope
+  /// `notes`), as siteNotes trims them.
   zyn_poolNotes: {
     kind: 'read',
-    async run(ctx) { return { notes: await pool.notes(ctx.config, ctx.identity) }; },
+    scope: 'notes',
+    async run(ctx) { return { notes: siteNotes(await pool.notes(ctx.config, ctx.identity)) }; },
   },
 
   /// A fresh note to deposit into the `size` pool from any wallet on its chain.
@@ -1237,6 +1319,122 @@ export const METHODS = {
     },
   },
 
+  // A collection's DAO (§172, §173): a member pass, a proposal, a vote. Each
+  // is proved by this wallet's own items of the collection. The public sees
+  // tallies and pass hashes; the operator and replicas see which item acted —
+  // said on every card.
+  zyn_daoPass: {
+    kind: 'write',
+    async prepare(ctx, p) {
+      const collection = saleCollection(p);
+      const mine = await daoItems(ctx, collection);
+      const { note, item } = mine[0];
+      return {
+        title: 'Member pass',
+        rows: [['Collection', collectionLabel(collection)], ['Proved by', itemName(collection, item.serial)], ['Members\' chat', 'not open yet; the pass code is its key']],
+        note: "Keep the pass code private: whoever has it can use your membership. Selling or moving the item ends the pass. The operator and replicas can see which item made it, and the Cave team, which will run the chat, could link the two.",
+        run: async () => {
+          const token = crypto.getRandomValues(new Uint8Array(32));
+          const pass = mk.daoPass(token);
+          await ledger.submitIntent(ctx.config, ctx.identity, mk.memberPassIntent({ holder: ctx.identity.account, collection: unhex(collection), item: unhex(note.commitment), pass }));
+          return { token: hex(token), pass: hex(pass) };
+        },
+      };
+    },
+  },
+
+  zyn_daoPropose: {
+    kind: 'write',
+    async prepare(ctx, p) {
+      const collection = saleCollection(p);
+      const text = String(p?.text ?? '').trim();
+      if (!text || text.length > 4000) throw bad('A proposal is 1 to 4,000 characters');
+      if (p?.track === 'zyn' && p?.pay) throw bad('A Zyn proposal pays nothing from the treasury');
+      let pay = null;
+      if (p?.pay) {
+        if (!isHex(p.pay.asset) || !isHex(p.pay.to)) throw bad('pay.asset and pay.to must be 64 hex characters');
+        let amount;
+        try { amount = parseAmount(p.pay.amount); } catch (e) { throw bad(e.message); }
+        if (amount <= 0n) throw bad('A payment must be worth something');
+        pay = { asset: unhex(p.pay.asset), amount, to: unhex(p.pay.to), shown: `${wadText(amount)} ${await quoteName(ctx, p.pay.asset)} to ${shortHex(p.pay.to)}` };
+      }
+      const dao = await ledger.call(ctx.config, 'zyn_dao', { collection });
+      if (!dao?.set) throw bad('That collection has no DAO');
+      // The Zyn track (§176): members vote on Zyn's issues; it pays nothing,
+      // and the team's own account casts a vote the track's rule weighs.
+      const zyn = p?.track === 'zyn';
+      if (p?.track !== undefined && p.track !== 'zyn' && p.track !== 'collection') throw bad("track must be 'collection' or 'zyn'");
+      if (zyn && !dao.zyn) throw bad('This DAO does not vote on Zyn issues yet');
+      const mine = await daoItems(ctx, collection);
+      const hash = sha256(new TextEncoder().encode(text));
+      const item = unhex(mine[0].note.commitment);
+      return {
+        title: zyn ? 'Zyn proposal' : 'Proposal',
+        rows: [
+          ['Says', text],
+          zyn ? ['Team vote', teamRule(dao.zyn)] : ['Treasury pays', pay ? pay.shown : 'nothing'],
+          ['Needs', `${dao.backers} backing item${dao.backers === 1 ? '' : 's'}, then a vote`],
+          ['Backed by', 'one of your items'],
+        ],
+        note: 'The proposal, its text and any payment are public. The operator and replicas can see which item backed it.',
+        run: async () => {
+          await ledger.submitIntent(ctx.config, ctx.identity, zyn
+            ? mk.proposeZynIntent({ proposer: ctx.identity.account, collection: unhex(collection), item, text: hash })
+            : mk.proposeIntent({ proposer: ctx.identity.account, collection: unhex(collection), item, text: hash, pay: pay && { asset: pay.asset, amount: pay.amount, to: pay.to } }));
+          // Which track it went on, so a site can tell an older Nap (which
+          // ignores `track`) from this one.
+          return { text: hex(hash), track: zyn ? 'zyn' : 'collection' };
+        },
+      };
+    },
+  },
+
+  zyn_daoVote: {
+    kind: 'write',
+    async prepare(ctx, p) {
+      const collection = saleCollection(p);
+      const id = Number(p?.proposal);
+      if (!Number.isSafeInteger(id) || id < 1 || id > 0xffffffff) throw bad('proposal must be a proposal number');
+      const choice = { back: mk.DAO_BACK, yes: mk.DAO_YES, no: mk.DAO_NO }[p?.choice];
+      if (choice === undefined) throw bad('choice must be back, yes or no');
+      // What is voted on is read here, from the chain, not taken from the page.
+      const dao = await ledger.call(ctx.config, 'zyn_dao', { collection });
+      const prop = (dao?.proposals || []).find((x) => x.id === id);
+      if (!prop) throw bad(`There is no proposal #${id}`);
+      const want = p.choice === 'back' ? 'backing' : 'voting';
+      if (prop.state !== want) throw bad(`Proposal #${id} is ${prop.state}, not ${want === 'backing' ? 'gathering backers' : 'open for votes'}`);
+      const mine = await daoItems(ctx, collection);
+      const pays = prop.pay ? `${wadText(BigInt(prop.pay.amount))} ${await quoteName(ctx, prop.pay.asset)} to ${shortHex(prop.pay.to)}` : 'nothing';
+      const word = { back: 'Back', yes: 'Vote yes on', no: 'Vote no on' }[p.choice];
+      const zyn = prop.track === 'zyn';
+      return {
+        title: `${word} ${zyn ? 'Zyn ' : ''}proposal #${id}`,
+        rows: [
+          ['Text', `hash ${prop.text.slice(0, 16)}…`],
+          zyn ? ['Team vote', `${teamRule(dao.zyn)}; so far ${prop.team === 'none' || !prop.team ? 'not cast' : prop.team}`] : ['Treasury pays', pays],
+          ['Items', `${mine.length} of yours, one vote each; any that voted before are skipped`],
+        ],
+        note: 'The public sees the tally, not which items voted. The operator and replicas can see it.',
+        run: async () => {
+          // 32 items a vote: every chunk is sent, and one whose items all
+          // acted before counts nothing rather than failing the rest.
+          let counted = 0;
+          for (let i = 0; i < mine.length; i += 32) {
+            try {
+              const r = await ledger.submitIntent(ctx.config, ctx.identity, mk.voteIntent({
+                voter: ctx.identity.account, collection: unhex(collection), proposal: id, items: mine.slice(i, i + 32).map((x) => unhex(x.note.commitment)), choice,
+              }));
+              counted += Number(/Voted \{[^}]*items: (\d+)/.exec(String(r?.receipts || ''))?.[1] || 0);
+            } catch (e) {
+              if (!/every item has already/.test(e.message)) throw e;
+            }
+          }
+          return { items: counted };
+        },
+      };
+    },
+  },
+
   // Collection Z's sale (§144): tickets in ZEC.zy, a lottery drawn after the
   // close, winners claim with a proof against the posted root, and whatever
   // is left sells in the posted order.
@@ -1248,6 +1446,20 @@ export const METHODS = {
       return { sale: s.sale, drawPosted: !!s.draw, openPosted: !!s.open, remaining: s.open ? s.sale.open_count - s.sale.open_next : null };
     },
   },
+  // This wallet's place in a gated sale (§168): on the list or not, tickets
+  // bought, and what the next ones cost. In an ungated sale, everyone's.
+  zyn_saleAccess: {
+    kind: 'read',
+    run: async (ctx, p) => {
+      const collection = saleCollection(p);
+      const s = await ledger.loadSale(ctx.config, collection);
+      if (!s) return { sale: null };
+      const a = await saleAccess(ctx, collection);
+      const prices = a.gated ? Array.from({ length: 20 }, (_, i) => String(mk.gatedPrice(s.sale.ticket_price, a.base, a.bought + i + 1))) : null;
+      return { gated: a.gated, listed: a.listed, bought: a.bought, base: a.base, next: prices ? prices[0] : s.sale.ticket_price, prices };
+    },
+  },
+
   zyn_saleTickets: {
     kind: 'read',
     run: async (ctx, p) => {
@@ -1283,13 +1495,24 @@ export const METHODS = {
       const s = await ledger.loadSale(ctx.config, collection);
       if (!s) throw bad('There is no sale for that collection');
       if (s.sale.phase !== 'open') throw bad('The sale is closed');
-      const total = BigInt(s.sale.ticket_price) * BigInt(count);
+      // A gated sale (§168): this account must be on the list, and pays
+      // more for each ticket past the base.
+      const a = await saleAccess(ctx, collection);
+      if (!a.listed) throw bad('This wallet is not on the sale\'s list. Link your whitelist code to it first.');
+      const total = a.gated ? mk.gatedTotal(s.sale.ticket_price, a.base, a.bought, count) : BigInt(s.sale.ticket_price) * BigInt(count);
       if (p.pay != null && amountOf(p.pay, 'pay') !== total) throw bad('The price changed since the page loaded; reload and try again');
       const q = await quoteName(ctx, s.quote);
       await mustHold(ctx, s.quote, total, q);
+      const each = a.gated ? Array.from({ length: count }, (_, i) => mk.gatedPrice(s.sale.ticket_price, a.base, a.bought + i + 1)) : null;
+      const rising = each && each.some((x) => x !== BigInt(s.sale.ticket_price));
       return {
         title: `Buy ${count} ticket${count > 1 ? 's' : ''} in the ${collection === CAVE_Z ? 'Collection Z' : `${collection.slice(0, 6)}…`} sale`,
-        rows: [['Per ticket', `${wadText(s.sale.ticket_price)} ${q}`], ['Tickets', String(count)], ['You pay', `${wadText(total)} ${q}`]],
+        rows: [
+          ['Per ticket', rising ? `${each.map((x) => wadText(x)).join(', ')} ${q}` : `${wadText(s.sale.ticket_price)} ${q}`],
+          ['Tickets', a.gated ? `${count} (your ${a.bought + 1}${count > 1 ? `–${a.bought + count}` : ''})` : String(count)],
+          ...(a.gated ? [['Price rule', `${wadText(s.sale.ticket_price)} each for your first ${a.base}, then ${wadText(s.sale.ticket_price)} more for each one after`]] : []),
+          ['You pay', `${wadText(total)} ${q}`],
+        ],
         note: 'Each ticket is drawn after the sale closes. A winning ticket claims its items at the claim price; the ticket price is not refunded.',
         run: async () => {
           const h = await holdings(ctx);
@@ -1311,8 +1534,15 @@ export const METHODS = {
       if (!s || s.sale.phase !== 'drawn') throw bad('Claims open after the draw is posted and close when the open mint starts');
       if (!s.draw) throw bad('The posted draw does not match the chain; nothing can be claimed until it does');
       const index = new Map(s.draw.won.map((w, i) => [w.ticket, i]));
-      const mine = (await ledger.loadTickets(ctx.config, ctx.identity, collection)).filter((t) => !t.claimed && index.has(t.ticket));
+      let mine = (await ledger.loadTickets(ctx.config, ctx.identity, collection)).filter((t) => !t.claimed && index.has(t.ticket));
       if (!mine.length) throw bad('This wallet has no unclaimed winning tickets');
+      // In a gated sale (§168) a burn ticket is claimed only from a listed account.
+      const access = await saleAccess(ctx, collection);
+      if (!access.listed) {
+        const before = mine.length;
+        mine = mine.filter((t) => !t.voucher);
+        if (!mine.length) throw bad('Burn tickets in this sale are claimed only from a wallet on the sale\'s list. Link your whitelist code to this wallet first.');
+      }
       const serials = mine.flatMap((t) => s.draw.won[index.get(t.ticket)].serials);
       const total = BigInt(s.sale.claim_price) * BigInt(serials.length);
       const q = await quoteName(ctx, s.quote);

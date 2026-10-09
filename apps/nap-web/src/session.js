@@ -30,16 +30,40 @@ export async function saveSession(identity, receiving = []) {
   await store.set({ [KEY]: { keys: exportKeys(identity, receiving), index: identity.accountIndex, until: Date.now() + IDLE_MS } }).catch(() => {});
 }
 
-/// The wallet opened earlier in this browser session, or null. Using it
-/// pushes the idle deadline out again.
+/// The wallet opened earlier in this browser session, or null. For the
+/// holder's own use — the popup or the wallet opened — so it pushes the idle
+/// deadline out again. A site's request reads it with peekSession instead.
 export async function loadSession() {
+  return held(true);
+}
+
+/// The same, without pushing the deadline out: what a site's request uses
+/// (audit, 9 Oct 2026). Any page could ask Nap something every few seconds,
+/// and each ask extended the session, so the extension never locked. Now
+/// only the holder's own actions do: opening the popup or the wallet,
+/// unlocking, and approving a card in the connect window (touchSession).
+export async function peekSession() {
+  return held(false);
+}
+
+/// The holder acted in the connect window: push the idle deadline out, if
+/// the session is still open. Never reopens one that lapsed.
+export async function touchSession() {
+  if (!store) return;
+  try {
+    const kept = (await store.get(KEY))[KEY];
+    if (kept?.keys && kept.until > Date.now()) await store.set({ [KEY]: { ...kept, until: Date.now() + IDLE_MS } });
+  } catch { /* nothing held */ }
+}
+
+async function held(extend) {
   if (!store) return null;
   try {
-    const held = (await store.get(KEY))[KEY];
-    if (!held?.keys) return null;
-    if (!(held.until > Date.now())) { await store.remove(KEY); return null; }
-    await store.set({ [KEY]: { ...held, until: Date.now() + IDLE_MS } });
-    return importKeys(held.keys, held.index);
+    const kept = (await store.get(KEY))[KEY];
+    if (!kept?.keys) return null;
+    if (!(kept.until > Date.now())) { await store.remove(KEY); return null; }
+    if (extend) await store.set({ [KEY]: { ...kept, until: Date.now() + IDLE_MS } });
+    return importKeys(kept.keys, kept.index);
   } catch { return null; }
 }
 

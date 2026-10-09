@@ -254,3 +254,34 @@ test('Zyn Lend v2: adding to a pool\'s insurance is laid out as the ledger reads
   if (v.lend_insure) assert.equal(hex(insure), v.lend_insure);
 });
 const unhexBytes = (h) => Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
+
+/// A redeemed item's floor share waits under the item note's own commitment;
+/// Nap finds it from the spent notes it scans, which a restore sees too.
+test('a redeemed item\'s floor share is found from the spent item note', async () => {
+  const { redemptionClaims } = await import('../src/ledger.js');
+  const item = 'ab'.repeat(32);
+  const ids = redemptionClaims([
+    { commitment: item, asset: 'cd'.repeat(32), amount: 10n ** 18n },
+    { commitment: 'ef'.repeat(32), asset: 'cd'.repeat(32), amount: 5n },
+  ]);
+  assert.deepEqual([...ids.keys()], [hex(m.claimId(m.redemptionSource(Buffer.from(item, 'hex')), 0))], 'one-unit notes only');
+});
+
+test('a gated sale\'s key and prices are the ledger\'s', () => {
+  assert.equal(hex(m.saleAllowKey(TOKEN, OWNER)), v.sale_allow_key);
+  assert.equal(m.gatedTotal(10n ** 16n, 10, 10, 2).toString(), v.sale_gated_total_10_2);
+  assert.deepEqual([10, 11, 12].map((n) => m.gatedPrice(10n ** 16n, 10, n)), [10n ** 16n, 2n * 10n ** 16n, 3n * 10n ** 16n]);
+});
+
+test('a DAO\'s pass, payment source and member intents are the ledger\'s (§172)', () => {
+  const item = new Uint8Array(32).fill(0xc1);
+  assert.equal(m.MARKET_PROGRAM.dao, v.program_dao);
+  assert.equal(hex(m.daoPass(new TextEncoder().encode('cave-pass-token'))), v.dao_pass);
+  assert.equal(hex(m.daoPaymentSource(TOKEN, 7)), v.dao_payment_source);
+  assert.equal(hex(m.memberPassIntent({ holder: OWNER, collection: TOKEN, item, pass: m.daoPass(new TextEncoder().encode('cave-pass-token')) })), v.member_pass);
+  const pay = { asset: ZEC, amount: W(3), to: new Uint8Array(32).fill(0xb0) };
+  assert.equal(hex(m.proposeIntent({ proposer: OWNER, collection: TOKEN, item, text: new Uint8Array(32).fill(0x7a), pay })), v.propose);
+  assert.equal(hex(m.proposeIntent({ proposer: OWNER, collection: TOKEN, item, text: new Uint8Array(32).fill(0x7a), pay: null })), v.propose_no_pay);
+  assert.equal(hex(m.voteIntent({ voter: OWNER, collection: TOKEN, proposal: 7, items: [item, new Uint8Array(32).fill(0xc2)], choice: m.DAO_YES })), v.vote);
+  assert.equal(hex(m.proposeZynIntent({ proposer: OWNER, collection: TOKEN, item, text: new Uint8Array(32).fill(0x7a) })), v.propose_zyn);
+});

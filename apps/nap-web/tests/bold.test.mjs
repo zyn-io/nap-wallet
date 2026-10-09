@@ -97,8 +97,9 @@ test('a BOLD deposit is approve(vault, amount) then deposit(code, 2, amount)', a
   assert.match(plain.code, /^[0-9a-f]{64}$/);
   assert.equal(plain.calls, undefined);
   const r = await METHODS.zyn_bridgeDeposit.run(ctx, { key: 'bold', amount: '12.5' });
-  // The same one-time code until a deposit under it arrives.
-  assert.equal(r.code, plain.code);
+  // A fresh code each request (audit, 9 Oct 2026): two deposits never share one.
+  assert.match(r.code, /^[0-9a-f]{64}$/);
+  assert.notEqual(r.code, plain.code);
   assert.equal(r.to, VAULT);
   assert.equal(r.token, TEST_BOLD);
   assert.equal(r.assetId, 2);

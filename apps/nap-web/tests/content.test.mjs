@@ -24,3 +24,18 @@ test('content hashes canonically, whatever order the fields arrive in', () => {
   const b = contentHash({ image: 'data:image/png;base64,AA==', description: 'x' });
   assert.deepEqual(a, b);
 });
+
+test('a v2 proof names its chain and holds only there', async () => {
+  const sk = new Uint8Array(32).fill(3);
+  const nonce = new Uint8Array(32).fill(4);
+  const token = tokenOf(accountOf(await ed.getPublicKeyAsync(sk)), nonce);
+  const hash = contentHash({ description: 'a coin', image: '' });
+  const proof = await contentProof(sk, nonce, token, hash, 26460);
+  assert.equal(proof.v, 2);
+  assert.equal(await verifyContentProof(token, hash, proof, 26460), true, 'on its chain');
+  assert.equal(await verifyContentProof(token, hash, proof, 212), false, 'not replayed onto the other chain');
+  assert.equal(await verifyContentProof(token, hash, { ...proof, chain: 212 }, 212), false, 'nor relabelled');
+  const v1 = await contentProof(sk, nonce, token, hash);
+  assert.equal(v1.v, undefined);
+  assert.equal(await verifyContentProof(token, hash, v1, 212), true, 'a v1 proof names no chain; the server decides where it may hold');
+});

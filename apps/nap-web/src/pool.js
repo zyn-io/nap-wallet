@@ -217,11 +217,13 @@ export function own(config, identity, commitment) {
   return { ...n, ch: chOf(n), size: String(n.size), c: channel(config, chOf(n)) };
 }
 
-/// A deposited note, into Zyn: a proof bound to this wallet's deposit code,
-/// submitted by the relayer. Arrives as the channel's asset, the note's size.
+/// A deposited note, into Zyn: a proof bound to a fresh deposit code of this
+/// wallet's, submitted by the relayer. Arrives as the channel's asset, the
+/// note's size. Always a code of its own: one shared with a transparent
+/// deposit would tie the private exit to that deposit's wallet (audit, 9 Oct 2026).
 export async function toZyn(config, identity, commitment) {
   const note = own(config, identity, commitment);
-  const code = await bridges.depositCode(config, identity);
+  const code = await bridges.depositCode(config, identity, 'to-zyn');
   const m = await core();
   const { p } = await proveFor(config, identity, note.c, note, m.binding_to_zyn(code));
   const r = await ledger.call(config, 'zyn_poolRelay', { chain: note.c.chain, size: note.size, kind: 'to_zyn', proof: p.proof, root: p.root, nullifier_hash: p.nullifier_hash, code });

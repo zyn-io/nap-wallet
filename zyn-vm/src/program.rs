@@ -166,6 +166,16 @@ pub fn sale_open() -> ProgramId {
     named(b"sale-open")
 }
 
+/// Set or retune a collection's DAO (DECISIONS §172). Operator only.
+pub fn dao_configure() -> ProgramId {
+    named(b"dao-configure")
+}
+
+/// A member's act in a collection's DAO: a pass, a proposal, a vote (§172).
+pub fn dao() -> ProgramId {
+    named(b"dao")
+}
+
 /// Buy lottery tickets in a collection's primary sale.
 pub fn sale_tickets() -> ProgramId {
     named(b"sale-tickets")
@@ -315,6 +325,8 @@ pub fn is_named(id: &ProgramId) -> bool {
         configure_curves(),
         route(),
         sale_open(),
+        dao_configure(),
+        dao(),
         sale_tickets(),
         sale_close(),
         sale_draw(),

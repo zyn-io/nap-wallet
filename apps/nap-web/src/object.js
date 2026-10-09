@@ -147,6 +147,9 @@ const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''
 export function scan(published, { secret, nkey, owner }) {
   const spent = new Set(published.nullifiers || []);
   const held = [];
+  // This account's notes that have been spent: a redeemed item's floor share
+  // waits under an id made from the item's own commitment, not a nonce.
+  const gone = [];
   const byAsset = new Map();
 
   for (const o of published.outputs || []) {
@@ -156,13 +159,16 @@ export function scan(published, { secret, nkey, owner }) {
     // The pairing is checked, not assumed.
     const commit = commitment(note, owner);
     if (hex(commit) !== o.commitment) continue;
-    if (spent.has(hex(nullifierOf(nkey, commit)))) continue;
+    if (spent.has(hex(nullifierOf(nkey, commit)))) {
+      gone.push({ commitment: hex(commit), asset: hex(note.asset), amount: note.amount });
+      continue;
+    }
 
     const asset = hex(note.asset);
     held.push({ commitment: hex(commit), asset, amount: note.amount });
     byAsset.set(asset, (byAsset.get(asset) || 0n) + note.amount);
   }
-  return { held, balances: byAsset };
+  return { held, balances: byAsset, gone };
 }
 
 export function unhex(s) {
@@ -447,17 +453,27 @@ export const contentHash = (content) => sha256(contentBytes(content));
 /// (token = tokenOf(accountOf(publicKey), nonce)) and attaches `hash` to it.
 /// Reveals the creator to whoever keeps the content — the journal already
 /// names them — and nothing else.
-export async function contentProof(secretKey, nonce, token, hash) {
+export async function contentProof(secretKey, nonce, token, hash, chain) {
   const publicKey = await ed.getPublicKeyAsync(secretKey);
-  const message = concatBytes(new TextEncoder().encode('cave.jade.content.v1'), token, hash);
-  const signature = await ed.signAsync(message, secretKey);
-  return { publicKey: hex(publicKey), nonce: hex(nonce), signature: hex(signature) };
+  const signature = await ed.signAsync(contentMessage(token, hash, chain), secretKey);
+  return { publicKey: hex(publicKey), nonce: hex(nonce), signature: hex(signature), ...(chain != null ? { v: 2, chain } : {}) };
+}
+
+/// What a content proof signs. v2 names the chain: a coin can have one
+/// address on two chains (its creator's same nonce), and a proof that does
+/// not say which one could be replayed onto the other (audit, 6 Oct 2026).
+function contentMessage(token, hash, chain) {
+  const te = new TextEncoder();
+  if (chain == null) return concatBytes(te.encode('cave.jade.content.v1'), token, hash);
+  const c = new Uint8Array(4);
+  new DataView(c.buffer).setUint32(0, chain, false);
+  return concatBytes(te.encode('zyn.jade.content.v2'), c, token, hash);
 }
 
 /// The content server's check: `proof.publicKey` made `token` (it is
 /// tokenOf(accountOf(key), nonce), the ledger's derivation) and signed
 /// `hash` for it. Shared with the server so both sides derive it one way.
-export async function verifyContentProof(token, hash, proof) {
+export async function verifyContentProof(token, hash, proof, chain) {
   const te = new TextEncoder();
   const publicKey = unhex(proof.publicKey);
   const nonce = unhex(proof.nonce);
@@ -465,6 +481,8 @@ export async function verifyContentProof(token, hash, proof) {
   if (publicKey.length !== 32 || nonce.length !== 32 || signature.length !== 64) return false;
   const made = leaf(te.encode('objectvm.token.v1'), accountOf(publicKey), nonce);
   if (hex(made) !== hex(token)) return false;
-  const message = concatBytes(te.encode('cave.jade.content.v1'), token, hash);
+  // A v2 proof must name the chain it is checked for; a v1 proof names none.
+  if (proof.v === 2 && proof.chain !== chain) return false;
+  const message = contentMessage(token, hash, proof.v === 2 ? proof.chain : null);
   try { return await ed.verifyAsync(signature, message, publicKey); } catch { return false; }
 }

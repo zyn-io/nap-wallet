@@ -38,7 +38,7 @@ that is what `zec_pay` takes.
 ## Methods
 
 Errors carry EIP-1193 codes: `4001` rejected, `4100` not connected, `4200`
-unsupported, `-32602` bad parameters.
+unsupported, `4900` Nap's window closed or not open, `-32602` bad parameters.
 
 | Method | Needs | Returns |
 |---|---|---|
@@ -55,12 +55,24 @@ unsupported, `-32602` bad parameters.
 | `zyn_curveHoldings` | connected | `{zec, holdings: [{token, symbol, name, amount}], created: [{token, symbol, name}]}` — `created` is shown only to its holder |
 | `zyn_curveCreate {symbol, name, description?, image?}` | connected + approval | `{token, content?: {hash, proof}}` — `image` is a PNG/JPEG/WebP/GIF data URL; post `{content, proof}` to your content store, which checks the proof with `verifyContentProof` (nap-web `object.js`) |
 | `zyn_curveBuy {token, amount, minTokens?}`, `zyn_curveSell {token, tokens, minZec?}`, `zyn_swap {pool, sellA, amount, slippageBps?}` | connected + approval | `{order}` — settles at the seal; collect with `zyn_collect` |
+| `zyn_lendPositions` | connected + the holder's leave, once per site and network | `{positions}` |
+| `zyn_poolNotes` | connected + the holder's leave, once per site and network | `{notes: [{ch, size, kind, state, commitment?}]}` — `commitment` only while a note is unspent; no relayer signatures |
+| `zyn_bridgeDeposit {key}` | connected | a fresh deposit code (memo, calldata or BTC address) on every call — ask once per deposit, right before it is made |
 
 Connecting shows the site the Zyn account and a Zcash address — never a
 balance, a note or a key. An unconnected site that asks for anything about
-the holder gets the connect prompt first. Every write is prepared from what
-the chain says (the listed price, the item) and a site's claim that differs
-is refused.
+the holder gets the connect prompt first. Private-channel notes and lending
+positions say more than that, so the first time a site asks for either, Nap
+shows a card naming exactly what goes; the holder's answer is kept for that
+site, network and wallet until the site disconnects. Every write is prepared
+from what the chain says (the listed price, the item) and a site's claim that
+differs is refused.
+
+Public methods (`zyn_nftOffers`, `zyn_curves`, `zyn_lendMarkets`,
+`zyn_bridges`, `zyn_poolInfo`, `zyn_saleInfo`) never open Nap's window: in
+the extension, with the window closed they fail with `4900` — read the chain
+directly, or ask after connecting. A site's requests never keep the
+extension unlocked; it locks after 15 minutes without the holder's own use.
 
 ## Testing it end to end
 

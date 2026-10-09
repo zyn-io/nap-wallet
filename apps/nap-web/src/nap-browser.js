@@ -9,14 +9,18 @@
 // native sheet over the site before it is signed here.
 
 import { ERR, METHODS, ProviderError, session } from './connect-ops.js';
+import { allowed, SCOPES, withScope, without } from './connect-grants.js';
 
 const CONNECTED_KEY = 'nap.connected.v1';
 const invoke = (cmd, args = {}) => window.__TAURI__.core.invoke(`plugin:napbrowser|${cmd}`, args);
 
 const read = () => { try { return JSON.parse(localStorage.getItem(CONNECTED_KEY) || '{}') || {}; } catch { return {}; } };
+const keep = (c) => { try { localStorage.setItem(CONNECTED_KEY, JSON.stringify(c)); } catch { /* this session only */ } };
 const isConnected = (origin, net) => read()[origin]?.network === net;
-function remember(origin, net) { const c = read(); c[origin] = { network: net, at: Date.now() }; try { localStorage.setItem(CONNECTED_KEY, JSON.stringify(c)); } catch { /* this session only */ } }
-function forget(origin) { const c = read(); delete c[origin]; try { localStorage.setItem(CONNECTED_KEY, JSON.stringify(c)); } catch { /* nothing to forget */ } }
+/// A new connection starts with nothing allowed beyond it (connect-grants.js).
+function remember(origin, net) { keep({ ...read(), [origin]: { network: net, at: Date.now(), scopes: [] } }); }
+/// Disconnecting takes back every scope with the connection.
+function forget(origin) { keep(without(read(), origin)); }
 
 let current = null; // () => ({ config, identity, zec }) while the wallet is open, else null
 let queue = Promise.resolve();
@@ -88,6 +92,7 @@ async function handle(origin, method, params) {
       rows: [
         ['It will see', `Your Zyn account ID${identity.zec ? ' and Zcash address' : ''}`],
         ['When it asks', 'Your ZEC.zy and token balances, your items, what you are owed, your sale tickets and the coins you made'],
+        ['Only if you allow it', 'Your private-channel notes and your lending positions — each asked on its own sheet'],
         ['It will not see', 'Your keys or your recovery phrase'],
         ['Network', `${config.network} · ${config.zcash}`],
       ],
@@ -98,6 +103,20 @@ async function handle(origin, method, params) {
     remember(origin, config.id);
   }
   if (method === 'nap_connect') return session(ctx);
+  // A read that says more than the connection does waits for the holder's
+  // leave, once per site, network and wallet (audit, 9 Oct 2026).
+  if (m.scope && !allowed(read(), origin, config.id, identity.accountHex, m.scope)) {
+    const s = SCOPES[m.scope];
+    const { approved } = await invoke('approve', {
+      kicker: `${host} asks`,
+      title: `Let ${host} see ${s.what}`,
+      rows: [['It will see', s.shows], ['Network', config.network]],
+      note: `${s.risk} Allowed once for this site on ${config.network}. Disconnecting the site takes it back.`,
+      danger: false,
+    });
+    if (!approved) throw new ProviderError(ERR.REJECTED, 'The holder did not allow this site to read that');
+    keep(withScope(read(), origin, config.id, identity.accountHex, m.scope));
+  }
   if (m.kind === 'read' || m.kind === 'auto') return m.run(ctx, params);
 
   const plan = await m.prepare(ctx, params);

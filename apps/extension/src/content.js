@@ -79,6 +79,13 @@ function reach(open) {
   return promise;
 }
 
+/// Nap Connect's public methods (connect-ops.js, kind 'public'): what the
+/// chain says to anyone. Any page may ask them, so they never open Nap's
+/// window (audit, 9 Oct 2026); with the window closed they are refused, and
+/// the site reads the chain itself. nap-web's tests keep this list equal to
+/// the methods'.
+const PUBLIC = new Set(['zyn_nftOffers', 'zyn_curves', 'zyn_lendMarkets', 'zyn_bridges', 'zyn_poolInfo', 'zyn_saleInfo']);
+
 window.addEventListener('message', async (ev) => {
   if (ev.source !== window || !ev.data || ev.data.target !== 'nap-content') return;
   const { id, method, params } = ev.data;
@@ -86,8 +93,10 @@ window.addEventListener('message', async (ev) => {
   try {
     // Asking whether a session exists, or forgetting the site, never opens a
     // window by itself: with no window there is no session to report or end.
-    const quiet = method === 'nap_session' || method === 'nap_disconnect';
+    // Nor does a public question: only what needs the holder brings Nap up.
+    const quiet = method === 'nap_session' || method === 'nap_disconnect' || PUBLIC.has(method);
     const p = await reach(!quiet);
+    if (!p && PUBLIC.has(method)) { toPage({ id, error: { code: 4900, message: "Nap's window is not open. Connect first, or read the chain directly." } }); return; }
     if (!p) { toPage({ id, result: method === 'nap_disconnect' ? true : null }); return; }
     pending.set(id, { approved: false });
     p.postMessage({ nap: 'request', id, method, params: params && typeof params === 'object' ? params : {} });

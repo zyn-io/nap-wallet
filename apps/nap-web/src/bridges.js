@@ -108,13 +108,16 @@ export async function claimDeposits(config, identity) {
   return waiting;
 }
 
-/// This wallet's one-time deposit code, for a deposit made elsewhere.
-export const depositCode = async (config, identity) => (await bridgeMemo(config, identity)).commitment;
+/// A fresh deposit code for one deposit made elsewhere. `kind` is the
+/// bridge's key, or `to-zyn` for a private note moved into Zyn: a code is never
+/// shared between two kinds, nor between two requests while there is room
+/// (ledger.js bridgeMemo, audit 9 Oct 2026).
+export const depositCode = async (config, identity, kind) => (await bridgeMemo(config, identity, { kind })).commitment;
 
-/// A Bitcoin deposit address: the vault key tweaked by this wallet's code,
-/// derived here, with the bridge asked to watch it.
+/// A Bitcoin deposit address: the vault key tweaked by a fresh code of this
+/// wallet's, derived here, with the bridge asked to watch it.
 export async function btcDepositAddress(config, identity, b) {
-  const commitment = await depositCode(config, identity);
+  const commitment = await depositCode(config, identity, 'btc');
   await call(config, 'zyn_depositWatch', { network: b.network, commitment });
   return btc.depositAddress(b.internal, unhex(commitment, 32), b.chain);
 }

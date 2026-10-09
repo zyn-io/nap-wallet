@@ -29,12 +29,20 @@
       "launchpadUrl": "https://jade.zyn-network.com/",
       "attendUrl": "/attend",
       "bridges": {
+        "sol": {
+          "network": "solana",
+          "cluster": "mainnet",
+          "vault": "23bHgTpb8kcbBXcKP66MdjrRfM4UgAtjDDFkidWYLwnU",
+          "rpc": "https://solana-rpc.publicnode.com",
+          "explorer": "https://explorer.solana.com/tx/{tx}",
+          "custody": "3-of-4 Squads multisig",
+          "multisig": "A334BUsBudh3RzkSpxgKu3wcCsyVYk4iP2iXMk9pFSvh"
+        },
         "eth": {
           "chainId": 1,
           "vault": "0x235730d7738CC16d3b94d0e3D7097F9ddE22A459",
           "assetId": 1,
           "explorer": "https://etherscan.io/tx/{tx}",
-          "capWei": "10000000000000000",
           "custody": "2-of-3 Safe",
           "safe": "0xEE741530abB9eaD1C7d6E9C58E5Df0D43F39b983",
           "vaultRpc": "/eth/mainnet",
