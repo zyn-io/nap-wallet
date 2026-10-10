@@ -408,7 +408,7 @@ const siteName = () => `<b class="site">${esc(site ? new URL(site).host : 'A sit
 function connectCard() {
   return `<p class="kicker">CONNECT</p><h2>${siteName()} wants to connect.</h2>
     <dl class="rows"><dt>It will see</dt><dd>Your Zyn account ID${identity.zec ? ' and your Zcash address' : ''}</dd>
-    <dt>When it asks</dt><dd>Your ZEC.zy and token balances, your items, what you are owed, your sale tickets and the coins you made</dd>
+    <dt>When it asks</dt><dd>Your ZEC in apps and token balances, your items, what you are owed, your sale tickets and the coins you made</dd>
     <dt>Only if you allow it</dt><dd>${esc(capital(scopeList(Object.keys(SCOPES))))} — each asked on its own card</dd>
     <dt>It will not see</dt><dd>Your keys or your recovery phrase</dd>
     <dt>Network</dt><dd>${esc(config.network)} · ${esc(config.zcash)}</dd></dl>

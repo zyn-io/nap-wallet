@@ -270,7 +270,8 @@ function lockScreen(error = '') {
   void biometricUnlock();
   $('#unlock').onsubmit = async (e) => {
     e.preventDefault();
-    const button = $('#unlock .btn');
+    // The form's own button, not the Face ID one inserted beside it.
+    const button = $('#unlock button[type=submit]');
     button.disabled = true; button.textContent = 'Unlocking…';
     try {
       const password = $('#pw').value;
@@ -431,7 +432,13 @@ function renderPanel() {
   else if (tab === 'items') panel.innerHTML = itemsHtml();
   else panel.innerHTML = activityHtml();
   panel.querySelectorAll('.tok[data-sym]').forEach((el) => tokenDisc(el, el.dataset.sym));
-  panel.querySelectorAll('[data-coin]').forEach((el) => { el.onclick = () => sendForm(assetOptions().find((o) => o.key === el.dataset.coin)); });
+  panel.querySelectorAll('[data-coin]').forEach((el) => {
+    el.onclick = () => {
+      const opt = assetOptions().find((o) => o.key === el.dataset.coin);
+      if (!opt) { toast(el.dataset.coin === 'zec' ? 'No ZEC to send yet. Receive first.' : 'Nothing of this to send yet.'); return; }
+      sendForm(opt);
+    };
+  });
   panel.querySelectorAll('[data-item]').forEach((el) => { el.onclick = () => itemView(pocket.items.find((i) => i.asset === el.dataset.item)); });
   $('#art-on')?.addEventListener('change', (e) => { setArtOn(e.target.checked); renderPanel(); });
   fillArt(config, panel);
@@ -449,7 +456,7 @@ function tokensHtml() {
   else if (!pocket) rows.push('<li class="skeleton"></li><li class="skeleton"></li>');
   else {
     for (const c of pocket.coins) {
-      rows.push(`<li><button class="row" data-coin="${esc(c.asset)}"><span class="tok" data-sym="${esc(c.symbol)}">${esc(c.symbol.replace(/^LP /, '').slice(0, 1))}</span><span class="who"><b>${esc(c.symbol)}</b><span>${esc(c.origin === 'Zyn' ? 'on Zyn' : `${c.origin} · on Zyn`)}</span></span><span class="val"><b>${esc(wadText(c.amount))}</b><span>${esc(usdText(usdOf(c.asset, c.amount)))}</span></span></button></li>`);
+      rows.push(`<li><button class="row" data-coin="${esc(c.asset)}"><span class="tok" data-sym="${esc(c.symbol)}">${esc(c.symbol.replace(/^LP /, '').slice(0, 1))}</span><span class="who"><b>${esc(c.asset === config.zecAsset ? 'ZEC' : c.symbol)}</b><span>${esc(c.asset === config.zecAsset ? 'in apps' : c.origin === 'Zyn' ? 'on Zyn' : `${c.origin} · on Zyn`)}</span></span><span class="val"><b>${esc(wadText(c.amount))}</b><span>${esc(usdText(usdOf(c.asset, c.amount)))}</span></span></button></li>`);
     }
     if (pocket.old) rows.push('<li class="empty"><b>Balances need your phrase once.</b>This wallet was kept before the object ledger. <button class="link" id="reveal-old">Open the full view</button></li>');
   }
@@ -477,7 +484,7 @@ function itemsHtml() {
 function activityHtml() {
   const mine = activity(config, identity).map((a) => `<li class="row"><span class="tok" data-sym="${esc(a.symbol || '?')}">${a.kind === 'out' ? '↑' : '↓'}</span><span class="who"><b>${esc(a.title)}</b><span>${esc(a.to ? `to ${short(a.to, 8, 6)}` : a.kind === 'shield' ? 'from transparent' : '')}</span></span><span class="val"><b>${esc(a.kind === 'shield' ? `+${a.amount}` : a.amount || '')}</b><span>${esc(new Date(a.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</span></span></li>`);
   const shieldTx = new Set(activity(config, identity).filter((a) => a.kind === 'shield').map((a) => a.tx));
-  const received = (zecView?.notes || []).filter((n) => !shieldTx.has(n.txid)).slice(0, 20).map((n) => `<li class="row"><span class="tok" data-sym="ZEC">↓</span><span class="who"><b>Received ZEC</b><span>block ${Number(n.height).toLocaleString('en-US')}</span></span><span class="val"><b>+${esc(zecText(n.zatoshi))}</b><span class="teal">shielded</span></span></li>`);
+  const received = (zecView?.notes || []).filter((n) => !shieldTx.has(n.txid)).slice(0, 20).map((n) => `<li class="row"><span class="tok" data-sym="ZEC">↓</span><span class="who"><b>Received ZEC</b><span>received</span></span><span class="val"><b>+${esc(zecText(n.zatoshi))}</b><span class="teal">shielded</span></span></li>`);
   const all = [...mine, ...received];
   return all.length ? `<ul class="rows">${all.join('')}</ul>` : '<div class="empty"><b>Nothing yet.</b>Sends, shields and collected payouts from this device, and ZEC received, show here.</div>';
 }
@@ -552,13 +559,16 @@ async function startZec() {
     await readTransparent();
     zecView = await account.open({ fresh: zecFresh });
     zecFresh = false;
+    let syncFrom = null;
     zecView = await account.sync((s) => {
       if (g !== generation || !s.to) return;
-      zecState = `scanning ${Number(s.at).toLocaleString('en-US')} / ${Number(s.to).toLocaleString('en-US')}`;
+      if (syncFrom == null || s.at < syncFrom) syncFrom = s.at;
+      const span = Number(s.to) - Number(syncFrom);
+      zecState = `syncing… ${span > 0 ? Math.max(0, Math.min(99, Math.floor(((Number(s.at) - Number(syncFrom)) / span) * 100))) : 0}%`;
       renderZec();
     });
     if (g !== generation) return;
-    zecState = zecView.syncedTo >= 0 ? `synced · block ${Number(zecView.syncedTo).toLocaleString('en-US')}` : '';
+    zecState = zecView.syncedTo >= 0 ? 'up to date' : '';
     void readTransparent();
   } catch (e) {
     if (g !== generation) return;
@@ -640,7 +650,7 @@ function recovery() {
 
 function receive(which = identity.zec ? 'zcash' : 'zyn') {
   const s = screen('Receive', `<div class="seg${identity.zec ? ' four-seg' : ''}" role="group">
-      ${identity.zec ? '<button data-r="zcash">Shielded address</button><button data-r="transparent">Transparent address</button>' : ''}<button data-r="deposit">ZEC → Zyn</button><button data-r="zyn">Zyn account</button>
+      ${identity.zec ? '<button data-r="zcash">Shielded address</button><button data-r="transparent">Transparent address</button>' : ''}<button data-r="deposit">ZEC → apps</button><button data-r="zyn">Zyn account</button>
     </div>
     <div class="qr"><canvas></canvas></div>
     <div class="address" id="r-address">…</div>
@@ -664,7 +674,7 @@ function receive(which = identity.zec ? 'zcash' : 'zyn') {
       } else if (kind === 'deposit') {
         hint.textContent = 'Asking Zyn for your deposit address…';
         text = await depositAddress(config, identity); what = 'Deposit address';
-        hint.textContent = `Send shielded ZEC here and it arrives on ${config.network} as ZEC.zy. No memo needed; this address is yours alone.`;
+        hint.textContent = 'Send shielded ZEC here and it arrives as ZEC in apps. No memo needed; this address is yours alone.';
         if (identity.zec && zecView && zecView.balance.orchard + zecView.balance.ironwood > 0) fundBtn.classList.remove('hidden');
       } else {
         text = identity.accountHex; what = 'Account id';
@@ -806,7 +816,7 @@ function sendForm(opt, prefill = {}) {
       const amountText = item ? '1' : $('#f-amount', s).value.trim();
       if (!to) throw new Error('Enter who it goes to');
       if (zcash) {
-        if (/^[0-9a-f]{64}$/i.test(to)) throw new Error('That is a Zyn account. Send ZEC.zy to it instead — or use its deposit address.');
+        if (/^[0-9a-f]{64}$/i.test(to)) throw new Error('That is an account ID, not a Zcash address. Send ZEC in apps to it instead, or use its deposit address.');
         const transparent = /^t[a-z0-9]{20,}$/i.test(to);
         if (!to.startsWith(config.zcashPrefix) && !transparent) throw new Error(`That is not a ${config.zcash} address`);
         const memo = $('#f-memo', s).value;

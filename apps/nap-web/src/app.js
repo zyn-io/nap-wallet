@@ -9,7 +9,7 @@ import { checkedEpoch, deriveCollectionAccount, deriveIdentity, forgetIdentity, 
 import { deriveZecKeys, stopZec, ZecAccount } from './zec/client.js';
 import { parsePaymentRequest } from './zip321.js';
 import { endpoint, IN_APP, IN_EXTENSION, IN_POPUP } from './origin.js';
-import { endSession, hasSession, loadSession, saveSession } from './session.js';
+import { endSession, hasSession, loadSession, peekSession, saveSession, touchSession } from './session.js';
 import { installTips, tip } from './tip.js';
 import './styles.css';
 import './moved-banner.js';
@@ -27,6 +27,8 @@ let pocket = null;
 /// Dollars (WAD) for an amount of an asset, at the prices posted on Zyn.
 let usdOf = () => null;
 let generatedWords = '';
+/// The onboarding screen showing, so a network switch keeps it.
+let onboardMode = null;
 /// The Zcash wallet for the chosen network: plain shielded ZEC, held the way
 /// any Zcash wallet holds it. Separate from the Zyn account above it on
 /// purpose — a Zcash address gets a Zcash transaction, a Zyn account gets Zyn
@@ -170,7 +172,7 @@ function switchNetwork(id) {
   pocket = null; usdOf = () => null;
   clearTimeout(zecTimer); stopZec(); zecAccount = null;
   generation++; refreshId++;
-  if (identity) { wallet(); refresh(); } else onboarding();
+  if (identity) { wallet(); refresh(); } else onboarding(onboardMode || undefined);
 }
 
 function shell(content) {
@@ -186,7 +188,7 @@ function unlockForm() {
 function bindKept() {
   root.querySelector('#kept-form').onsubmit = async (event) => {
     event.preventDefault();
-    const button = root.querySelector('.primary');
+    const button = root.querySelector('#kept-form button[type=submit]');
     button.disabled = true;
     const password = root.querySelector('#kept-password').value;
     try { await openKept(password); offerBiometrics(password); }
@@ -268,8 +270,29 @@ const WHERE = IN_APP ? { closing: 'Closing the app' }
   : IN_EXTENSION ? { closing: 'Closing Nap' }
   : { closing: 'Closing this tab' };
 
+/// Nap for Chrome: the newest release's zip, and how to load it. Only where
+/// it can be installed — not inside the extension or the phone app, and not
+/// on a phone's browser.
+const EXTENSION_ZIP = 'https://github.com/zyn-io/nap-wallet/releases/latest/download/nap-wallet-chrome.zip';
+const EXTENSION_RELEASE = 'https://github.com/zyn-io/nap-wallet/releases/latest';
+const canInstallExtension = () => !IN_EXTENSION && !IN_APP && !IN_POPUP && !/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+function extensionSteps() {
+  return `<div class="ext-get">
+    <div class="ext-head"><b>Nap for Chrome</b><a class="ext-download" href="${EXTENSION_ZIP}" rel="noopener">Download →</a></div>
+    <ol>
+      <li>Unzip <code>nap-wallet-chrome.zip</code>.</li>
+      <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top right).</li>
+      <li>Click <b>Load unpacked</b> and choose the unzipped folder.</li>
+      <li>Pin Nap from the puzzle-piece menu, then restore with your recovery phrase.</li>
+    </ol>
+    <p class="ext-fine">Works in Chrome, Brave, Edge and Arc. <a href="${EXTENSION_RELEASE}" target="_blank" rel="noopener">Release notes</a></p>
+  </div>`;
+}
+
 function onboarding(mode = keptWallet() ? 'kept' : (claimCode ? 'create' : 'restore')) {
-  if (mode !== 'create') generatedWords = '';
+  // The 24 words stay until the wallet opens with them: switching tab or
+  // network must not hand someone a phrase they did not write down.
+  onboardMode = mode;
   shell(`<main class="onboard">
     <section class="intro">
       <h1>Nap Wallet</h1>
@@ -279,6 +302,7 @@ function onboarding(mode = keptWallet() ? 'kept' : (claimCode ? 'create' : 'rest
       ${IN_EXTENSION || setupMode
     ? `<div class="promise"><span>02</span><p><b>Saved here, sealed with your password.</b>${tip('Only the key is stored, sealed under your password. Never your phrase.')}</p></div>`
     : `<div class="promise"><span>02</span><p><b>Not saved unless you set a password.</b>${tip(`${WHERE.closing} forgets the key. With a password, only the key is stored, sealed under it. Never your phrase.`)}</p></div>`}
+      ${canInstallExtension() ? extensionSteps() : ''}
     </section>
     <section class="entry panel">
       ${mode === 'kept' ? '' : `<div class="tabs"><button data-mode="restore" class="${mode === 'restore' ? 'active' : ''}">Restore</button><button data-mode="create" class="${mode === 'create' ? 'active' : ''}">Create new</button></div>`}
@@ -408,49 +432,101 @@ async function openKept(password) {
   refresh();
 }
 
+/// The wallet's views. One shows at a time; the rail switches them (a wallet,
+/// not one long page of everything — 9 Oct 2026).
+const VIEWS = [['home', 'Home'], ['zec', 'Zcash'], ['apps', 'Apps'], ['activity', 'Activity'], ['settings', 'Settings']];
+let currentView = 'home';
+
 function wallet(message = '') {
   const account = identity.accountHex;
+  const zecMini = identity.zec
+    ? `<section class="zec-mini" id="zec-mini"><div><p class="kicker">ZEC · WALLET</p><b id="zec-mini-total">—</b><span id="zec-mini-usd" class="coin-usd"></span></div><div class="zec-mini-go"><button class="quiet" data-view-go="zec">Send · Receive →</button><button class="quiet" data-view-go="apps">Move to apps →</button></div></section>`
+    : `<section class="zec-mini" id="zec-mini"><div><p class="kicker">ZEC · WALLET</p><b>—</b></div><div class="zec-mini-go"><button class="quiet" data-view-go="zec">Add your Zcash wallet →</button></div></section>`;
   shell(`<main class="wallet">
     <aside class="rail">
-      <div><p class="kicker">ZYN ACCOUNT</p><button class="account-copy" id="copy-account"><b>${short(account)}</b><span>Copy full ID</span></button></div>
-      <nav><button class="active" data-go="top">Pocket</button><button data-go="zec">Zcash</button><button data-go="account">Receive</button><button data-go="activity">Activity</button><button data-go="apps">Apps</button>${napBrowser ? '<button id="browser-link">Browser</button>' : ''}<button id="recovery-link">Recovery</button></nav>
+      <div><p class="kicker">YOUR ACCOUNT</p><button class="account-copy" id="copy-account"><b>${short(account)}</b><span>Copy full ID</span></button></div>
+      <nav>${VIEWS.map(([v, label]) => `<button data-view-go="${v}" class="${v === currentView ? 'active' : ''}">${label}</button>`).join('')}${napBrowser ? '<button id="browser-link">Browser</button>' : ''}</nav>
       <button class="quiet" id="forget">${keptWallet() ? 'Lock' : 'Lock &amp; forget key'}</button>
     </aside>
     <section class="content" id="top">
-      <div class="topline"><div><h1>Pocket</h1><p class="worth" id="worth"></p></div><button class="refresh" id="refresh" aria-label="Refresh"><span aria-hidden="true">↻</span><span class="refresh-word">Refresh</span></button></div>
+      <div class="topline"><div><h1 id="view-title">Home</h1><p class="worth" id="worth"></p></div><button class="refresh" id="refresh" aria-label="Refresh"><span aria-hidden="true">↻</span><span class="refresh-word">Refresh</span></button></div>
       <div class="notice ${message ? 'show' : ''}" id="notice">${escapeHtml(message)}</div>
-      ${claimCode ? `<section class="claim"><div><p class="kicker">GIFT CARD</p><h2>Nap Mole to claim${tip('The gift coordinator sees this public account ID, not your phrase or key.')}</h2></div><button id="claim">Claim <span>→</span></button></section>` : ''}
-      ${tapLink ? `<section class="claim"><div><p class="kicker">EVENT TAG</p><h2>Certificate to collect${tip('The certificate service learns this account ID and nothing else. Nobody can see who holds it.')}</h2></div><button id="attend">Collect <span>→</span></button></section>` : ''}
-      ${zecSection()}
-      <section><div class="section-title"><h2>Coins</h2><span id="coin-count">—</span></div><div class="coins" id="coins"><div class="skeleton"></div></div></section>
-      <section><div class="section-title"><h2>Items</h2><span id="item-count">—</span></div><label class="art-consent"><input type="checkbox" id="art-toggle"><span>Show artwork. Off by default: each picture is loaded from Nap's media gateway, which then learns your IP address and which items you hold.</span></label><div class="items" id="items"><div class="skeleton"></div><div class="skeleton"></div></div></section>
-      <section class="activity" id="account"><div class="section-title"><h2>Account</h2></div><div class="account-card"><div><span>Public account</span><code>${account}</code><p class="muted">For Zyn coins and items from another Zyn wallet.${tip('Not a Zcash address: ZEC sent here is lost. To bring ZEC in, use the deposit address below.')}</p></div><canvas id="qr" width="164" height="164"></canvas></div></section>
-      <section class="activity"><div class="section-title"><h2>Deposit ZEC</h2></div><div class="account-card" id="deposit-card"><div><span>Your Zcash deposit address</span><code id="deposit-address">Asking the node…</code><p class="muted" id="deposit-note">Arrives as ZEC.zy.${tip('Send shielded ZEC here. No memo needed; this address is yours alone.')}</p><button class="quiet" id="copy-deposit" hidden>Copy address</button> <button class="quiet" id="deposit-from-zec">Pay it from my ZEC →</button></div><canvas id="deposit-qr" width="164" height="164"></canvas></div></section>
-      <section class="activity"><div class="section-title"><h2>Withdraw ZEC</h2></div><form class="account-card" id="withdraw-form"><div><span>Send ZEC.zy back to a Zcash address</span><label class="visually-hidden" for="withdraw-to">Zcash address</label><input id="withdraw-to" class="withdraw-input" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(config.zcashPrefix)}… or t…"><label class="visually-hidden" for="withdraw-amount">Amount</label><input id="withdraw-amount" class="withdraw-input" inputmode="decimal" autocomplete="off" placeholder="0.0 ZEC"><p class="muted">Fees${tip('The chain records only a commitment to the address. The vault pays it once two custodians sign. The Zcash network fee comes out of the amount; any bridge fee is added on top.')}</p></div><div><button class="primary" type="submit" id="withdraw-go">Withdraw <span>→</span></button></div></form></section>
-      <section class="activity" id="activity"><div class="section-title"><h2>Activity</h2><span>this device</span></div><ul class="log" id="log"></ul></section>
-      <section class="activity" id="apps"><div class="section-title"><h2>Apps</h2></div><div class="apps">${appsFor(config).map((a) => `<a class="app" href="${escapeHtml(a.url)}" target="_blank" rel="noopener" data-url="${escapeHtml(a.url)}"><b>${escapeHtml(a.name)}</b><span>${escapeHtml(a.what)}</span><code>${escapeHtml(a.host)}</code></a>`).join('')}</div></section>
+      <div data-view="home">
+        ${claimCode ? `<section class="claim"><div><p class="kicker">GIFT CARD</p><h2>Nap Mole to claim${tip('The gift coordinator sees this public account ID, not your phrase or key.')}</h2></div><button id="claim">Claim <span>→</span></button></section>` : ''}
+        ${tapLink ? `<section class="claim"><div><p class="kicker">EVENT TAG</p><h2>Certificate to collect${tip('The certificate service learns this account ID and nothing else. Nobody can see who holds it.')}</h2></div><button id="attend">Collect <span>→</span></button></section>` : ''}
+        ${zecMini}
+        <section><div class="section-title"><h2>Coins</h2><span id="coin-count">—</span></div><div class="coins" id="coins"><div class="skeleton"></div></div></section>
+        <section><div class="section-title"><h2>Items</h2><span id="item-count">—</span></div><div class="items" id="items"><div class="skeleton"></div><div class="skeleton"></div></div></section>
+      </div>
+      <div data-view="zec" hidden>${zecSection()}</div>
+      <div data-view="apps" hidden>
+        <section class="activity" id="apps"><div class="section-title"><h2>Apps</h2></div><div class="apps">${appsFor(config).map((a) => `<a class="app" href="${escapeHtml(a.url)}" target="_blank" rel="noopener" data-url="${escapeHtml(a.url)}"><b>${escapeHtml(a.name)}</b><span>${escapeHtml(a.what)}</span><code>${escapeHtml(a.host)}</code></a>`).join('')}</div></section>
+        <section class="activity"><div class="section-title"><h2>Bring ZEC into apps</h2></div><div class="account-card" id="deposit-card"><div><span>Your deposit address</span><code id="deposit-address">Asking the node…</code><p class="muted" id="deposit-note">Arrives as ZEC you can use in apps.${tip('Send shielded ZEC here from any wallet. No memo needed; this address is yours alone.')}</p><button class="quiet" id="copy-deposit" hidden>Copy address</button> <button class="quiet" id="deposit-from-zec">Pay it from my ZEC →</button></div><canvas id="deposit-qr" width="164" height="164"></canvas></div></section>
+        <section class="activity"><div class="section-title"><h2>Take ZEC out of apps</h2></div><form class="account-card" id="withdraw-form"><div><span>Back to a Zcash address</span><label class="visually-hidden" for="withdraw-to">Zcash address</label><input id="withdraw-to" class="withdraw-input" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(config.zcashPrefix)}… or t…"><button class="quiet" type="button" id="withdraw-mine">To my Zcash wallet</button><label class="visually-hidden" for="withdraw-amount">Amount</label><input id="withdraw-amount" class="withdraw-input" inputmode="decimal" autocomplete="off" placeholder="0.0 ZEC"><p class="muted">Fees${tip('The chain records only a commitment to the address. The vault pays it once two custodians sign. The Zcash network fee comes out of the amount; any bridge fee is added on top.')}</p></div><div><button class="primary" type="submit" id="withdraw-go">Withdraw <span>→</span></button></div></form></section>
+        <section class="activity" id="account"><div class="section-title"><h2>Your account ID</h2></div><div class="account-card"><div><span>For coins and items from another Nap</span><code>${account}</code><p class="muted">Not a Zcash address.${tip('ZEC sent here is lost. To bring ZEC in, use the deposit address above.')}</p></div><canvas id="qr" width="164" height="164"></canvas></div></section>
+      </div>
+      <div data-view="activity" hidden>
+        <section class="activity" id="activity"><div class="section-title"><h2>Activity</h2><span>this device</span></div><ul class="log" id="log"></ul></section>
+      </div>
+      <div data-view="settings" hidden>
+        <section class="activity settings">
+          <div class="setting"><div><b>Recovery</b><p class="muted">How to restore this wallet in any Nap.</p></div><button class="quiet" id="recovery-link">Show →</button></div>
+          ${canInstallExtension() ? `<div class="setting setting-ext">${extensionSteps()}</div>` : ''}
+          <label class="setting art-consent"><div><b>Show artwork</b><p class="muted">Pictures come from Nap's media gateway, which then learns your IP address and which items you hold.</p></div><input type="checkbox" id="art-toggle"></label>
+          ${identity.zec ? '<div class="setting"><div><b>Zcash scan</b><p class="muted">Missing ZEC you received before this wallet was made here?</p></div><button class="quiet" id="settings-rescan">Scan from an earlier block →</button></div>' : ''}
+        </section>
+      </div>
     </section>
   </main><dialog id="send-dialog"></dialog><dialog id="shield-dialog"></dialog><dialog id="recovery-dialog"><button class="x">×</button><h2>Recovery</h2><p>Restore this phrase, passphrase and account index in any Nap to recover <code>${account}</code>. Nap does not store the phrase.</p><div class="descriptor"><span>Derivation</span><b>nap.zyn.ed25519.v1</b><span>Account index</span><b>${identity.accountIndex}</b><span>Network scoped</span><b>No</b></div></dialog>`);
+  showView(currentView);
   QRCode.toCanvas(root.querySelector('#qr'), account, { width: 164, margin: 1, color: { dark: '#1f2428', light: '#f8f2e4' } });
   void loadDepositAddress(identity);
+  // Reviewed like every other send: the first press shows what goes where,
+  // the second sends it; changing either field starts over.
+  const withdrawGo = root.querySelector('#withdraw-go');
+  const disarmWithdraw = () => { delete withdrawGo.dataset.armed; withdrawGo.innerHTML = 'Withdraw <span>→</span>'; };
+  root.querySelectorAll('#withdraw-to, #withdraw-amount').forEach((el) => el.addEventListener('input', disarmWithdraw));
   root.querySelector('#withdraw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const button = root.querySelector('#withdraw-go');
+    const button = withdrawGo;
+    if (button.disabled) return;
     button.disabled = true;
     try {
       const to = root.querySelector('#withdraw-to').value.trim();
       const amount = root.querySelector('#withdraw-amount').value.trim();
       if (!to.startsWith(config.zcashPrefix) && !/^t[a-z0-9]/i.test(to)) throw new Error(`That is not a ${config.zcash} address`);
-      if (!pocket?.held) throw new Error('Still reading your balances; try again in a moment.');
-      await withdrawZec(config, identity, pocket.held, to, amount);
+      parseAmount(amount);
+      if (!pocket) throw new Error('Still reading your balances; try again in a moment.');
+      if (!button.dataset.armed) {
+        button.dataset.armed = '1';
+        button.innerHTML = `Confirm: withdraw ${escapeHtml(amount)} ZEC <span>→</span>`;
+        note(`To ${short(to)}. The bridge fee is added on top and the Zcash network fee comes out of the amount.`);
+        return;
+      }
+      await withdrawZec(config, identity, await freshHeld(), to, amount);
+      pocketStale = true;
       logActivity(config, identity, { kind: 'out', title: 'Withdrew to Zcash', symbol: 'ZEC', amount: `−${amount}`, to });
+      renderActivity();
       note('Withdrawal recorded. The vault pays it once two custodians sign — usually within minutes.');
       root.querySelector('#withdraw-amount').value = '';
+      disarmWithdraw();
       refresh(false);
-    } catch (err) { note(err.message, true); } finally { button.disabled = false; }
+    } catch (err) { note(err.message, true); disarmWithdraw(); } finally { button.disabled = false; }
   });
-  root.querySelector('#copy-account').onclick = async () => { await navigator.clipboard.writeText(account); note('Account ID copied.'); };
-  root.querySelectorAll('.rail [data-go]').forEach((b) => { b.onclick = () => root.querySelector(`#${b.dataset.go}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  root.querySelector('#withdraw-mine').addEventListener('click', disarmWithdraw);
+  root.querySelector('#copy-account').onclick = () => copyText(account, 'Account ID copied.');
+  root.querySelectorAll('[data-view-go]').forEach((b) => { b.onclick = () => showView(b.dataset.viewGo); });
+  root.querySelector('#withdraw-mine').onclick = () => {
+    const mine = zecAccount?.view?.address;
+    if (!mine) { note('Open your Zcash wallet first.', true); return; }
+    root.querySelector('#withdraw-to').value = mine;
+    root.querySelector('#withdraw-amount').focus();
+  };
+  root.querySelector('#settings-rescan')?.addEventListener('click', () => {
+    showView('zec');
+    if (!zecAccount) { note('Your Zcash wallet is still opening; try again in a moment.', true); return; }
+    zecRescan();
+  });
   // In the phone app a site opens in the Nap browser, beside the wallet.
   root.querySelectorAll('.app[data-url]').forEach((a) => { a.onclick = (e) => { if (napBrowser) { e.preventDefault(); openSite(a.dataset.url); } }; });
   root.querySelector('#recovery-link').onclick = () => root.querySelector('#recovery-dialog').showModal();
@@ -466,7 +542,9 @@ function wallet(message = '') {
     const to = root.querySelector('#zec-to');
     if (!to) { note('Open your Zcash wallet first.', true); return; }
     to.value = address;
-    root.querySelector('#zec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // As if typed: the review starts over and the memo field follows.
+    to.dispatchEvent(new Event('input', { bubbles: true }));
+    showView('zec');
     root.querySelector('#zec-amount').focus();
   };
   const artToggle = root.querySelector('#art-toggle');
@@ -480,6 +558,23 @@ function wallet(message = '') {
   bindZec();
   root.querySelector('#claim')?.addEventListener('click', claimGift);
   root.querySelector('#attend')?.addEventListener('click', collectCertificate);
+}
+
+/// Show one of the wallet's views.
+/// Copy `text`, saying so — or saying the browser would not let it.
+async function copyText(text, said) {
+  try { await navigator.clipboard.writeText(text); note(said); }
+  catch { note('This browser would not let Nap copy. Select the text and copy it.', true); }
+}
+
+function showView(v) {
+  if (!VIEWS.some(([id]) => id === v)) v = 'home';
+  currentView = v;
+  root.querySelectorAll('[data-view]').forEach((el) => { el.hidden = el.dataset.view !== v; });
+  root.querySelectorAll('.rail [data-view-go]').forEach((b) => b.classList.toggle('active', b.dataset.viewGo === v));
+  const title = root.querySelector('#view-title');
+  if (title) title.textContent = VIEWS.find(([id]) => id === v)[1];
+  window.scrollTo({ top: 0 });
 }
 
 /// A site: in the phone app, in the Nap browser beside the wallet; elsewhere
@@ -533,6 +628,18 @@ function zecSection() {
     <ul class="zec-notes" id="zec-notes"></ul></section>`;
 }
 
+/// How far a scan has come, as a holder reads it: measured from the block
+/// this sync started at, which `zecSync` resets.
+let syncFrom = null;
+function syncText(s) {
+  const at = Number(s.at), to = Number(s.to);
+  if (syncFrom == null || at < syncFrom) syncFrom = at;
+  const from = syncFrom;
+  const span = to - from;
+  const pct = span > 0 ? Math.max(0, Math.min(99, Math.floor(((at - from) / span) * 100))) : 0;
+  return `syncing… ${pct}%`;
+}
+
 function zecStatus(text, bad = false) {
   const el = root.querySelector('#zec-sync');
   if (!el) return;
@@ -541,29 +648,38 @@ function zecStatus(text, bad = false) {
 }
 
 let zecQrFor = '';
+/// A ZEC send in flight: its button stays off whatever a sync re-renders
+/// (audit, 10 Oct 2026 — a sync finishing re-armed it mid-send).
+let zecSending = false;
 function renderZec(v) {
   const el = root.querySelector('#zec');
   if (!el || !v) return;
   const held = v.balance.orchard + v.balance.ironwood;
   root.querySelector('#zec-total').textContent = zecText(held);
   root.querySelector('#zec-usd').textContent = held ? usdText(usdOf(config.zecAsset, BigInt(held) * 10_000_000_000n)) : '';
+  const mini = root.querySelector('#zec-mini-total');
+  if (mini) {
+    mini.textContent = zecText(held);
+    root.querySelector('#zec-mini-usd').textContent = root.querySelector('#zec-usd').textContent;
+  }
   renderWorth();
   const parts = [];
   if (v.balance.inFlight) parts.push(`${zecText(v.balance.inFlight)} ZEC on its way (change from a send, back after 3 blocks)`);
   if (v.balance.orchard && v.balance.ironwood) parts.push(`Ironwood ${zecText(v.balance.ironwood)} · Orchard ${zecText(v.balance.orchard)}`);
   root.querySelector('#zec-detail').textContent = parts.join(' · ') || 'Shielded. Only this phrase can see it.';
   renderZecAddress(v);
-  root.querySelector('#zec-go').disabled = held === 0;
-  if (v.syncedTo >= 0) zecStatus(`synced to block ${v.syncedTo.toLocaleString('en-US')}`);
+  root.querySelector('#zec-go').disabled = held === 0 || zecSending;
+  // "up to date" is said by a sync that finished, never by opening the
+  // wallet at the block it last stood at.
   const notes = root.querySelector('#zec-notes');
   const shieldLog = activity(config, identity).filter((a) => a.kind === 'shield').slice(0, 6);
   const shields = shieldLog.map((a) => `<li><b>${escapeHtml(a.amount)} ZEC</b><span>shielded from transparent</span><code>${escapeHtml(short(a.tx || ''))}</code></li>`);
   // A shield's note is listed once, as the shield.
   const shieldTx = new Set(shieldLog.map((a) => a.tx));
-  const received = v.notes.filter((n) => !shieldTx.has(n.txid)).slice(0, 12).map((n) => `<li><b>${escapeHtml(zecText(n.zatoshi))} ZEC</b><span>received at block ${Number(n.height).toLocaleString('en-US')}</span><code>${escapeHtml(short(n.txid))}</code></li>`);
+  const received = v.notes.filter((n) => !shieldTx.has(n.txid)).slice(0, 12).map((n) => `<li><b>${escapeHtml(zecText(n.zatoshi))} ZEC</b><span>received</span><code>${escapeHtml(short(n.txid))}</code></li>`);
   notes.innerHTML = shields.length || received.length
     ? [...shields, ...received].join('')
-    : `<li class="zec-empty">Nothing received since block ${Number(v.birthday).toLocaleString('en-US')}. <button type="button" class="quiet" id="zec-rescan">Scan from an earlier block…</button></li>`;
+    : `<li class="zec-empty">Nothing received yet. <button type="button" class="quiet" id="zec-rescan">Scan from an earlier block…</button></li>`;
   root.querySelector('#zec-rescan')?.addEventListener('click', zecRescan);
 }
 
@@ -643,6 +759,7 @@ function shieldDialog() {
       if (current !== generation) return;
       // Both views list it: Activity here and in the compact wallet.
       logActivity(config, identity, { kind: 'shield', title: 'Shielded ZEC', symbol: 'ZEC', amount: zecText(view.shielded.net), tx: view.txid });
+      renderActivity();
       dialog.querySelector('.review').innerHTML = `<span>Shielded</span><b>${escapeHtml(zecText(view.shielded.net))} ZEC</b><span>Transaction</span><b><code class="txid">${escapeHtml(view.txid)}</code></b>`;
       state.textContent = 'Sent. It shows in your shielded balance in a few blocks (about 5 minutes).';
       go.innerHTML = 'Done <span>→</span>'; go.disabled = false; dialog.querySelector('.x').disabled = false;
@@ -719,16 +836,17 @@ async function zecStart() {
 async function zecSync() {
   const account = zecAccount, current = generation;
   if (!account) return;
+  syncFrom = null;
   clearTimeout(zecTimer);
   try {
     const view = await account.sync((s) => {
       if (current !== generation) return;
-      if (s.to) zecStatus(`scanning ${Number(s.at).toLocaleString('en-US')} of ${Number(s.to).toLocaleString('en-US')}`);
+      if (s.to) zecStatus(syncText(s));
       for (const e of s.events || []) {
         if (e.kind === 'received') note(`Received ${zecText(e.zatoshi)} ZEC${e.memo ? ` — “${e.memo}”` : ''}.`);
       }
     });
-    if (current === generation && zecAccount === account) { renderZec(view); void zecTransparent(); }
+    if (current === generation && zecAccount === account) { renderZec(view); zecStatus('up to date'); void zecTransparent(); }
   } catch (e) {
     if (current === generation) zecStatus(e.message, true);
   } finally {
@@ -773,6 +891,7 @@ function bindZec() {
           identity.zec = keys;
           if (!keepWallet(await sealWallet(identity, receiving, device.value, identity.accountIndex))) throw new Error('Could not save to this device; Zcash works until you lock.');
         } else identity.zec = keys;
+        if (hasSession) await saveSession(identity, receiving);
         add.querySelectorAll('textarea,input').forEach((el) => { el.value = ''; });
         zecFresh = false;
         wallet('Zcash added. It scans from a recent block; use “Scan from an earlier block” if your ZEC is older.');
@@ -784,8 +903,7 @@ function bindZec() {
   const form = root.querySelector('#zec-send');
   if (!form) return;
   root.querySelector('#zec-copy').onclick = async () => {
-    await navigator.clipboard.writeText(root.querySelector('#zec-address').textContent);
-    note(zecAddressMode === 'transparent' ? 'Transparent address copied.' : 'Zcash address copied.');
+    await copyText(root.querySelector('#zec-address').textContent, zecAddressMode === 'transparent' ? 'Transparent address copied.' : 'Zcash address copied.');
   };
   root.querySelectorAll('.zec-seg [data-addr]').forEach((b) => { b.onclick = () => { zecAddressMode = b.dataset.addr; renderZecAddress(); }; });
   root.querySelector('#zec-shield').onclick = shieldDialog;
@@ -816,10 +934,11 @@ function bindZec() {
   });
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (zecSending) return;
     try {
       const to = root.querySelector('#zec-to').value.trim();
       const memo = root.querySelector('#zec-memo').value;
-      if (/^[0-9a-f]{64}$/i.test(to)) throw new Error('That is a Zyn account. This sends ZEC on Zcash; to pay a Zyn account, send ZEC.zy or an item from Coins and Items below.');
+      if (/^[0-9a-f]{64}$/i.test(to)) throw new Error('That is an account ID, not a Zcash address. To pay an account, send "ZEC · in apps" or an item from Home.');
       const transparent = /^t[a-z0-9]{20,}$/i.test(to);
       if (!to.startsWith(config.zcashPrefix) && !transparent) throw new Error(`That is not a ${config.zcash} address.`);
       if (transparent && memo) throw new Error('A memo only reaches a shielded address.');
@@ -830,21 +949,31 @@ function bindZec() {
         note(`To ${short(to)}. A Zcash transaction cannot be undone.`);
         return;
       }
+      zecSending = true;
       go.disabled = true;
+      delete go.dataset.armed;
+      go.innerHTML = 'Sending… <span>→</span>';
       const view = await zecAccount.send(to, zat, memo, (s) => {
         if (s.proving) zecStatus('proving the transaction… about half a minute');
-        else if (s.to) zecStatus(`scanning ${Number(s.at).toLocaleString('en-US')} of ${Number(s.to).toLocaleString('en-US')}`);
+        else if (s.to) zecStatus(syncText(s));
       });
       renderZec(view);
+      zecStatus('up to date');
       form.reset();
       logActivity(config, identity, { kind: 'out', title: 'Sent ZEC', symbol: 'ZEC', amount: `−${zecText(zat)}`, to, tx: view.txid });
       renderActivity();
       note(`Sent ${zecText(zat)} ZEC. Transaction ${view.txid}.`);
+      disarm();
     } catch (err) {
       note(err.message, true);
       zecStatus('ready');
-    } finally {
       disarm();
+    } finally {
+      // Not disarmed here: the Review press returns from inside the try, and
+      // disarming on every exit undid the review at once, so Confirm never
+      // appeared and no ZEC could be sent from this view (23 Sep to 10 Oct
+      // 2026, found by nap-wallet.e2e.mjs).
+      zecSending = false;
       go.disabled = false;
     }
   };
@@ -861,6 +990,25 @@ function note(text, bad = false) {
 /// what: `loadPocket` opens the published notes with the wallet's own keys,
 /// so nothing here asks the operator a question whose answer they could
 /// tailor.
+/// Whether a spend since the last read may have used notes the cached
+/// balance still lists.
+let pocketStale = false;
+/// The notes a spend may use, re-read when a spend since the last read may
+/// have used some (audit, 10 Oct 2026: a withdrawal right after a send tried
+/// to spend the coins the send had just used, and the chain refused it).
+async function freshHeld() {
+  if (pocketStale || !pocket?.held) {
+    const current = generation;
+    const next = await loadPocket(config, identity);
+    if (generation !== current) throw new Error('The wallet changed; try again.');
+    pocket = next;
+    pocketStale = false;
+    renderCoins(); renderItems(); renderWorth();
+  }
+  if (!pocket?.held) throw new Error('Still reading your balances; try again in a moment.');
+  return pocket.held;
+}
+
 async function refresh(announce = true) {
   if (!identity) return;
   const current = generation, request = ++refreshId;
@@ -875,12 +1023,12 @@ async function refresh(announce = true) {
       await loadEventNames();
       if (!active()) return;
     }
-    pocket = next; usdOf = prices;
+    pocket = next; usdOf = prices; pocketStale = false;
     renderCoins(); renderItems(); renderWorth();
     if (next.old) { note('This wallet was stored before the object ledger existed. Restore it from the recovery phrase to read balances here.', true); return; }
     void revealExits(config, identity);
     void revealBridgeExits(config);
-    if (announce) note(`Synced at epoch ${next.epoch}.`);
+    // Up to date is the normal state: nothing to say unless something is wrong.
     void collectWaiting(next);
   } catch (e) {
     if (!active()) return;
@@ -945,7 +1093,7 @@ async function loadDepositAddress(owner) {
     if (generation !== current) return;
     field.textContent = address;
     copy.hidden = false;
-    copy.onclick = async () => { await navigator.clipboard.writeText(address); note('Deposit address copied.'); };
+    copy.onclick = () => copyText(address, 'Deposit address copied.');
     QRCode.toCanvas(root.querySelector('#deposit-qr'), address, { width: 164, margin: 1, color: { dark: '#1f2428', light: '#f8f2e4' } });
   } catch (e) {
     if (generation !== current) return;
@@ -994,8 +1142,10 @@ function renderCoins() {
   holder.innerHTML = coins.map((c, i) => {
     const shown = wadText(c.amount, 6);
     const usd = usdText(usdOf(c.asset, c.amount));
-    return `<div class="coin"><div><p class="kicker">${escapeHtml(c.symbol)}</p><b title="${escapeHtml(wadText(c.amount))}">${escapeHtml(shown === '0' && c.amount > 0n ? '< 0.000001' : shown)}</b><span class="coin-usd">${escapeHtml(usd)}</span></div>${c.amount > 0n ? `<button class="quiet coin-send" data-coin="${i}">Send →</button>` : `<span class="muted">${c.asset === config.zecAsset ? 'deposited ZEC' : ''}</span>`}</div>`;
+    const label = c.asset === config.zecAsset ? 'ZEC · IN APPS' : c.symbol;
+    return `<div class="coin"><div><p class="kicker">${escapeHtml(label)}</p><b title="${escapeHtml(wadText(c.amount))}">${escapeHtml(shown === '0' && c.amount > 0n ? '< 0.000001' : shown)}</b><span class="coin-usd">${escapeHtml(usd)}</span></div>${c.amount > 0n ? `<button class="quiet coin-send" data-coin="${i}">Send →</button>` : (c.asset === config.zecAsset ? `<button class="quiet coin-send" data-view-go="apps">Bring ZEC in →</button>` : '<span class="muted"></span>')}</div>`;
   }).join('');
+  holder.querySelectorAll('[data-view-go]').forEach((b) => { b.onclick = () => showView(b.dataset.viewGo); });
   holder.querySelectorAll('[data-coin]').forEach((b) => {
     const c = coins[Number(b.dataset.coin)];
     b.onclick = () => openObjectSend({ asset: c.asset, symbol: c.symbol, item: false, amount: c.amount });
@@ -1033,7 +1183,7 @@ function itemDialog(it) {
   const cave = caveLink(config, it.collection, it.serial);
   dialog.innerHTML = `<button class="x">×</button><p class="kicker">ITEM</p><h2>${escapeHtml(l.name)}</h2><div class="art item-view"><img src="/nap-mark.png" alt="" data-art="${escapeHtml(it.collection)}:${Number(it.serial)}"></div>
     <div class="review"><span>Collection</span><b>${escapeHtml(it.collectionName || '')}</b><span>Asset</span><b><code class="txid">${escapeHtml(it.asset)}</code></b></div>
-    ${artOn() ? '' : '<p class="muted">Artwork is off. Show artwork under Items loads it; the media gateway then learns your IP address and which items you hold.</p>'}
+    ${artOn() ? '' : '<p class="muted">Artwork is off. Turn it on in Settings to load it; the media gateway then learns your IP address and which items you hold.</p>'}
     <button class="primary" id="item-send">Send <span>→</span></button>${cave ? `<p class="muted"><a href="${escapeHtml(cave)}" target="_blank" rel="noopener" id="item-cave">Open in Cave →</a></p>` : ''}`;
   dialog.querySelector('.x').onclick = () => dialog.close();
   dialog.querySelector('#item-send').onclick = () => { dialog.close(); openObjectSend({ asset: it.asset, symbol: l.name, item: true, amount: WAD }); };
@@ -1057,13 +1207,16 @@ function renderActivity() {
 /// (retire notes this wallet holds and make one sealed to the key the
 /// recipient published, with change back here — nothing on chain names
 /// either account), or ZEC.zy out to an outside Zcash address.
+/// What a coin is called to the holder: ZEC.zy is "ZEC in apps".
+const shownSymbol = (coin) => (coin.asset === config.zecAsset ? 'ZEC in apps' : coin.symbol);
+
 function openObjectSend(coin) {
   const current = generation;
   let reviewed = null;
   const dialog = root.querySelector('#send-dialog');
   const isItem = coin.item;
   const isZec = coin.asset === config.zecAsset;
-  dialog.innerHTML = `<button class="x">×</button><p class="kicker">SEND ${escapeHtml(coin.symbol)}</p><h2>${isItem ? 'Send item' : 'Send'}</h2><p class="muted">To a Zyn account ID or a Zcash address. Cannot be undone.${tip(`A Zcash address that belongs to a Zyn account is paid on Zyn, privately and at once${isZec ? '. Any other Zcash address is paid on Zcash, as a withdrawal' : isItem ? '. An item cannot go to any other Zcash address' : ''}.`)}</p><form><label>Recipient<input id="send-to" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Zyn account (64 hex) or ${escapeHtml(config.zcashPrefix)}…"></label>${isItem ? '<input id="send-amount" type="hidden" value="1">' : '<label>Amount<input id="send-amount" inputmode="decimal" autocomplete="off" placeholder="0.0"></label>'}<div class="review"><span>Asset</span><b>${escapeHtml(coin.symbol)}</b><span>You hold</span><b>${escapeHtml(isItem ? '1 item' : wadText(coin.amount))}</b><span>Network</span><b>${escapeHtml(config.network)} · ${config.chain}</b></div><button class="primary" type="submit">Review →</button><p class="error" role="alert"></p></form>`;
+  dialog.innerHTML = `<button class="x">×</button><p class="kicker">SEND ${escapeHtml(shownSymbol(coin))}</p><h2>${isItem ? 'Send item' : 'Send'}</h2><p class="muted">To an account ID or a Zcash address. Cannot be undone.${tip(`A Zcash address that belongs to a Nap account is paid inside apps, privately and at once${isZec ? '. Any other Zcash address is paid on Zcash, as a withdrawal' : isItem ? '. An item cannot go to any other Zcash address' : ''}.`)}</p><form><label>Recipient<input id="send-to" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Account ID (64 hex) or ${escapeHtml(config.zcashPrefix)}…"></label>${isItem ? '<input id="send-amount" type="hidden" value="1">' : '<label>Amount<input id="send-amount" inputmode="decimal" autocomplete="off" placeholder="0.0"></label>'}<div class="review"><span>Asset</span><b>${escapeHtml(shownSymbol(coin))}</b><span>You hold</span><b>${escapeHtml(isItem ? '1 item' : wadText(coin.amount))}</b><span>Network</span><b>${escapeHtml(config.network)} · ${config.chain}</b></div><button class="primary" type="submit">Review →</button><p class="error" role="alert"></p></form>`;
   dialog.querySelector('.x').onclick = () => dialog.close();
   dialog.querySelector('form').onsubmit = async (event) => {
     event.preventDefault();
@@ -1085,27 +1238,31 @@ function openObjectSend(coin) {
         dialog.querySelectorAll('input').forEach((el) => { el.readOnly = true; });
         button.textContent = external
           ? `Confirm: withdraw ${wadText(amount)} ZEC to Zcash`
-          : `Confirm: send ${isItem ? 'the item' : `${wadText(amount)} ${coin.symbol}`} on Zyn`;
+          : `Confirm: send ${isItem ? 'the item' : `${wadText(amount)} ${shownSymbol(coin)}`}`;
         button.disabled = false;
         error.textContent = external
           ? 'An outside Zcash address: this leaves Zyn as a withdrawal. The bridge fee is added and the Zcash network fee comes out of it.'
-          : `Paying Zyn account ${to.slice(0, 10)}…${to.slice(-6)} privately. Close to edit.`;
+          : `Paying account ${to.slice(0, 10)}…${to.slice(-6)} privately. Close to edit.`;
         return;
       }
       if (key !== reviewed) throw new Error('Details changed; close and review again');
-      if (!pocket?.held) throw new Error('Still reading your balances; try again in a moment.');
+      const held = await freshHeld();
       if (external) {
-        await withdrawZec(config, identity, pocket.held, external, amountText);
+        await withdrawZec(config, identity, held, external, amountText);
+        pocketStale = true;
         logActivity(config, identity, { kind: 'out', title: 'Withdrew to Zcash', symbol: 'ZEC', amount: `−${wadText(amount)}`, to: external });
+        renderActivity();
         if (generation !== current) return;
         dialog.close();
         note('Withdrawal recorded. The vault pays it once two custodians sign.');
       } else {
-        await payOnZyn(config, identity, pocket.held, coin.asset, amount, to);
-        logActivity(config, identity, { kind: 'out', title: `Sent ${coin.symbol}`, symbol: coin.symbol, amount: isItem ? '1' : `−${wadText(amount)}`, to: raw });
+        await payOnZyn(config, identity, held, coin.asset, amount, to);
+        pocketStale = true;
+        logActivity(config, identity, { kind: 'out', title: `Sent ${shownSymbol(coin)}`, symbol: coin.symbol, amount: isItem ? '1' : `−${wadText(amount)}`, to: raw });
+        renderActivity();
         if (generation !== current) return;
         dialog.close();
-        note(`Sent ${isItem ? coin.symbol : `${wadText(amount)} ${coin.symbol}`}.`);
+        note(`Sent ${isItem ? coin.symbol : `${wadText(amount)} ${shownSymbol(coin)}`}.`);
       }
       renderActivity();
       refresh(false);
@@ -1191,6 +1348,17 @@ try {
     receiving = session.receiving.map((r) => ({ ...r, name: (named.find((c) => hex(c.id) === hex(r.collection)) || {}).name || 'Collection' }));
     wallet(); refresh();
   } else onboarding(setupMode || undefined);
+  // In the extension, this tab follows the browser session (audit, 10 Oct
+  // 2026): a Lock in the toolbar or the idle timeout locks it too, and using
+  // it counts as the holder's activity.
+  if (IN_EXTENSION && hasSession && !setupMode) {
+    const lockHere = () => { if (!identity) return; clearSession(); onboarding(keptWallet() ? 'kept' : 'restore'); };
+    globalThis.chrome?.storage?.session?.onChanged?.addListener((changes) => {
+      if (changes['nap.session'] && !changes['nap.session'].newValue) lockHere();
+    });
+    setInterval(async () => { if (identity && !(await peekSession())) lockHere(); }, 30_000);
+    document.addEventListener('pointerdown', () => { if (identity) void touchSession(); }, { passive: true });
+  }
 }
 catch (e) { root.innerHTML = `<main class="fatal"><img src="/nap-mark.png" alt=""><h1>Nap is not configured.</h1><p>${escapeHtml(e.message)}</p></main>`; }
 

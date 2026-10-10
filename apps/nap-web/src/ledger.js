@@ -71,6 +71,24 @@ export function claimSources(identity, limit, from = 0) {
 // further by hand (`recoverNonces(…, { gap })`).
 export const RECOVERY_GAP = 256;
 const RECOVERY_PAGE = 64;
+/// Lookups in flight at once while recovering. A page is about thirty of
+/// them; sent all together they ran into the gateway's rate limit and some
+/// gave up (audit, 10 Oct 2026).
+const RECOVERY_PARALLEL = 6;
+
+/// Run `jobs` (functions returning promises), at most `limit` at a time.
+async function inTurns(jobs, limit) {
+  const out = new Array(jobs.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const i = next++;
+      out[i] = await jobs[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
+  return out;
+}
 const recovering = new Map();
 
 /// Once per device and wallet: recover the count if this device never kept one.
@@ -89,6 +107,10 @@ export async function recoverNonces(config, identity, { gap = RECOVERY_GAP } = {
   const made = new Set((market.curves || []).map((c) => c.token));
   const bridged = (await loadBridged(config)).map((b) => b.asset);
   let last = -1;
+  // A lookup that failed (after `rpcPost`'s retries) is not "nothing here":
+  // the count is then not kept, so the next refresh recovers again instead
+  // of settling on one too low and losing sight of what came after.
+  let failed = false;
   for (let from = 0; from <= last + gap; from += RECOVERY_PAGE) {
     const to = from + RECOVERY_PAGE;
     const at = new Map(); // id -> nonce index
@@ -108,14 +130,15 @@ export async function recoverNonces(config, identity, { gap = RECOVERY_GAP } = {
     const asks = [];
     for (const [method, field, size] of [['zyn_claims', 'id', 240], ['zyn_tickets', 'ticket', 500], ['zyn_waiting', 'key', 500], ['zyn_lendPositions', 'id', 240]]) {
       for (let i = 0; i < ids.length; i += size) {
-        asks.push(call(config, method, { ids: ids.slice(i, i + size).join(',') }).then((part) => (Array.isArray(part) ? part.map((row) => row[field]) : []), () => []));
+        const part = ids.slice(i, i + size).join(',');
+        asks.push(() => call(config, method, { ids: part }).then((rows) => (Array.isArray(rows) ? rows.map((row) => row[field]) : []), () => { failed = true; return []; }));
       }
     }
-    const found = (await Promise.all(asks)).flat();
+    const found = (await inTurns(asks, RECOVERY_PARALLEL)).flat();
     for (const id of found) if (at.has(id)) last = Math.max(last, at.get(id));
   }
   const count = Math.max(last + 1, nonceCount(config, identity));
-  write(counterKey(config, identity), String(count));
+  if (!failed) write(counterKey(config, identity), String(count));
   return count;
 }
 

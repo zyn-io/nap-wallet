@@ -183,8 +183,8 @@ export async function resolveRecipient(config, identity, raw, { isZec, isItem })
     const r = await objectCall(config.rpcUrl, 'zyn_resolveAddress', { address: text });
     if (r && /^[0-9a-f]{64}$/.test(String(r.account))) to = r.account;
     else external = text;
-  } else throw new Error(`That is neither a Zyn account nor a ${config.zcash} address`);
-  if (external && !isZec) throw new Error(isItem ? 'An item cannot leave Zyn. Send it to a Zyn account.' : 'Only ZEC.zy can be paid to an outside Zcash address.');
+  } else throw new Error(`That is neither an account ID nor a ${config.zcash} address`);
+  if (external && !isZec) throw new Error(isItem ? 'An item cannot leave Zyn. Send it to a Zyn account.' : 'Only ZEC in apps can be paid to an outside Zcash address.');
   if (to && (/^0{64}$/.test(to) || to === identity.accountHex)) throw new Error('Choose a different recipient');
   return { to, external };
 }
