@@ -60,7 +60,7 @@ export const MARKET_PROGRAM = Object.freeze(Object.fromEntries([
   ['dao', 'dao'],
 ].map(([k, name]) => [k, hex(named(name))])));
 
-const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51, route: 53, memberPass: 57, propose: 58, vote: 59, proposeZyn: 63 };
+const TAG = { createPool: 10, addLiquidity: 11, removeLiquidity: 12, swap: 13, claim: 14, createLaunch: 15, commit: 16, createCurve: 23, curveTrade: 24, buyTickets: 27, claimItems: 30, mintOpen: 32, claimVoucherItems: 35, claimDeposit: 38, fundSaleCredit: 65, redeemCredit: 67, lendSupply: 41, lendWithdraw: 42, lendOpen: 43, lendRepay: 44, lendAddCollateral: 45, lendRemoveCollateral: 46, lendBid: 47, lendInsure: 51, route: 53, memberPass: 57, propose: 58, vote: 59, proposeZyn: 63 };
 
 const id = (domain, ...parts) => leaf(te.encode(domain), ...parts);
 
@@ -620,6 +620,18 @@ export const claimVoucherItemsIntent = (o) => concatBytes(
   u32be(o.serials.length), ...o.serials.map((x) => u32be(x)), proofBytes(o.proof),
   outputs(o.items), inputs(o.inputs), outputs(o.change),
 );
+
+// Sale credit (§182): a burn's credit waits under the burner's commitment
+// until they take it up from their account; then it pays before any note.
+export const creditPendingKey = (collection, commitment) => id('objectvm.sale-credit-pending.v1', collection, commitment);
+export const creditKey = (collection, account) => id('objectvm.sale-credit.v1', collection, account);
+export const creditFunding = (funder, nonce) => id('objectvm.sale-credit-fund.v1', funder, nonce);
+
+export const fundSaleCreditIntent = (o) => concatBytes(
+  new Uint8Array([TAG.fundSaleCredit]), o.funder, prog('saleTickets'), o.collection, i128Bytes(o.amount), o.nonce, inputs(o.inputs), outputs(o.change),
+);
+
+export const redeemCreditIntent = (o) => concatBytes(new Uint8Array([TAG.redeemCredit]), o.buyer, prog('saleClaim'), o.collection, o.secret);
 
 export const mintOpenIntent = (o) => concatBytes(
   new Uint8Array([TAG.mintOpen]), o.buyer, prog('saleMint'), o.collection, u32bytes(o.serial), proofBytes(o.proof),

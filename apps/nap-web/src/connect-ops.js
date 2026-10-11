@@ -142,6 +142,27 @@ function launchAssets(ctx, market, terms) {
   return [{ asset: ctx.config.zecAsset, unit: mk.ZAT, bond: BigInt(terms.bond || '0') }];
 }
 
+/// The sale credit this wallet holds and has waiting (§182), together: what
+/// a payment will take from credit before any note.
+async function creditOf(ctx, collection) {
+  const c = await ledger.loadCredit(ctx.config, ctx.identity, collection).catch(() => null);
+  return c ? c.held + c.waiting : 0n;
+}
+
+/// The review's payment rows: what comes from credit and what from ZEC.zy.
+function creditRows(fromCredit, total, q) {
+  if (fromCredit <= 0n) return [['You pay', `${wadText(total)} ${q}`]];
+  return [['From your sale credit', `${wadText(fromCredit)} ${q}`], ['You pay', `${wadText(total - fromCredit)} ${q}`]];
+}
+
+/// The notes paying `price` once `credit` has paid what it can: none at all
+/// when credit covers it, as the ledger requires.
+async function notesFor(ctx, quote, price, credit) {
+  if (credit >= price) return { inputs: [], change: [] };
+  const h = await holdings(ctx);
+  return mk.fund(ctx.identity, h.held, unhex(quote), price - credit);
+}
+
 /// This account on a sale's list (§168), as the chain has it.
 async function saleAccess(ctx, collection) {
   const key = hex(mk.saleAllowKey(unhex(collection), ctx.identity.account));
@@ -1486,6 +1507,23 @@ export const METHODS = {
     run: async (ctx, p) => ledger.burnMemo(ctx.config, ctx.identity, { fresh: p?.fresh === true }),
   },
 
+  // Sale credit (§182): burns of ZCAVE or REGI become credit in the sale,
+  // worth what was burned; it pays tickets, claims and the open mint before
+  // any ZEC.zy. What this wallet holds and what waits for it to take up.
+  zyn_saleCredit: {
+    kind: 'read',
+    run: async (ctx, p) => {
+      const c = await ledger.loadCredit(ctx.config, ctx.identity, saleCollection(p));
+      return { held: String(c.held), waiting: String(c.waiting), budget: String(c.budget) };
+    },
+  },
+  // Taking credit up only moves it into this wallet's own place in the sale,
+  // so a connected site may ask without an approval each time.
+  zyn_takeUpCredit: {
+    kind: 'auto',
+    run: async (ctx, p) => ({ held: String(await ledger.takeUpCredit(ctx.config, ctx.identity, saleCollection(p))) }),
+  },
+
   zyn_buyTickets: {
     kind: 'write',
     async prepare(ctx, p) {
@@ -1502,7 +1540,9 @@ export const METHODS = {
       const total = a.gated ? mk.gatedTotal(s.sale.ticket_price, a.base, a.bought, count) : BigInt(s.sale.ticket_price) * BigInt(count);
       if (p.pay != null && amountOf(p.pay, 'pay') !== total) throw bad('The price changed since the page loaded; reload and try again');
       const q = await quoteName(ctx, s.quote);
-      await mustHold(ctx, s.quote, total, q);
+      const credit = await creditOf(ctx, collection);
+      const fromCredit = credit < total ? credit : total;
+      if (total > fromCredit) await mustHold(ctx, s.quote, total - fromCredit, q);
       const each = a.gated ? Array.from({ length: count }, (_, i) => mk.gatedPrice(s.sale.ticket_price, a.base, a.bought + i + 1)) : null;
       const rising = each && each.some((x) => x !== BigInt(s.sale.ticket_price));
       return {
@@ -1511,12 +1551,12 @@ export const METHODS = {
           ['Per ticket', rising ? `${each.map((x) => wadText(x)).join(', ')} ${q}` : `${wadText(s.sale.ticket_price)} ${q}`],
           ['Tickets', a.gated ? `${count} (your ${a.bought + 1}${count > 1 ? `–${a.bought + count}` : ''})` : String(count)],
           ...(a.gated ? [['Price rule', `${wadText(s.sale.ticket_price)} each for your first ${a.base}, then ${wadText(s.sale.ticket_price)} more for each one after`]] : []),
-          ['You pay', `${wadText(total)} ${q}`],
+          ...creditRows(fromCredit, total, q),
         ],
         note: 'Each ticket is drawn after the sale closes. A winning ticket claims its items at the claim price; the ticket price is not refunded.',
         run: async () => {
-          const h = await holdings(ctx);
-          const { inputs, change } = mk.fund(ctx.identity, h.held, unhex(s.quote), total);
+          const held = await ledger.takeUpCredit(ctx.config, ctx.identity, collection);
+          const { inputs, change } = await notesFor(ctx, s.quote, total, held);
           const nonce = await ledger.submitFresh(ctx.config, ctx.identity, (n) => mk.buyTicketsIntent({
             buyer: ctx.identity.account, collection: unhex(collection), count, nonce: n, inputs, change,
           }));
@@ -1546,21 +1586,25 @@ export const METHODS = {
       const serials = mine.flatMap((t) => s.draw.won[index.get(t.ticket)].serials);
       const total = BigInt(s.sale.claim_price) * BigInt(serials.length);
       const q = await quoteName(ctx, s.quote);
-      await mustHold(ctx, s.quote, total, q);
+      const credit = await creditOf(ctx, collection);
+      const fromCredit = credit < total ? credit : total;
+      if (total > fromCredit) await mustHold(ctx, s.quote, total - fromCredit, q);
       return {
         title: `Claim ${serials.length} item${serials.length > 1 ? 's' : ''}`,
         rows: [...serials.slice(0, 6).map((x) => ['Item', itemName(collection, x)]), ...(serials.length > 6 ? [['…', `and ${serials.length - 6} more`]] : []),
-          ['Per item', `${wadText(s.sale.claim_price)} ${q}`], ['You pay', `${wadText(total)} ${q}`]],
+          ['Per item', `${wadText(s.sale.claim_price)} ${q}`], ...creditRows(fromCredit, total, q)],
         note: 'Each item is minted straight into this wallet. Unclaimed wins go to the open mint when claims close.',
         run: async () => {
           const claimed = [];
           let spent = [];
+          let credit = await ledger.takeUpCredit(ctx.config, ctx.identity, collection);
           for (const t of mine) {
             if (spent.length) await ledger.waitSpent(ctx.config, ctx.identity, spent);
             const i = index.get(t.ticket);
             const won = s.draw.won[i].serials;
-            const h = await holdings(ctx);
-            const { inputs, change } = mk.fund(ctx.identity, h.held, unhex(s.quote), BigInt(s.sale.claim_price) * BigInt(won.length));
+            const price = BigInt(s.sale.claim_price) * BigInt(won.length);
+            const { inputs, change } = await notesFor(ctx, s.quote, price, credit);
+            credit = credit > price ? credit - price : 0n;
             const claim = {
               buyer: ctx.identity.account, collection: unhex(collection), k: t.k, serials: won,
               proof: mk.merkleProof(s.draw.leaves, i),
@@ -1592,22 +1636,26 @@ export const METHODS = {
       if (left < count) throw bad(left ? `Only ${left} left` : 'The open mint is sold out');
       const total = BigInt(s.sale.open_price) * BigInt(count);
       const q = await quoteName(ctx, s.quote);
-      await mustHold(ctx, s.quote, total, q);
+      const credit = await creditOf(ctx, collection);
+      const fromCredit = credit < total ? credit : total;
+      if (total > fromCredit) await mustHold(ctx, s.quote, total - fromCredit, q);
       return {
         title: `Mint ${count} from the open mint`,
-        rows: [['Per item', `${wadText(s.sale.open_price)} ${q}`], ['Items', String(count)], ['You pay', `${wadText(total)} ${q}`], ['Left', String(left)]],
+        rows: [['Per item', `${wadText(s.sale.open_price)} ${q}`], ['Items', String(count)], ...creditRows(fromCredit, total, q), ['Left', String(left)]],
         note: 'Items come in the order posted after the draw — the next ones in line, whichever they are.',
         run: async () => {
           const minted = [];
           let spent = [];
+          await ledger.takeUpCredit(ctx.config, ctx.identity, collection);
           for (let got = 0, tries = 0; got < count && tries < count + 8; tries++) {
             if (spent.length) await ledger.waitSpent(ctx.config, ctx.identity, spent);
             const now = await ledger.loadSale(ctx.config, collection);
             const pos = now.sale.open_next;
             if (pos >= now.sale.open_count) break;
             const serial = s.open.order[pos];
-            const h = await holdings(ctx);
-            const { inputs, change } = mk.fund(ctx.identity, h.held, unhex(s.quote), BigInt(s.sale.open_price));
+            // What credit is left after the last mint, read from the chain.
+            const credit = (await ledger.loadCredit(ctx.config, ctx.identity, collection)).held;
+            const { inputs, change } = await notesFor(ctx, s.quote, BigInt(s.sale.open_price), credit);
             const item = mk.selfNote(ctx.identity, mk.itemAsset(unhex(collection), serial), mk.ITEM_UNIT);
             try {
               await ledger.submitFresh(ctx.config, ctx.identity, (n) => mk.mintOpenIntent({

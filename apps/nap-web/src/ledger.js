@@ -420,6 +420,43 @@ export async function burnMemo(config, identity, { fresh = false } = {}) {
   return { memo: `zyn:${hex(commitment)}`, commitment: hex(commitment) };
 }
 
+/// This wallet's sale credit (§182): what it holds, and what its burns'
+/// credit waits for it to take up — found by the same scan of its nonces
+/// that finds its burn tickets, asking only by keys nobody else can derive.
+export async function loadCredit(config, identity, collection) {
+  await ensureNonces(config, identity);
+  const me = identity.account;
+  const c = unhex(collection);
+  const limit = nonceCount(config, identity) + LOOKAHEAD;
+  const nonces = Array.from({ length: limit }, (_, n) => mk.marketNonce(identity.secretKey, n));
+  const keys = nonces.map((nonce) => ({ nonce, key: hex(mk.creditPendingKey(c, mk.voucherCommitment(me, nonce))) }));
+  const key = hex(mk.creditKey(c, me));
+  let held = 0n;
+  let budget = 0n;
+  const pending = [];
+  const byKey = new Map(keys.map((k) => [k.key, k]));
+  for (let i = 0; i < Math.max(keys.length, 1); i += 64) {
+    const r = await call(config, 'zyn_saleCredit', { collection, key, pending: keys.slice(i, i + 64).map((k) => k.key).join(',') });
+    held = BigInt(r?.held || 0);
+    budget = BigInt(r?.budget || 0);
+    for (const w of Array.isArray(r?.pending) ? r.pending : []) {
+      if (byKey.has(w.key) && /^\d+$/.test(String(w.amount))) pending.push({ nonce: byKey.get(w.key).nonce, amount: BigInt(w.amount) });
+    }
+  }
+  return { held, budget, pending, waiting: pending.reduce((t, p) => t + p.amount, 0n) };
+}
+
+/// Take up every burn's credit waiting for this wallet in a sale (§182):
+/// one signed intent each, revealing the burn's secret from this account.
+/// Returns what this wallet then holds.
+export async function takeUpCredit(config, identity, collection) {
+  const c = await loadCredit(config, identity, collection);
+  for (const p of c.pending) {
+    await submitIntent(config, identity, mk.redeemCreditIntent({ buyer: identity.account, collection: unhex(collection), secret: p.nonce }));
+  }
+  return c.pending.length ? (await loadCredit(config, identity, collection)).held : c.held;
+}
+
 /// Burn memos that may wait unburned at once (each holds a market nonce).
 export const FRESH_OUTSTANDING = 5;
 

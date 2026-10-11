@@ -206,6 +206,12 @@ test('primary sales: ids, leaves, the draw proof and the three holder intents ma
   assert.equal(hex(commitment), v.voucher_commitment);
   assert.equal(hex(m.voucherTicketId(commitment, 2)), v.voucher_ticket_id);
   assert.equal(hex(m.claimVoucherItemsIntent({ buyer: OWNER, collection: TOKEN, secret: NONCE, k: 2, serials: [7, 1], proof, items: [item(7), item(1)], inputs, change })), v.claim_voucher_items);
+  // Sale credit (§182).
+  assert.equal(hex(m.creditPendingKey(TOKEN, commitment)), v.credit_pending_key);
+  assert.equal(hex(m.creditKey(TOKEN, OWNER)), v.credit_key);
+  assert.equal(hex(m.creditFunding(OWNER, NONCE)), v.credit_funding);
+  assert.equal(hex(m.fundSaleCreditIntent({ funder: OWNER, collection: TOKEN, amount: 3n * 10n ** 18n, nonce: NONCE, inputs, change })), v.fund_sale_credit);
+  assert.equal(hex(m.redeemCreditIntent({ buyer: OWNER, collection: TOKEN, secret: NONCE })), v.redeem_credit);
 });
 
 test('bridged assets beside ZEC: ids, the deposit commitment, the claim and the exit commitment match the ledger (§146)', () => {

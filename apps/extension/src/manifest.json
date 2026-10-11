@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nap Wallet",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "A private wallet for Zcash and Zyn: shielded ZEC, Zyn tokens and items, and a wallet sites can ask. Your keys stay on your device.",
   "icons": {
     "16": "icons/16.png",
