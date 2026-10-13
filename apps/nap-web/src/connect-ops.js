@@ -1349,15 +1349,21 @@ export const METHODS = {
     async prepare(ctx, p) {
       const collection = saleCollection(p);
       const mine = await daoItems(ctx, collection);
-      const { note, item } = mine[0];
+      // The pass an item already has is used again: nothing new to register.
+      const tokenOf = (x) => mk.passToken(ctx.identity.secretKey, unhex(collection), unhex(x.note.commitment));
+      const isLive = async (x) => !!(await ledger.call(ctx.config, 'zyn_memberPass', { collection, pass: hex(mk.daoPass(tokenOf(x))) }).catch(() => null))?.member;
+      let pick = null;
+      for (const x of mine.slice(0, 8)) if (await isLive(x)) { pick = x; break; }
+      const live = !!pick;
+      const { note, item } = pick || mine[0];
       return {
         title: 'Member pass',
-        rows: [['Collection', collectionLabel(collection)], ['Proved by', itemName(collection, item.serial)], ['Members\' chat', 'not open yet; the pass code is its key']],
-        note: "Keep the pass code private: whoever has it can use your membership. Selling or moving the item ends the pass. The operator and replicas can see which item made it, and the Cave team, which will run the chat, could link the two.",
+        rows: [['Collection', collectionLabel(collection)], ['Proved by', itemName(collection, item.serial)], ['Pass', live ? 'already registered: nothing new on the ledger' : 'registered on the ledger now']],
+        note: "The pass code opens the members' chat. Keep it private: whoever has it can use your membership. Selling or moving the item ends the pass. The operator and replicas can see which item made it, and the Cave team, which runs the chat, could link the two.",
         run: async () => {
-          const token = crypto.getRandomValues(new Uint8Array(32));
+          const token = tokenOf({ note });
           const pass = mk.daoPass(token);
-          await ledger.submitIntent(ctx.config, ctx.identity, mk.memberPassIntent({ holder: ctx.identity.account, collection: unhex(collection), item: unhex(note.commitment), pass }));
+          if (!live) await ledger.submitIntent(ctx.config, ctx.identity, mk.memberPassIntent({ holder: ctx.identity.account, collection: unhex(collection), item: unhex(note.commitment), pass }));
           return { token: hex(token), pass: hex(pass) };
         },
       };

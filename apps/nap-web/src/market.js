@@ -87,6 +87,11 @@ export const DAO_YES = 1;
 export const DAO_NO = 2;
 /// The pass hash a token makes: what the members' chat is shown.
 export const daoPass = (token) => id('objectvm.dao-pass.v1', token);
+/// A member pass's token, derived rather than drawn: the same wallet and item
+/// give the same token on every device, so the same pass (and chat name)
+/// comes back without a new registration. A new holder of the item, whose
+/// note is new, gets a new one.
+export const passToken = (secretKey, collection, itemCommitment) => id('nap.dao-pass-token.v1', secretKey, collection, itemCommitment);
 /// Where a passed proposal's payment waits as a claim.
 export const daoPaymentSource = (collection, proposal) => id('objectvm.dao-pay.v1', collection, u32be(proposal));
 export const memberPassIntent = (o) => concatBytes(new Uint8Array([TAG.memberPass]), o.holder, prog('dao'), o.collection, o.item, o.pass);
