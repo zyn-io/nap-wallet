@@ -162,7 +162,8 @@ export function checkBridgeOut(b, to, raw) {
 }
 
 /// SOL.zy / ETH.zy / BOLD.zy / BTC.zy back to their chain: commit to the address,
-/// burn, then show the address to the bridge that pays it.
+/// burn, then show the address to the bridge that pays it. Returns the exit's
+/// commitment (hex), by which its holder finds it and its payout (ZynScan).
 export async function bridgeOut(config, identity, held, b, to, raw, bps) {
   return bridgeOutTo(config, identity, held, b, checkBridgeOut(b, to, raw), raw, bps);
 }
@@ -174,8 +175,10 @@ export async function bridgeOutTo(config, identity, held, b, address, raw, bps) 
   const fee = (raw * bps) / 10_000n;
   const { inputs, change } = fund(identity, held, unhex(b.asset, 32), raw + fee);
   write(bridgeExitsKey(config), JSON.stringify([...bridgeExits(config), { asset: b.asset, address: hex(address), salt: hex(salt) }]));
-  await submitIntent(config, identity, withdrawIntent({ holder: identity.account, inputs, asset: unhex(b.asset, 32), amount: raw, destination: exitCommitment(address, salt), outputs: change }));
+  const destination = exitCommitment(address, salt);
+  await submitIntent(config, identity, withdrawIntent({ holder: identity.account, inputs, asset: unhex(b.asset, 32), amount: raw, destination, outputs: change }));
   await revealBridgeExits(config);
+  return hex(destination);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,4 +212,5 @@ export async function withdrawZec(config, identity, held, address, amountText) {
   write(exitsKey(config, identity), JSON.stringify([...pendingExits(config, identity), { address, salt }]));
   await submitIntent(config, identity, withdrawIntent({ holder: identity.account, inputs, asset: zec, amount: raw, destination: unhex(destination, 32), outputs: change }));
   await revealExits(config, identity);
+  return destination;
 }

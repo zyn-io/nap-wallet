@@ -6,7 +6,7 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { checkedEpoch, hex, unhex } from './core.js';
 import { claimIntent, decodeMeta, fund, lendAsset, redeem, WAD } from './market.js';
-import { bridgedName, call, loadBridged, loadOwed, PER_CLAIM, submitIntent } from './ledger.js';
+import { bridgedName, call, loadBridged, loadOwed, loadWaiting, PER_CLAIM, submitIntent } from './ledger.js';
 import { objectCall, PROGRAM, registerIntent, scan, sealNote, spendIntent } from './object.js';
 import { endpoint } from './origin.js';
 import { CAVE_Z, itemName } from './items.js';
@@ -110,7 +110,10 @@ export async function loadPocket(config, identity) {
   // What finished swaps and loans owe this wallet: collected on the next pass.
   const owed = await loadOwed(config, identity).catch(() => []);
   const nameOf = (id) => names.get(id) || `${id.slice(0, 6)}…`;
-  return { epoch, coins, items: owned, held, owed, nameOf };
+  // Bridge deposits that arrived under this wallet's codes and wait to be
+  // collected (§146): not coins yet, but this wallet's to take.
+  const arrived = (await loadWaiting(config, identity).catch(() => [])).map((w) => ({ asset: w.asset, amount: w.amount, symbol: nameOf(w.asset) }));
+  return { epoch, coins, items: owned, held, owed, arrived, nameOf };
 }
 
 // ---------------------------------------------------------------------------

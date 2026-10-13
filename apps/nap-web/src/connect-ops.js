@@ -168,8 +168,10 @@ async function saleAccess(ctx, collection) {
   const key = hex(mk.saleAllowKey(unhex(collection), ctx.identity.account));
   const r = await ledger.call(ctx.config, 'zyn_saleAllow', { collection, key }).catch(() => null);
   // A node from before §168 has no gates: every sale is open to all.
-  if (!r) return { gated: false, listed: true, bought: 0, base: null };
-  return { gated: !!r.gated, listed: !!r.listed, bought: Number(r.bought) || 0, base: r.base ?? null };
+  if (!r) return { gated: false, listed: true, bought: 0, base: null, open: null };
+  // Open-mint terms (§187): this wallet's price there, and its count of the cap.
+  const open = r.open ? { price: String(r.open.price), minted: Number(r.open.minted) || 0, cap: Number(r.open.cap) || 0 } : null;
+  return { gated: !!r.gated, listed: !!r.listed, bought: Number(r.bought) || 0, base: r.base ?? null, open };
 }
 
 async function curveBook(ctx) {
@@ -1090,8 +1092,8 @@ export const METHODS = {
           note: 'Paid from the vault once two custodians sign; the Zcash network fee comes out of the amount. A shielded address keeps the payout private.',
           run: async () => {
             const h = await holdings(ctx);
-            await bridges.withdrawZec(ctx.config, ctx.identity, h.held, to, wadText(amount));
-            return { ok: true };
+            // `exit`: the commitment its holder follows it by (ZynScan /api/exit).
+            return { ok: true, exit: await bridges.withdrawZec(ctx.config, ctx.identity, h.held, to, wadText(amount)) };
           },
         };
       }
@@ -1106,8 +1108,7 @@ export const METHODS = {
         note: `${b.chainName} will show this address receiving the amount from the vault${b.safe ? '; the Safe owners approve each payout, which can take hours' : b.multisig ? "; the multisig's owners approve each payout, which can take hours" : ''}.`,
         run: async () => {
           const h = await holdings(ctx);
-          await bridges.bridgeOut(ctx.config, ctx.identity, h.held, b, to, amount, st.bps);
-          return { ok: true };
+          return { ok: true, exit: await bridges.bridgeOut(ctx.config, ctx.identity, h.held, b, to, amount, st.bps) };
         },
       };
     },
@@ -1483,7 +1484,7 @@ export const METHODS = {
       if (!s) return { sale: null };
       const a = await saleAccess(ctx, collection);
       const prices = a.gated ? Array.from({ length: 20 }, (_, i) => String(mk.gatedPrice(s.sale.ticket_price, a.base, a.bought + i + 1))) : null;
-      return { gated: a.gated, listed: a.listed, bought: a.bought, base: a.base, next: prices ? prices[0] : s.sale.ticket_price, prices };
+      return { gated: a.gated, listed: a.listed, bought: a.bought, base: a.base, next: prices ? prices[0] : s.sale.ticket_price, prices, open: a.open };
     },
   },
 
@@ -1634,25 +1635,49 @@ export const METHODS = {
     async prepare(ctx, p) {
       const collection = saleCollection(p);
       const count = Number(p.count ?? 1);
-      if (!Number.isInteger(count) || count < 1 || count > 10) throw bad('Mint between 1 and 10 at a time');
+      if (!Number.isInteger(count) || count < 1 || count > 20) throw bad('Mint between 1 and 20 at a time');
       const s = await ledger.loadSale(ctx.config, collection);
       if (!s || s.sale.phase !== 'openmint') throw bad('The open mint has not started');
       if (!s.open) throw bad('The posted order does not match the chain; nothing can be minted until it does');
       const left = s.sale.open_count - s.sale.open_next;
       if (left < count) throw bad(left ? `Only ${left} left` : 'The open mint is sold out');
-      const total = BigInt(s.sale.open_price) * BigInt(count);
+      // §187: what this wallet pays per item, and how many more it may mint.
+      const a = await saleAccess(ctx, collection);
+      const price = BigInt(a.open?.price ?? s.sale.open_price);
+      if (a.open) {
+        const mine = a.open.cap - a.open.minted;
+        if (mine <= 0) throw bad(`This wallet has minted ${a.open.cap}, the most one wallet may`);
+        if (count > mine) throw bad(`This wallet may mint ${mine} more`);
+      }
+      const total = price * BigInt(count);
       const q = await quoteName(ctx, s.quote);
       const credit = await creditOf(ctx, collection);
       const fromCredit = credit < total ? credit : total;
       if (total > fromCredit) await mustHold(ctx, s.quote, total - fromCredit, q);
       return {
         title: `Mint ${count} from the open mint`,
-        rows: [['Per item', `${wadText(s.sale.open_price)} ${q}`], ['Items', String(count)], ...creditRows(fromCredit, total, q), ['Left', String(left)]],
-        note: 'Items come in the order posted after the draw — the next ones in line, whichever they are.',
+        rows: [
+          ['Per item', `${wadText(String(price))} ${q}${price < BigInt(s.sale.open_price) ? ' (whitelist)' : ''}`],
+          ['Items', String(count)],
+          ...creditRows(fromCredit, total, q),
+          ...(a.open ? [['This wallet', `${a.open.minted + count} of ${a.open.cap} after this`]] : []),
+          ['Left', String(left)],
+        ],
+        note: 'Items come in the order fixed when the mint opened — the next ones in line, whichever they are.',
         run: async () => {
           const minted = [];
           let spent = [];
           await ledger.takeUpCredit(ctx.config, ctx.identity, collection);
+          // The chain takes 12 intents from one account an epoch (fair
+          // batches, §179): a longer run waits for the next epoch there.
+          let waits = 0;
+          const nextEpoch = async () => {
+            const was = Number((await ledger.call(ctx.config, 'zyn_status')).epoch);
+            for (let i = 0; i < 120; i++) {
+              await new Promise((r) => setTimeout(r, 1000));
+              if (Number((await ledger.call(ctx.config, 'zyn_status')).epoch) > was) return;
+            }
+          };
           for (let got = 0, tries = 0; got < count && tries < count + 8; tries++) {
             if (spent.length) await ledger.waitSpent(ctx.config, ctx.identity, spent);
             const now = await ledger.loadSale(ctx.config, collection);
@@ -1661,7 +1686,7 @@ export const METHODS = {
             const serial = s.open.order[pos];
             // What credit is left after the last mint, read from the chain.
             const credit = (await ledger.loadCredit(ctx.config, ctx.identity, collection)).held;
-            const { inputs, change } = await notesFor(ctx, s.quote, BigInt(s.sale.open_price), credit);
+            const { inputs, change } = await notesFor(ctx, s.quote, price, credit);
             const item = mk.selfNote(ctx.identity, mk.itemAsset(unhex(collection), serial), mk.ITEM_UNIT);
             try {
               await ledger.submitFresh(ctx.config, ctx.identity, (n) => mk.mintOpenIntent({
@@ -1670,6 +1695,8 @@ export const METHODS = {
             } catch (e) {
               // Someone else minted that place first; take the next one.
               if (/not the next item|already minted/.test(String(e.message))) continue;
+              if (/as many as one account may/.test(String(e.message))) break;
+              if (/its share of this epoch's intents/.test(String(e.message)) && waits++ < 4) { tries--; await nextEpoch(); continue; }
               throw e;
             }
             spent = inputs.map((x) => hex(x.commitment));

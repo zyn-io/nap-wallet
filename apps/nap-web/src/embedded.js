@@ -33,14 +33,14 @@ import { submitIntent, call, loadPositions } from './ledger.js';
 import { notes as poolNotes } from './pool.js';
 import { loadPocket, payOnZyn, resolveRecipient } from './pocket.js';
 import CONFIG from '../public/config.json';
-import { SIGN_IN, checksumAddress, signInText, solanaSignInInput, solanaSignInOk, evmSignature } from './signin.js';
+import { SIGN_IN, checksumAddress, signInText, solanaKeyText, solanaSignInInput, solanaSignInOk, evmSignature } from './signin.js';
 
 const te = new TextEncoder();
 
 /// An ed25519 signature over `message` by `publicKey`.
 export const verifyEd25519 = (signature, message, publicKey) => ed.verifyAsync(signature, message, publicKey).catch(() => false);
 
-export { SIGN_IN, checksumAddress, signInText, solanaSignInInput, solanaSignInOk, evmSignature };
+export { SIGN_IN, checksumAddress, signInText, solanaKeyText, solanaSignInInput, solanaSignInOk, evmSignature };
 
 /// A signature as the account is derived from it: a 65-byte Ethereum one
 /// with v made 27/28 (the same key, whichever way the wallet wrote v).

@@ -3,7 +3,7 @@
 // time, and the wallet must be able to read the domain out of it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SIGN_IN, checksumAddress, signInText, solanaSignInInput, solanaSignInOk, evmSignature } from '../src/signin.js';
+import { SIGN_IN, checksumAddress, signInText, solanaKeyText, solanaSignInInput, solanaSignInOk, evmSignature } from '../src/signin.js';
 
 const te = new TextEncoder();
 
@@ -78,4 +78,27 @@ test('an Ethereum signature is read one way, whatever v the wallet wrote', () =>
   s[32] |= 0x80;
   assert.deepEqual(evmSignature(s), at(28));
   assert.deepEqual(evmSignature(rs), at(27));
+});
+
+test('a Solana wallet signs plain words, not a sign-in a wallet would date-check', () => {
+  const address = 'HBvV7YqSRSPW4YEBsDvpvF2PrUWFubqVbTNYafkddTsy';
+  const t = solanaKeyText(address);
+  assert.equal(t, [
+    'Open my Zyn account',
+    '',
+    'This signature is the key to the account. Sign it only on lend.zyn-network.com.',
+    '',
+    'Wallet: HBvV7YqSRSPW4YEBsDvpvF2PrUWFubqVbTNYafkddTsy',
+    'Version: 2',
+  ].join('\n'));
+  // Fixed: the same address signs the same bytes every time.
+  assert.equal(solanaKeyText(address), t);
+  // Not the sign-in grammar's first line, so no wallet parses it as one,
+  // and no date or nonce for a wallet to call stale.
+  assert.doesNotMatch(t.split('\n')[0], /wants you to sign in with your Solana account:$/);
+  assert.doesNotMatch(t, /Issued At|Nonce|Expiration/);
+  assert.equal(solanaSignInOk(te.encode(t), address), false);
+  // Not the old key: those accounts move by signing the old one once more.
+  assert.notEqual(t, signInText('sol', address));
+  assert.throws(() => solanaKeyText('0xnot-solana'));
 });

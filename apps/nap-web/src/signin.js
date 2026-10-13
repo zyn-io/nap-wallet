@@ -30,7 +30,10 @@ export function checksumAddress(address) {
 }
 
 /// The exact text `kind` ('evm' or 'sol') signs for `address`: EIP-4361 for
-/// Ethereum, the Solana sign-in format (SIWS) for Solana.
+/// Ethereum, the Solana sign-in format (SIWS) for Solana. The Solana one is
+/// the old key (2–12 Oct 2026), kept only to move those accounts: a wallet
+/// checks a sign-in's date, and this date can never be fresh (Phantom calls
+/// it invalid). Solana wallets sign `solanaKeyText` instead.
 export function signInText(kind, address) {
   const s = SIGN_IN;
   if (kind === 'evm') {
@@ -64,7 +67,22 @@ export function signInText(kind, address) {
   throw new Error(`No sign-in for ${kind}`);
 }
 
-/// What `solana:signIn` is asked for: the same fields, so a wallet that
+/// What a Solana wallet signs to open its Zyn account, from 12 Oct 2026:
+/// plain words through signMessage, not a sign-in. Its first line is not a
+/// sign-in's, so no wallet reads it as one and checks a date it cannot have.
+export function solanaKeyText(address) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(address))) throw new Error('That is not a Solana address');
+  return [
+    'Open my Zyn account',
+    '',
+    `This signature is the key to the account. Sign it only on ${SIGN_IN.domain}.`,
+    '',
+    `Wallet: ${address}`,
+    'Version: 2',
+  ].join('\n');
+}
+
+/// What `solana:signIn` was asked for (the old key): the same fields, so a wallet that
 /// builds the text itself builds `signInText('sol', …)`.
 export const solanaSignInInput = () => ({
   domain: SIGN_IN.domain, statement: SIGN_IN.statement, uri: SIGN_IN.uri, version: SIGN_IN.version, nonce: SIGN_IN.nonce, issuedAt: SIGN_IN.issuedAt,
